@@ -112,13 +112,16 @@ namespace Prism {
         glViewport(0, 0, (GLsizei)width, (GLsizei)height);
     }
 
-    void Renderer::DrawTestCube(const float* viewProjection, const float* model) {
+    void Renderer::DrawTestCube(const float* viewProjection, const float* model, const float* color) {
         if (!s_BasicShader) return;
 
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
-        s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
+        if (color)
+            s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
+        else
+            s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
 
         glBindVertexArray(s_CubeVAO);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);

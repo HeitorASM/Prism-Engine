@@ -6,11 +6,12 @@
 // painel de propriedades e console. So existe depois que um Project esta
 // ativo (ver ProjectManagerLayer).
 //
-// A viewport agora renderiza uma cena de verdade (um cubo de teste) num
-// Framebuffer offscreen e desenha esse resultado dentro do painel ImGui via
-// ImGui::Image (ver RenderViewportPanel()). Isso prova o caminho completo
-// Framebuffer -> Renderer -> ImGui::Image que o resto da engine (Scene real,
-// gizmos, picking por raycast, etc) vai construir em cima daqui pra frente.
+// Agora possui uma Scene real (Prism::Scene) com Entities de verdade -
+// a Hierarchy panel lista as entidades da cena, clicar seleciona uma, e a
+// Properties panel edita o TransformComponent da entidade selecionada. A
+// Viewport desenha todas as entidades com MeshRendererComponent, cada uma
+// com seu proprio TransformComponent, num Framebuffer offscreen mostrado
+// via ImGui::Image.
 // ============================================================================
 
 #include <Prism.h>
@@ -36,10 +37,10 @@ namespace PrismEditor {
         void RenderPropertiesPanel();
         void RenderConsolePanel();
 
-        // Desenha a cena (por ora, so o cubo de teste) dentro do
-        // m_ViewportFramebuffer. Chamado de OnUpdate, antes do ImGui
-        // desenhar - o resultado (uma textura de cor) e que aparece dentro
-        // do painel Viewport neste mesmo frame.
+        // Desenha todas as entidades da Scene com MeshRendererComponent
+        // dentro do m_ViewportFramebuffer. Chamado de OnUpdate, antes do
+        // ImGui - o resultado (uma textura de cor) e que aparece dentro do
+        // painel Viewport neste mesmo frame.
         void RenderScene(float deltaTime);
 
     private:
@@ -52,24 +53,23 @@ namespace PrismEditor {
         // Viewport - ver RenderViewportPanel().
         Prism::Scope<Prism::Framebuffer> m_ViewportFramebuffer;
 
+        // A cena ativa do editor. Por ora criada em memoria com uma entidade
+        // de exemplo em OnAttach() - salvar/carregar cenas do disco (dentro
+        // de Project::GetMapDirectory(), ver Project.h) e o proximo passo
+        // natural depois deste (ver README, secao "Proximos passos").
+        Prism::Ref<Prism::Scene> m_ActiveScene;
+
+        // Entidade atualmente selecionada na Hierarchy panel. Invalida
+        // (Entity{}) quando nada esta selecionado.
+        Prism::Entity m_SelectedEntity;
+
         // Camera de orbita minima para a viewport do editor (nao e a camera
         // FPS/TPS de jogo mencionada no guia - essa vira quando existir um
         // modo "jogar dentro do editor"). Controle: botao direito do mouse
         // segurado sobre a viewport + arrastar orbita; scroll aproxima/afasta.
         float m_CameraYaw = -35.0f;   // graus
         float m_CameraPitch = 25.0f;  // graus
-        float m_CameraDistance = 4.0f;
-        bool m_OrbitingCamera = false;
-        float m_LastMouseX = 0.0f;
-        float m_LastMouseY = 0.0f;
-
-        // Rotacao do cubo de teste - so para deixar visivel na tela que a
-        // cena esta realmente rodando (nao e uma imagem estatica).
-        float m_CubeRotation = 0.0f;
-
-        // Placeholders de estado de UI - viram sistemas reais nas proximas fases
-        // (Scene/Entity para hierarquia real; Undo/Redo command stack, etc).
-        int m_SelectedEntityIndex = -1;
+        float m_CameraDistance = 6.0f;
     };
 
 }

@@ -41,6 +41,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# --- EnTT (ECS header-only) ---
+# Usado pela Scene (ver Prism/src/Prism/Scene/) para armazenar Entities e
+# Components. Header-only, sem custo de build adicional (so inclui um
+# header), e e o que Hazel/muitas engines caseiras C++ usam pelo mesmo
+# motivo: um ECS robusto e rapido sem reinventar a roda numa fase inicial
+# do projeto onde o foco deveria estar no editor e no renderer, nao em
+# escrever um sparse-set do zero.
+FetchContent_Declare(
+    entt
+    GIT_REPOSITORY https://github.com/skypjack/entt.git
+    GIT_TAG v3.13.2
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(entt)
+
 # --- Dear ImGui (docking branch - necessario para dockspace/paineis do editor) ---
 FetchContent_Declare(
     imgui

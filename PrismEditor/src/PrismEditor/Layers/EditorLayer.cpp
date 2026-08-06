@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 namespace PrismEditor {
@@ -14,12 +15,31 @@ namespace PrismEditor {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
             Prism::Project::GetActive()->GetConfig().Name);
 
-        // Tamanho inicial arbitrario - sera ajustado no primeiro frame em
-        // que RenderViewportPanel() souber o tamanho real do painel ImGui.
         Prism::FramebufferSpecification fbSpec;
         fbSpec.Width = 1280;
         fbSpec.Height = 720;
         m_ViewportFramebuffer = Prism::Framebuffer::Create(fbSpec);
+
+        // Cena de exemplo: por ora criada em memoria toda vez que o editor
+        // abre (nao ha ainda carregamento de Maps do disco - ver
+        // Project::GetMapDirectory() e a nota no README sobre proximos
+        // passos). Duas entidades de exemplo ja bastam para provar que a
+        // Hierarchy/Properties/Viewport funcionam com N entidades, nao so
+        // com uma cena hardcoded de um unico objeto.
+        m_ActiveScene = Prism::Scene::Create("Cena de exemplo");
+
+        Prism::Entity cube = m_ActiveScene->CreateEntity("Cubo");
+        cube.GetComponent<Prism::TransformComponent>().Translation = { -1.2f, 0.0f, 0.0f };
+        cube.AddComponent<Prism::MeshRendererComponent>();
+
+        Prism::Entity cube2 = m_ActiveScene->CreateEntity("Cubo (filho conceitual)");
+        auto& t2 = cube2.GetComponent<Prism::TransformComponent>();
+        t2.Translation = { 1.4f, 0.3f, 0.0f };
+        t2.Scale = { 0.6f, 0.6f, 0.6f };
+        auto& mesh2 = cube2.AddComponent<Prism::MeshRendererComponent>();
+        mesh2.Color = { 0.3f, 0.6f, 0.9f };
+
+        m_SelectedEntity = cube;
     }
 
     void EditorLayer::OnDetach() {}
@@ -32,6 +52,8 @@ namespace PrismEditor {
             (spec.Width != (uint32_t)m_ViewportSize[0] || spec.Height != (uint32_t)m_ViewportSize[1])) {
             m_ViewportFramebuffer->Resize((uint32_t)m_ViewportSize[0], (uint32_t)m_ViewportSize[1]);
         }
+
+        m_ActiveScene->OnUpdate(deltaTime);
 
         RenderScene(deltaTime);
     }
@@ -56,13 +78,23 @@ namespace PrismEditor {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
         glm::mat4 viewProjection = projection * view;
 
-        // Cubo de teste rotacionando lentamente - prova visual de que a
-        // cena esta sendo simulada e redesenhada frame a frame, nao e uma
-        // imagem estatica dentro do painel.
-        m_CubeRotation += deltaTime * 30.0f; // graus por segundo
-        glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(m_CubeRotation), glm::vec3(0.3f, 1.0f, 0.1f));
+        // Desenha TODA entidade da cena que tenha Transform + MeshRenderer -
+        // isto e o "sistema de renderizacao" no sentido ECS: uma funcao que
+        // itera sobre o conjunto de components relevantes, sem saber nada
+        // sobre quantas entidades existem ou o que cada uma "e" alem disso.
+        auto view_ = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::MeshRendererComponent>();
+        for (auto entityHandle : view_) {
+            auto [transform, meshRenderer] = view_.get<Prism::TransformComponent, Prism::MeshRendererComponent>(entityHandle);
 
-        Prism::Renderer::DrawTestCube(glm::value_ptr(viewProjection), glm::value_ptr(model));
+            glm::mat4 model = transform.GetTransform();
+            glm::vec3 color = meshRenderer.Color;
+
+            switch (meshRenderer.Mesh) {
+                case Prism::PrimitiveMesh::Cube:
+                    Prism::Renderer::DrawTestCube(glm::value_ptr(viewProjection), glm::value_ptr(model), glm::value_ptr(color));
+                    break;
+            }
+        }
 
         m_ViewportFramebuffer->Unbind();
     }
@@ -136,6 +168,18 @@ namespace PrismEditor {
                 if (ImGui::MenuItem("Refazer", "Ctrl+Y")) { /* TODO */ }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Entidade")) {
+                if (ImGui::MenuItem("Criar Cubo")) {
+                    Prism::Entity entity = m_ActiveScene->CreateEntity("Cubo");
+                    entity.AddComponent<Prism::MeshRendererComponent>();
+                    m_SelectedEntity = entity;
+                }
+                if (ImGui::MenuItem("Excluir selecionada", nullptr, false, (bool)m_SelectedEntity)) {
+                    m_ActiveScene->DestroyEntity(m_SelectedEntity);
+                    m_SelectedEntity = {};
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Janela")) {
                 ImGui::MenuItem("Viewport", nullptr, true, false);
                 ImGui::MenuItem("Hierarquia", nullptr, true, false);
@@ -174,7 +218,8 @@ namespace PrismEditor {
         // viewport e arrastar orbita a camera; scroll (com o mouse sobre a
         // viewport) aproxima/afasta. E deliberadamente simples - vira a
         // camera de editor "de verdade" (com pan, foco em objeto, etc)
-        // quando o resto do editor (selecao, gizmos) existir.
+        // quando o resto do editor (gizmos de manipulacao, picking por
+        // raycast) existir.
         if (m_ViewportHovered) {
             ImGuiIO& io = ImGui::GetIO();
 
@@ -195,22 +240,73 @@ namespace PrismEditor {
 
     void EditorLayer::RenderHierarchyPanel() {
         ImGui::Begin("Hierarquia");
-        ImGui::TextDisabled("Nenhuma Scene carregada ainda.");
-        ImGui::TextDisabled("(Sistema de Scene/Entity entra na proxima fase)");
-        ImGui::Separator();
-        ImGui::TextDisabled("Cena atual: 1 cubo de teste (hardcoded)");
+
+        // Lista toda entidade da cena ativa (qualquer entidade com
+        // TagComponent, ou seja, todas - ver Scene::CreateEntity). Clicar
+        // seleciona; a selecao e o que a Properties panel usa para saber o
+        // que mostrar/editar.
+        m_ActiveScene->ForEachEntity([&](entt::entity handle, Prism::TagComponent& tag) {
+            Prism::Entity entity(handle, m_ActiveScene.get());
+            bool isSelected = (m_SelectedEntity == entity);
+
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth
+                | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            if (isSelected)
+                flags |= ImGuiTreeNodeFlags_Selected;
+
+            ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", tag.Tag.c_str());
+            if (ImGui::IsItemClicked())
+                m_SelectedEntity = entity;
+        });
+
+        // Clicar em area vazia do painel desseleciona - convencao comum em
+        // editores (Unity/Godot fazem o mesmo).
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered())
+            m_SelectedEntity = {};
+
         ImGui::End();
     }
 
     void EditorLayer::RenderPropertiesPanel() {
         ImGui::Begin("Propriedades");
-        if (m_SelectedEntityIndex == -1) {
+
+        if (!m_SelectedEntity) {
             ImGui::TextDisabled("Nada selecionado.");
+            ImGui::End();
+            return;
         }
+
+        auto& tag = m_SelectedEntity.GetComponent<Prism::TagComponent>();
+        char nameBuffer[256];
+        strncpy(nameBuffer, tag.Tag.c_str(), sizeof(nameBuffer) - 1);
+        nameBuffer[sizeof(nameBuffer) - 1] = '\0';
+        if (ImGui::InputText("Nome", nameBuffer, sizeof(nameBuffer)))
+            tag.Tag = nameBuffer;
+
+        ImGui::Separator();
+
+        if (m_SelectedEntity.HasComponent<Prism::TransformComponent>()) {
+            auto& transform = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
+            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat3("Posicao", glm::value_ptr(transform.Translation), 0.05f);
+                ImGui::DragFloat3("Rotacao", glm::value_ptr(transform.Rotation), 0.5f);
+                ImGui::DragFloat3("Escala", glm::value_ptr(transform.Scale), 0.05f, 0.01f, 100.0f);
+            }
+        }
+
+        if (m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>()) {
+            auto& meshRenderer = m_SelectedEntity.GetComponent<Prism::MeshRendererComponent>();
+            if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Mesh: Cubo (primitiva embutida)");
+                ImGui::ColorEdit3("Cor", glm::value_ptr(meshRenderer.Color));
+            }
+        }
+
         ImGui::Separator();
         ImGui::TextDisabled("Camera do editor");
         ImGui::Text("Yaw: %.1f  Pitch: %.1f", m_CameraYaw, m_CameraPitch);
         ImGui::Text("Distancia: %.2f", m_CameraDistance);
+
         ImGui::End();
     }
 

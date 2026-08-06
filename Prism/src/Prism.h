@@ -16,6 +16,9 @@
 #include "Prism/Renderer/Framebuffer.h"
 #include "Prism/Renderer/Renderer.h"
 #include "Prism/Renderer/Shader.h"
+#include "Prism/Scene/Scene.h"
+#include "Prism/Scene/Entity.h"
+#include "Prism/Scene/Components.h"
 
 // --- Entry Point ---
 // NAO inclua EntryPoint.h aqui. Ele contem um main() e deve ser incluido
