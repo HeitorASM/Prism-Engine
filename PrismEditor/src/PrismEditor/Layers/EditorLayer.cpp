@@ -27,6 +27,12 @@ namespace PrismEditor {
         auto project = Prism::Project::GetActive();
         const auto& startMap = project->GetConfig().StartMap;
 
+        // Historico de undo/redo e por definicao amarrado a UMA Scene em
+        // memoria - trocar a Scene (carregando um mapa do disco) sem
+        // limpar o historico deixaria Undo() tentando desfazer acoes sobre
+        // entidades que nao existem mais na nova Scene.
+        m_CommandHistory.Clear();
+
         if (!startMap.empty()) {
             std::filesystem::path mapPath = project->GetMapDirectory() / startMap;
             if (std::filesystem::exists(mapPath)) {
@@ -194,6 +200,18 @@ namespace PrismEditor {
             ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
         }
 
+        // Atalhos globais de Undo/Redo. Ignorados enquanto o ImGui esta
+        // capturando texto (ex: editando o campo "Nome" na Properties
+        // panel) para nao brigar com o undo nativo de InputText - Ctrl+Z
+        // ali deve desfazer a digitacao, nao uma acao do CommandHistory.
+        if (!io.WantTextInput) {
+            bool ctrl = io.KeyCtrl;
+            if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                m_CommandHistory.Undo();
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
+                m_CommandHistory.Redo();
+        }
+
         RenderMenuBar();
 
         ImGui::End();
@@ -220,18 +238,24 @@ namespace PrismEditor {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Editar")) {
-                if (ImGui::MenuItem("Desfazer", "Ctrl+Z")) { /* TODO: Undo/Redo stack */ }
-                if (ImGui::MenuItem("Refazer", "Ctrl+Y")) { /* TODO */ }
+                std::string undoLabel = m_CommandHistory.CanUndo() ? ("Desfazer '" + m_CommandHistory.PeekUndoName() + "'") : "Desfazer";
+                std::string redoLabel = m_CommandHistory.CanRedo() ? ("Refazer '" + m_CommandHistory.PeekRedoName() + "'") : "Refazer";
+
+                if (ImGui::MenuItem(undoLabel.c_str(), "Ctrl+Z", false, m_CommandHistory.CanUndo()))
+                    m_CommandHistory.Undo();
+                if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, m_CommandHistory.CanRedo()))
+                    m_CommandHistory.Redo();
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Entidade")) {
                 if (ImGui::MenuItem("Criar Cubo")) {
-                    Prism::Entity entity = m_ActiveScene->CreateEntity("Cubo");
-                    entity.AddComponent<Prism::MeshRendererComponent>();
-                    m_SelectedEntity = entity;
+                    auto command = Prism::CreateScope<CreateEntityCommand>(m_ActiveScene, "Cubo", glm::vec3(0.85f, 0.55f, 0.2f));
+                    CreateEntityCommand* raw = command.get();
+                    m_CommandHistory.Execute(std::move(command));
+                    m_SelectedEntity = raw->GetCreatedEntity();
                 }
                 if (ImGui::MenuItem("Excluir selecionada", nullptr, false, (bool)m_SelectedEntity)) {
-                    m_ActiveScene->DestroyEntity(m_SelectedEntity);
+                    m_CommandHistory.Execute(Prism::CreateScope<DeleteEntityCommand>(m_ActiveScene, m_SelectedEntity));
                     m_SelectedEntity = {};
                 }
                 ImGui::EndMenu();
@@ -344,9 +368,27 @@ namespace PrismEditor {
         if (m_SelectedEntity.HasComponent<Prism::TransformComponent>()) {
             auto& transform = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
             if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Cada DragFloat3 e verificado individualmente logo apos ser
+                // desenhado - IsItemActivated()/IsItemDeactivatedAfterEdit()
+                // sempre se referem ao ULTIMO item desenhado, entao nao da
+                // para checar os tres so no final (so pegaria o de Escala).
                 ImGui::DragFloat3("Posicao", glm::value_ptr(transform.Translation), 0.05f);
+                if (ImGui::IsItemActivated())
+                    m_TransformBeforeEdit = transform;
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    m_CommandHistory.Execute(Prism::CreateScope<TransformCommand>(m_SelectedEntity, m_TransformBeforeEdit, transform));
+
                 ImGui::DragFloat3("Rotacao", glm::value_ptr(transform.Rotation), 0.5f);
+                if (ImGui::IsItemActivated())
+                    m_TransformBeforeEdit = transform;
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    m_CommandHistory.Execute(Prism::CreateScope<TransformCommand>(m_SelectedEntity, m_TransformBeforeEdit, transform));
+
                 ImGui::DragFloat3("Escala", glm::value_ptr(transform.Scale), 0.05f, 0.01f, 100.0f);
+                if (ImGui::IsItemActivated())
+                    m_TransformBeforeEdit = transform;
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    m_CommandHistory.Execute(Prism::CreateScope<TransformCommand>(m_SelectedEntity, m_TransformBeforeEdit, transform));
             }
         }
 
@@ -354,7 +396,12 @@ namespace PrismEditor {
             auto& meshRenderer = m_SelectedEntity.GetComponent<Prism::MeshRendererComponent>();
             if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextDisabled("Mesh: Cubo (primitiva embutida)");
+
                 ImGui::ColorEdit3("Cor", glm::value_ptr(meshRenderer.Color));
+                if (ImGui::IsItemActivated())
+                    m_ColorBeforeEdit = meshRenderer.Color;
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    m_CommandHistory.Execute(Prism::CreateScope<MeshColorCommand>(m_SelectedEntity, m_ColorBeforeEdit, meshRenderer.Color));
             }
         }
 

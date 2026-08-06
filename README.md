@@ -30,7 +30,7 @@ será só outra `Layer`/executável, sem exigir mudanças no core.
 ```
 Prism/          -> a engine, biblioteca estática (Prism.lib)
   src/Prism/
-    Core/       -> Application, Window, eventos, Log
+    Core/       -> Application, Window, eventos, Log, Command/CommandHistory (undo-redo)
     Layer/      -> Layer, LayerStack
     Renderer/   -> GraphicsContext (abstrai OpenGL/futuro Vulkan),
                    Framebuffer (offscreen render target para a viewport),
@@ -99,10 +99,39 @@ comum de erro de build nesta engine.
    menu "Arquivo > Salvar Mapa" já funciona; a cena salva mais recentemente
    é reaberta automaticamente na próxima vez que o editor abre, via
    `ProjectConfig::StartMap`).
-4. Undo/Redo command stack (essencial, conforme definido).
+4. ~~Undo/Redo command stack.~~ ✅ feito
+   (Ctrl+Z/Ctrl+Y globais, cobrindo mover/rotacionar/escalar entidade, mudar
+   cor, criar e excluir entidade - ver `Prism::CommandHistory` e
+   `PrismEditor/Commands/EditorCommands.h`).
 5. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
 6. Integrar Box3D, corpos rígidos básicos.
 7. BSP/CSG (brushes como um tipo de Entity no editor).
+
+## Nota sobre Undo/Redo (estado atual)
+
+`Prism::Command`/`Prism::CommandHistory` (`Prism/src/Prism/Core/`) ficam no
+CORE da engine de propósito — qualquer ferramenta futura que edite estado
+(editor de brushes/BSP, editor de materiais) vai precisar do mesmo
+mecanismo. Os comandos concretos (`TransformCommand`, `MeshColorCommand`,
+`CreateEntityCommand`, `DeleteEntityCommand`) ficam do lado do Editor
+(`PrismEditor/src/PrismEditor/Commands/EditorCommands.h`), porque conhecem
+`Entity`/`Scene` do fluxo de edição específico.
+
+Para edições contínuas via `DragFloat3`/`ColorEdit3` (arrastar posição,
+escolher cor), o editor captura o estado "antes" quando o gesto **começa**
+(`ImGui::IsItemActivated()`) e só empurra **um** comando no histórico quando
+o gesto **termina** (`ImGui::IsItemDeactivatedAfterEdit()`) — arrastar a
+posição não gera um comando por frame, só um comando por gesto completo.
+
+Trocar de cena (carregar um mapa do disco) limpa o histórico
+(`CommandHistory::Clear()`), já que um `Undo()` não tem como desfazer ações
+sobre entidades de uma cena que não está mais em memória.
+
+Limitação conhecida: não há ainda um atalho Ctrl+S para salvar (fica para
+quando existir um sistema de atalhos mais genérico); Ctrl+Z/Ctrl+Y já
+funcionam globalmente, exceto enquanto o ImGui está capturando texto (ex:
+editando o campo "Nome"), onde o undo nativo do campo de texto tem
+prioridade.
 
 ## Nota sobre persistência de Scene (estado atual)
 

@@ -16,10 +16,15 @@
 // A Scene agora tambem persiste em disco (Prism::SceneSerializer, formato
 // binario .prismmap dentro de Project::GetMapDirectory()) - ver
 // LoadOrCreateScene() e SaveActiveScene().
+//
+// Undo/Redo (Ctrl+Z / Ctrl+Y) cobre: mover/rotacionar/escalar entidade,
+// mudar cor, criar entidade, excluir entidade - ver m_CommandHistory e
+// PrismEditor/Commands/EditorCommands.h.
 // ============================================================================
 
 #include <Prism.h>
 #include <glm/glm.hpp>
+#include "../Commands/EditorCommands.h"
 
 namespace PrismEditor {
 
@@ -43,9 +48,10 @@ namespace PrismEditor {
 
         // Salva a Scene ativa em Project::GetMapDirectory()/<StartMap>,
         // criando o caminho no ProjectConfig se ainda nao existir (primeiro
-        // save de um projeto novo). Chamado pelo menu Arquivo > Salvar Mapa
-        // e por Ctrl+S (ver OnEvent... por ora so o menu, atalho fica para
-        // quando o sistema de Input/atalhos existir).
+        // save de um projeto novo). Chamado pelo menu Arquivo > Salvar Mapa.
+        // Ainda sem atalho Ctrl+S (Ctrl+Z/Ctrl+Y ja funcionam - ver
+        // RenderDockspace() - mas Ctrl+S fica para quando fizer sentido
+        // adicionar um pequeno sistema de atalhos mais generico).
         void SaveActiveScene();
 
         // Tenta carregar Project::GetConfig().StartMap; se nao existir
@@ -78,6 +84,21 @@ namespace PrismEditor {
         // Entidade atualmente selecionada na Hierarchy panel. Invalida
         // (Entity{}) quando nada esta selecionado.
         Prism::Entity m_SelectedEntity;
+
+        // Historico de undo/redo do editor (ver Prism::CommandHistory /
+        // PrismEditor::EditorCommands). Compartilhado por toda edicao de
+        // Scene feita atraves da UI - Transform, cor, criar/excluir
+        // entidade.
+        Prism::CommandHistory m_CommandHistory;
+
+        // Estado "antes" capturado no momento em que o usuario COMECA a
+        // arrastar um DragFloat3/ColorEdit3 na Properties panel (via
+        // ImGui::IsItemActivated()) - usado para montar um unico
+        // TransformCommand/MeshColorCommand quando o arraste termina, em
+        // vez de um comando por frame de movimento do mouse. Valido apenas
+        // enquanto um drag esta em andamento.
+        Prism::TransformComponent m_TransformBeforeEdit;
+        glm::vec3 m_ColorBeforeEdit{ 0.0f };
 
         // Camera de orbita minima para a viewport do editor (nao e a camera
         // FPS/TPS de jogo mencionada no guia - essa vira quando existir um
