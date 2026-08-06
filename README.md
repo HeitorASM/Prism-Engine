@@ -35,6 +35,7 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
     Renderer/   -> GraphicsContext (abstrai OpenGL/futuro Vulkan),
                    Framebuffer (offscreen render target para a viewport),
                    Shader, Renderer (API minima de desenho)
+    Scene/      -> Scene, Entity, Components (ECS via EnTT)
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
 
@@ -92,21 +93,41 @@ comum de erro de build nesta engine.
 ## Próximos passos
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
-   (cubo de teste; falta trocar por uma `Scene` real no passo 2).
-2. Sistema de `Scene`/`Entity` (provavelmente ECS simples) + Hierarchy panel real.
-3. Undo/Redo command stack (essencial, conforme definido).
-4. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
-5. Integrar Box3D, corpos rígidos básicos.
-6. BSP/CSG (brushes como um tipo de Entity no editor).
+2. ~~Sistema de `Scene`/`Entity` (ECS via EnTT) + Hierarchy panel real.~~ ✅ feito
+   (Hierarchy lista entidades de verdade; Properties edita Transform/Mesh
+   Renderer da entidade selecionada; Viewport desenha todas as entidades da
+   cena, não mais um cubo fixo).
+3. Salvar/carregar `Scene` em disco (dentro de `Project::GetMapDirectory()`,
+   formato binário conforme decidido no guia do protótipo).
+4. Undo/Redo command stack (essencial, conforme definido).
+5. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
+6. Integrar Box3D, corpos rígidos básicos.
+7. BSP/CSG (brushes como um tipo de Entity no editor).
+
+## Nota sobre a Scene/ECS (estado atual)
+
+`Scene`/`Entity` usam [EnTT](https://github.com/skypjack/entt) por baixo
+(header-only, baixado via `FetchContent` — não precisa instalar nada à
+parte). `Entity` é só um par (ID, `Scene*`); todo dado real vive em
+*components* (`Prism/src/Prism/Scene/Components.h`): `TagComponent`,
+`TransformComponent`, `MeshRendererComponent`, e um `CameraComponent` ainda
+não usado (reservado para quando existir um modo "Play" com câmera de jogo,
+distinta da câmera de órbita do editor).
+
+Toda entidade nasce com `TagComponent` + `TransformComponent` (ver
+`Scene::CreateEntity`). O "sistema" que desenha a cena é só uma função que
+itera `registry.view<TransformComponent, MeshRendererComponent>()` — ver
+`EditorLayer::RenderScene()`. Adicionar um novo tipo de mesh primitivo
+(esfera, plano) é: adicionar ao `enum PrimitiveMesh`, ensinar `Renderer` a
+desenhar essa geometria, e adicionar um `case` no `switch` de
+`RenderScene()`.
 
 ## Nota sobre a Viewport (estado atual do renderer)
 
 O `Renderer` hoje é propositalmente mínimo: um shader único com iluminação
-direcional simples, desenhando um cubo hardcoded (`Renderer::DrawTestCube`).
-Isso existe só para provar o caminho completo
-`Framebuffer → Shader/Renderer → ImGui::Image` funcionando de ponta a ponta.
-Quando o sistema de `Scene`/`Entity` (passo 2 acima) existir, o lugar certo
-para evoluir é trocar essa chamada fixa por um loop que percorre as entidades
-da cena ativa e desenha cada uma com seu próprio mesh/material — o
-`Framebuffer` e o resto da integração com o painel Viewport não precisam
-mudar.
+direcional simples, sabendo desenhar só um tipo de primitiva (cubo unitário,
+`Renderer::DrawTestCube`). Isso existe para provar o caminho completo
+`Framebuffer → Scene/ECS → Shader/Renderer → ImGui::Image` funcionando de
+ponta a ponta. O "Renderizador principal" definitivo (forward vs deferred,
+batching, materiais de verdade, importação de meshes) ainda está em aberto,
+conforme o guia do protótipo.
