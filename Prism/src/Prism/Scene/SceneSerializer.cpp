@@ -156,6 +156,20 @@ namespace Prism {
             return false;
         }
 
+        // Sanidade: um arquivo truncado/corrompido pode fazer este campo
+        // vir com um valor absurdo (bytes de lixo interpretados como
+        // uint32_t). Sem este teto, o loop abaixo tentaria criar milhoes
+        // de entidades e cada ReadString() dentro dele tentaria alocar
+        // memoria para dados que nao existem no arquivo - e exatamente
+        // esse tipo de leitura descontrolada que causa abort() por
+        // corrupcao de heap no CRT em modo Debug.
+        constexpr uint32_t kMaxReasonableEntityCount = 1'000'000;
+        if (entityCount > kMaxReasonableEntityCount) {
+            PRISM_CORE_ERROR("SceneSerializer: contagem de entidades absurda (", entityCount,
+                ") em '", filepath.string(), "' - arquivo provavelmente corrompido/truncado.");
+            return false;
+        }
+
         // So substituimos o estado da Scene depois de ler tudo com sucesso
         // (ver loop abaixo) - assim uma leitura que falha no meio nao deixa
         // a Scene ativa pela metade.
@@ -189,6 +203,16 @@ namespace Prism {
                 bool meshOk = ReadRaw(in, meshRenderer.Mesh) && ReadRaw(in, meshRenderer.Color);
                 if (!meshOk) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (mesh renderer da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                // Validacao do enum: um valor fora do range conhecido e
+                // sinal de arquivo corrompido (ou de uma versao futura do
+                // formato com mais primitivas - o teto do enum de hoje).
+                // Sem checar isto, um PrimitiveMesh invalido seguiria para
+                // dentro da Scene e so falharia (silenciosamente, sem
+                // desenhar nada) la na frente em Renderer::DrawTestCube.
+                if (meshRenderer.Mesh != PrimitiveMesh::Cube) {
+                    PRISM_CORE_ERROR("SceneSerializer: PrimitiveMesh invalido na entidade ", i, " de '", filepath.string(), "'.");
                     return false;
                 }
             }

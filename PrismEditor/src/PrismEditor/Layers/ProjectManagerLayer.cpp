@@ -76,19 +76,34 @@ namespace PrismEditor {
             ImGui::TextDisabled("Nenhum projeto recente ainda.");
         }
 
+        // IMPORTANTE: nao chamamos OpenProject() diretamente daqui dentro
+        // do loop. OpenProject() -> AddToRecentProjects() faz erase()+
+        // insert() em m_RecentProjects, o que invalidaria os iteradores
+        // deste 'for' NO MEIO da propria iteracao (use-after-free) -
+        // exatamente o tipo de corrupcao de heap que o CRT em modo Debug
+        // detecta e mata o processo com abort(). Em vez disso, so
+        // registramos qual caminho foi clicado e abrimos o projeto DEPOIS
+        // que o loop termina.
+        std::filesystem::path clickedProject;
+        bool clicked = false;
+
         for (const auto& path : m_RecentProjects) {
             std::string label = path.stem().string();
             std::string fullPathLabel = path.string();
 
             ImGui::PushID(fullPathLabel.c_str());
             if (ImGui::Selectable(label.c_str(), false, 0, ImVec2(0, 40))) {
-                OpenProject(path);
+                clickedProject = path;
+                clicked = true;
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", fullPathLabel.c_str());
             }
             ImGui::PopID();
         }
+
+        if (clicked)
+            OpenProject(clickedProject);
     }
 
     void ProjectManagerLayer::RenderNewProjectPanel() {
