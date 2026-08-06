@@ -71,4 +71,12 @@ namespace Prism {
         return serializer.Serialize(s_ActiveProject->m_ProjectFilePath);
     }
 
+    bool Project::SetStartMap(const std::filesystem::path& relativeMapPath) {
+        if (!s_ActiveProject)
+            return false;
+
+        s_ActiveProject->m_Config.StartMap = relativeMapPath;
+        return SaveActive();
+    }
+
 }

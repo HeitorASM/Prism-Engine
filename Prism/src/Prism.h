@@ -19,6 +19,7 @@
 #include "Prism/Scene/Scene.h"
 #include "Prism/Scene/Entity.h"
 #include "Prism/Scene/Components.h"
+#include "Prism/Scene/SceneSerializer.h"
 
 // --- Entry Point ---
 // NAO inclua EntryPoint.h aqui. Ele contem um main() e deve ser incluido

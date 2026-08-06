@@ -35,7 +35,7 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
     Renderer/   -> GraphicsContext (abstrai OpenGL/futuro Vulkan),
                    Framebuffer (offscreen render target para a viewport),
                    Shader, Renderer (API minima de desenho)
-    Scene/      -> Scene, Entity, Components (ECS via EnTT)
+    Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
 
@@ -90,19 +90,39 @@ GLFW ou OpenGL, em **todo** arquivo `.cpp`. Veja o comentário completo em
 `Prism/src/Prism/Renderer/OpenGLContext.cpp`. Ignorar isso é a causa mais
 comum de erro de build nesta engine.
 
-## Próximos passos
+## Próximos passos sugeridos (nesta ordem)
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
 2. ~~Sistema de `Scene`/`Entity` (ECS via EnTT) + Hierarchy panel real.~~ ✅ feito
-   (Hierarchy lista entidades de verdade; Properties edita Transform/Mesh
-   Renderer da entidade selecionada; Viewport desenha todas as entidades da
-   cena, não mais um cubo fixo).
-3. Salvar/carregar `Scene` em disco (dentro de `Project::GetMapDirectory()`,
-   formato binário conforme decidido no guia do protótipo).
+3. ~~Salvar/carregar `Scene` em disco.~~ ✅ feito
+   (formato binário `.prismmap` dentro de `Project::GetMapDirectory()`;
+   menu "Arquivo > Salvar Mapa" já funciona; a cena salva mais recentemente
+   é reaberta automaticamente na próxima vez que o editor abre, via
+   `ProjectConfig::StartMap`).
 4. Undo/Redo command stack (essencial, conforme definido).
 5. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
 6. Integrar Box3D, corpos rígidos básicos.
 7. BSP/CSG (brushes como um tipo de Entity no editor).
+
+## Nota sobre persistência de Scene (estado atual)
+
+`Prism::SceneSerializer` (`Prism/src/Prism/Scene/SceneSerializer.h/.cpp`)
+salva/carrega uma `Scene` inteira em um único arquivo binário `.prismmap`,
+com um cabeçalho `magic + versão` (`kSceneFormatVersion`) para detectar
+arquivos corrompidos ou de um formato futuro incompatível — hoje qualquer
+versão diferente da atual é recusada (sem migração automática ainda).
+
+Fluxo no editor: `EditorLayer::LoadOrCreateScene()` tenta carregar
+`ProjectConfig::StartMap`; se não existir (projeto novo), cria a cena de
+exemplo em memória de sempre. `EditorLayer::SaveActiveScene()` (menu
+Arquivo > Salvar Mapa) grava o arquivo e, no primeiro save, também chama
+`Project::SetStartMap()` para lembrar qual mapa reabrir da próxima vez.
+
+Limitações conhecidas, deixadas de propósito para não expandir escopo agora:
+não há atalho de teclado Ctrl+S funcional ainda (precisa de um sistema de
+Input por polling, que ainda não existe — ver nota em `EditorLayer::OnEvent`);
+não há suporte a múltiplos mapas por projeto nem uma janela "Salvar como"
+(o nome do arquivo vem do nome da cena, automaticamente, no primeiro save).
 
 ## Nota sobre a Scene/ECS (estado atual)
 

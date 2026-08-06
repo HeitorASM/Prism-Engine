@@ -20,12 +20,30 @@ namespace PrismEditor {
         fbSpec.Height = 720;
         m_ViewportFramebuffer = Prism::Framebuffer::Create(fbSpec);
 
-        // Cena de exemplo: por ora criada em memoria toda vez que o editor
-        // abre (nao ha ainda carregamento de Maps do disco - ver
-        // Project::GetMapDirectory() e a nota no README sobre proximos
-        // passos). Duas entidades de exemplo ja bastam para provar que a
-        // Hierarchy/Properties/Viewport funcionam com N entidades, nao so
-        // com uma cena hardcoded de um unico objeto.
+        LoadOrCreateScene();
+    }
+
+    void EditorLayer::LoadOrCreateScene() {
+        auto project = Prism::Project::GetActive();
+        const auto& startMap = project->GetConfig().StartMap;
+
+        if (!startMap.empty()) {
+            std::filesystem::path mapPath = project->GetMapDirectory() / startMap;
+            if (std::filesystem::exists(mapPath)) {
+                Prism::SceneSerializer serializer(Prism::Scene::Create());
+                if (serializer.Deserialize(mapPath)) {
+                    m_ActiveScene = serializer.GetScene();
+                    m_SelectedEntity = {};
+                    return;
+                }
+                PRISM_WARN("Falha ao carregar '", mapPath.string(), "' - criando cena de exemplo em memoria.");
+            }
+        }
+
+        // Projeto novo (ou StartMap ainda nao definido/nao encontrado):
+        // cena de exemplo em memoria, igual antes de existir persistencia.
+        // "Salvar Mapa" (ver SaveActiveScene) e o que grava isso no disco
+        // e define StartMap pela primeira vez.
         m_ActiveScene = Prism::Scene::Create("Cena de exemplo");
 
         Prism::Entity cube = m_ActiveScene->CreateEntity("Cubo");
@@ -40,6 +58,42 @@ namespace PrismEditor {
         mesh2.Color = { 0.3f, 0.6f, 0.9f };
 
         m_SelectedEntity = cube;
+    }
+
+    void EditorLayer::SaveActiveScene() {
+        auto project = Prism::Project::GetActive();
+
+        // Se o projeto ainda nao tem um StartMap definido (primeiro save),
+        // usamos o nome da cena como nome de arquivo - sanitizado o minimo
+        // (espacos viram underscore) para nao gerar um caminho invalido no
+        // Windows. Suporte a multiplos mapas por projeto, com nome escolhido
+        // pelo usuario, fica para quando existir uma janela "Salvar como".
+        bool isFirstSave = project->GetConfig().StartMap.empty();
+        std::filesystem::path startMapPath = project->GetConfig().StartMap;
+        if (isFirstSave) {
+            std::string fileName = m_ActiveScene->GetName();
+            for (auto& c : fileName) if (c == ' ') c = '_';
+            startMapPath = fileName + ".prismmap";
+        }
+
+        std::filesystem::path mapPath = project->GetMapDirectory() / startMapPath;
+
+        std::error_code ec;
+        std::filesystem::create_directories(mapPath.parent_path(), ec);
+
+        Prism::SceneSerializer serializer(m_ActiveScene);
+        if (!serializer.Serialize(mapPath)) {
+            PRISM_ERROR("Falha ao salvar o mapa em: ", mapPath.string());
+            return;
+        }
+
+        // So grava StartMap de volta no .prismproj depois que o .prismmap
+        // foi escrito com sucesso - evita apontar StartMap para um arquivo
+        // que nao existe se Serialize() tivesse falhado acima.
+        if (isFirstSave)
+            Prism::Project::SetStartMap(startMapPath);
+
+        PRISM_INFO("Mapa salvo: ", mapPath.string());
     }
 
     void EditorLayer::OnDetach() {}
@@ -156,7 +210,9 @@ namespace PrismEditor {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("Arquivo")) {
                 if (ImGui::MenuItem("Novo Mapa")) { /* TODO */ }
-                if (ImGui::MenuItem("Salvar Mapa", "Ctrl+S")) { /* TODO */ }
+                if (ImGui::MenuItem("Salvar Mapa", "Ctrl+S")) {
+                    SaveActiveScene();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Fechar Projeto")) {
                     Prism::Application::Get().Close(); // TODO: voltar ao ProjectManagerLayer em vez de fechar

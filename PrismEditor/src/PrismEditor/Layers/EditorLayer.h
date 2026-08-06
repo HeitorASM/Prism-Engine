@@ -12,6 +12,10 @@
 // Viewport desenha todas as entidades com MeshRendererComponent, cada uma
 // com seu proprio TransformComponent, num Framebuffer offscreen mostrado
 // via ImGui::Image.
+//
+// A Scene agora tambem persiste em disco (Prism::SceneSerializer, formato
+// binario .prismmap dentro de Project::GetMapDirectory()) - ver
+// LoadOrCreateScene() e SaveActiveScene().
 // ============================================================================
 
 #include <Prism.h>
@@ -36,6 +40,18 @@ namespace PrismEditor {
         void RenderHierarchyPanel();
         void RenderPropertiesPanel();
         void RenderConsolePanel();
+
+        // Salva a Scene ativa em Project::GetMapDirectory()/<StartMap>,
+        // criando o caminho no ProjectConfig se ainda nao existir (primeiro
+        // save de um projeto novo). Chamado pelo menu Arquivo > Salvar Mapa
+        // e por Ctrl+S (ver OnEvent... por ora so o menu, atalho fica para
+        // quando o sistema de Input/atalhos existir).
+        void SaveActiveScene();
+
+        // Tenta carregar Project::GetConfig().StartMap; se nao existir
+        // ainda (projeto novo, primeira vez abrindo o editor), cria uma
+        // cena de exemplo em memoria em vez de falhar.
+        void LoadOrCreateScene();
 
         // Desenha todas as entidades da Scene com MeshRendererComponent
         // dentro do m_ViewportFramebuffer. Chamado de OnUpdate, antes do

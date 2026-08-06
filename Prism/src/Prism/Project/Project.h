@@ -67,6 +67,13 @@ namespace Prism {
         // Salva a configuracao atual do projeto ativo de volta pro .prismproj.
         static bool SaveActive();
 
+        // Define o mapa/cena principal do projeto e persiste isso no
+        // .prismproj imediatamente (chama SaveActive() internamente). O
+        // caminho e relativo a GetMapDirectory() - ver ProjectConfig::StartMap.
+        // Usado por EditorLayer::SaveActiveScene() no primeiro save de uma
+        // cena nova, para que o editor saiba qual mapa reabrir da proxima vez.
+        static bool SetStartMap(const std::filesystem::path& relativeMapPath);
+
     private:
         ProjectConfig m_Config;
         std::filesystem::path m_ProjectDirectory;
