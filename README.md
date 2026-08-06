@@ -30,7 +30,8 @@ será só outra `Layer`/executável, sem exigir mudanças no core.
 ```
 Prism/          -> a engine, biblioteca estática (Prism.lib)
   src/Prism/
-    Core/       -> Application, Window, eventos, Log, Command/CommandHistory (undo-redo)
+    Core/       -> Application, Window, eventos, Log, LogBuffer,
+                   Command/CommandHistory (undo-redo)
     Layer/      -> Layer, LayerStack
     Renderer/   -> GraphicsContext (abstrai OpenGL/futuro Vulkan),
                    Framebuffer (offscreen render target para a viewport),
@@ -45,6 +46,10 @@ PrismEditor/    -> o executável do editor
     PrismEditor/Layers/
       ProjectManagerLayer.*   -> tela inicial (criar/abrir projeto)
       EditorLayer.*           -> dockspace + painéis do editor
+    PrismEditor/Panels/
+      ConsolePanel.*          -> painel de log (lê Prism::LogBuffer)
+    PrismEditor/Commands/
+      EditorCommands.h        -> Commands concretos (Transform, criar/excluir entidade, etc)
 
 vendor/         -> dependências de terceiros
   glad/         -> vendorizado localmente (gerado, OpenGL 4.5 Core)
@@ -103,9 +108,35 @@ comum de erro de build nesta engine.
    (Ctrl+Z/Ctrl+Y globais, cobrindo mover/rotacionar/escalar entidade, mudar
    cor, criar e excluir entidade - ver `Prism::CommandHistory` e
    `PrismEditor/Commands/EditorCommands.h`).
-5. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
-6. Integrar Box3D, corpos rígidos básicos.
-7. BSP/CSG (brushes como um tipo de Entity no editor).
+5. ~~Console de verdade.~~ ✅ feito
+   (le de `Prism::LogBuffer`, cor por nivel, filtro de texto, toggles de
+   verbosidade, auto-scroll - ver `PrismEditor/Panels/ConsolePanel.h`).
+6. Content Browser (painel de arquivos do projeto - ver Assets/Maps/Scripts).
+7. Sistema de salvamento melhor: "Salvar Como" com nome, multiplos mapas por
+   projeto, "Novo Mapa" funcional (hoje e um TODO vazio).
+8. Entidades mais robustas (base para scripting: `ScriptComponent`,
+   possivelmente parenting/hierarquia real).
+9. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
+10. Integrar Box3D, corpos rígidos básicos.
+11. BSP/CSG (brushes como um tipo de Entity no editor).
+
+## Nota sobre o Console (estado atual)
+
+`Prism::LogBuffer` (`Prism/src/Prism/Core/LogBuffer.h/.cpp`) se conecta como
+um *sink* opcional do `Log` (`Log::SetSink`, instalado em
+`Application::Application` antes de qualquer log relevante acontecer) e
+guarda as últimas 2000 mensagens num buffer circular. Nenhuma mudança na API
+de log existente (`PRISM_INFO`, `PRISM_CORE_ERROR`, etc.) — quem chama essas
+macros não sabe nem precisa saber que existe um Console; a engine standalone
+(fora do editor) continua funcionando exatamente como antes.
+
+`PrismEditor::ConsolePanel` (`PrismEditor/src/PrismEditor/Panels/ConsolePanel.h`)
+lê esse buffer a cada frame e desenha: cor por nível (cinza/branco/amarelo/
+vermelho), filtro de texto case-insensitive, toggles para esconder
+Trace/Info/Warn/Error (Critical fica sempre junto de Error), auto-scroll
+inteligente (só desce sozinho se você já estava perto do fim — rolar pra
+cima pra ler algo antigo não é interrompido por mensagens novas), e um botão
+Limpar.
 
 ## Nota sobre Undo/Redo (estado atual)
 

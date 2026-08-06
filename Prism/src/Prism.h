@@ -9,6 +9,7 @@
 
 #include "Prism/Core/Base.h"
 #include "Prism/Core/Log.h"
+#include "Prism/Core/LogBuffer.h"
 #include "Prism/Core/Application.h"
 #include "Prism/Core/Window.h"
 #include "Prism/Core/Command.h"

@@ -25,6 +25,7 @@
 #include <Prism.h>
 #include <glm/glm.hpp>
 #include "../Commands/EditorCommands.h"
+#include "../Panels/ConsolePanel.h"
 
 namespace PrismEditor {
 
@@ -45,6 +46,11 @@ namespace PrismEditor {
         void RenderHierarchyPanel();
         void RenderPropertiesPanel();
         void RenderConsolePanel();
+        // ^ RenderConsolePanel() so delega para m_ConsolePanel.OnImGuiRender()
+        //   - ver EditorLayer.cpp. O painel de verdade vive em
+        //   PrismEditor/Panels/ConsolePanel.h porque tem estado e logica
+        //   proprios (filtros, auto-scroll) grandes o bastante para nao
+        //   fazer sentido inline aqui.
 
         // Salva a Scene ativa em Project::GetMapDirectory()/<StartMap>,
         // criando o caminho no ProjectConfig se ainda nao existir (primeiro
@@ -99,6 +105,11 @@ namespace PrismEditor {
         // enquanto um drag esta em andamento.
         Prism::TransformComponent m_TransformBeforeEdit;
         glm::vec3 m_ColorBeforeEdit{ 0.0f };
+
+        // Painel de Console - le do Prism::LogBuffer (ver Prism.h) e tem
+        // seu proprio estado de UI (filtros, auto-scroll), por isso vive em
+        // uma classe separada em vez de ser so metodos soltos aqui.
+        ConsolePanel m_ConsolePanel;
 
         // Camera de orbita minima para a viewport do editor (nao e a camera
         // FPS/TPS de jogo mencionada no guia - essa vira quando existir um

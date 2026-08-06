@@ -2,6 +2,7 @@
 #include "Application.h"
 
 #include "Log.h"
+#include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
 #include <GLFW/glfw3.h>
 
@@ -13,6 +14,12 @@ namespace Prism {
         : m_Specification(spec) {
         PRISM_ASSERT(!s_Instance, "So pode existir uma Application por processo!");
         s_Instance = this;
+
+        // Instalado antes de qualquer log relevante acontecer, para que o
+        // Console do editor (ou qualquer outro consumidor futuro) capture
+        // o historico completo da sessao, nao so o que foi logado depois
+        // que o EditorLayer/ConsolePanel foi anexado.
+        LogBuffer::Install();
 
         WindowProps props(spec.Name, spec.WindowWidth, spec.WindowHeight);
         m_Window = Window::Create(props);

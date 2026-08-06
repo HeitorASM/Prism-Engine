@@ -414,10 +414,7 @@ namespace PrismEditor {
     }
 
     void EditorLayer::RenderConsolePanel() {
-        ImGui::Begin("Console");
-        ImGui::TextDisabled("Saida de log aparecera aqui.");
-        ImGui::TextDisabled("(Hoje o Log.h escreve no stdout/stderr do processo)");
-        ImGui::End();
+        m_ConsolePanel.OnImGuiRender();
     }
 
 }
