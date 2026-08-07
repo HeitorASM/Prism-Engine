@@ -35,7 +35,9 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
     Layer/      -> Layer, LayerStack
     Renderer/   -> GraphicsContext (abstrai OpenGL/futuro Vulkan),
                    Framebuffer (offscreen render target para a viewport),
-                   Shader, Renderer (API minima de desenho)
+                   Shader, Mesh (wrapper generico de VAO/VBO/EBO),
+                   PrimitiveMeshFactory (gera geometria de Cube/Sphere/
+                   Capsule/Cylinder/Plane), Renderer (API minima de desenho)
     Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
@@ -124,9 +126,14 @@ comum de erro de build nesta engine.
    (`LightComponent`, `ColliderComponent`, `RigidBodyComponent`,
    `ScriptComponent` novos; Properties panel virou "Add/Remove Component";
    presets no menu Entidade: Luz, Character, Entidade Vazia).
-9. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
-10. Integrar Box3D, corpos rígidos básicos.
-11. BSP/CSG (brushes como um tipo de Entity no editor).
+9. ~~Mais meshes básicas.~~ ✅ feito
+   (Sphere, Capsule, Cylinder, Plane, além do Cube - ver nota abaixo).
+10. `CameraComponent` funcional (edição completa + gizmo visual na
+    viewport). Modo "Play" fica para depois, como uma janela separada (ver
+    nota abaixo) - não dentro do viewport do editor.
+11. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
+12. Integrar Box3D, corpos rígidos básicos.
+13. BSP/CSG (brushes como um tipo de Entity no editor).
 
 ## Nota sobre o Console (estado atual)
 
@@ -189,6 +196,42 @@ ainda não existe); sem confirmação de "salvar antes de trocar de mapa" —
 carregar outro mapa (seja pelo Content Browser, seja por "Novo Mapa") perde
 qualquer alteração não salva na cena atual, sem aviso — fica para quando
 existir rastreamento de "alterações não salvas" (dirty flag).
+
+## Nota sobre as novas primitivas de mesh (estado atual)
+
+Cinco primitivas embutidas agora: Cube, Sphere, Capsule, Cylinder, Plane
+(`PrimitiveMesh` em `Components.h`). A geometria de cada uma é gerada uma
+única vez, na CPU, por `Prism::PrimitiveMeshFactory`
+(`Prism/src/Prism/Renderer/PrimitiveMeshFactory.h/.cpp` — matemática pura,
+nenhuma chamada OpenGL) e enviada para a GPU como um `Prism::Mesh`
+(`Renderer/Mesh.h/.cpp` — dono de VAO/VBO/EBO genérico) dentro de
+`Renderer::Init()`. O `Renderer` mantém uma malha de GPU por primitiva,
+reaproveitada por toda entidade que usar aquele tipo — não há geração nem
+alocação por entidade ou por frame.
+
+A Capsule é construída como uma esfera "esticada": os anéis de latitude da
+metade de cima são deslocados para `+halfHeight` e os da metade de baixo
+para `-halfHeight`, criando o trecho cilíndrico reto entre as duas
+meias-esferas. A forma (raio 0.5, altura 1.0) já bate com o preset "Criar
+Character" do menu Entidade, que usa `ColliderShape::Capsule` com essas
+mesmas dimensões.
+
+A Properties panel agora tem um combo "Mesh" no `Mesh Renderer` para trocar
+a primitiva de uma entidade existente a qualquer momento — como os outros
+campos de Light/Collider/RigidBody, essa troca ainda não gera um comando
+individual de undo (mesma limitação já documentada acima).
+
+## Nota sobre modo "Play" (planejado, ainda não implementado)
+
+Diferente de Unity/Unreal (que rodam o jogo inline dentro do viewport do
+editor), o modo Play da Prism Engine vai abrir uma **janela separada**
+(nova janela GLFW) rodando a `Scene` ativa a partir da `CameraComponent`
+marcada como `Primary` — o editor continua aberto do lado, sem precisar
+duplicar framebuffers ou gerenciar duas fontes de câmera dentro da mesma
+janela. É o mesmo modelo que engines baseadas em Source/Hammer usam
+(compilar → o jogo roda numa janela própria). Isso ainda não está
+implementado — é a direção planejada para quando o modo Play for
+construído, depois de `CameraComponent` funcional e do scripting em Lua.
 
 ## Nota sobre Entidades mais robustas / Add Component (estado atual)
 

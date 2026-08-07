@@ -8,10 +8,10 @@
 // de dado nenhum.
 //
 // Isto substitui o cubo hardcoded que o EditorLayer desenhava diretamente
-// via Renderer::DrawTestCube (fase anterior): agora esse mesmo cubo e uma
-// Entity real dentro de uma Scene, com TagComponent + TransformComponent +
-// MeshRendererComponent - exatamente os components que qualquer outra
-// entidade adicionada no editor tambem vai ter.
+// via uma chamada fixa ao Renderer (fase anterior do projeto): agora esse
+// mesmo cubo e uma Entity real dentro de uma Scene, com TagComponent +
+// TransformComponent + MeshRendererComponent - exatamente os components
+// que qualquer outra entidade adicionada no editor tambem vai ter.
 // ============================================================================
 
 #include "../Core/Base.h"

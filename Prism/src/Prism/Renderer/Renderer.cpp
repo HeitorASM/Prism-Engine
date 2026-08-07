@@ -1,17 +1,16 @@
 #include <glad/gl.h>
 #include "Renderer.h"
+#include "PrimitiveMeshFactory.h"
 #include "../Core/Log.h"
 
 namespace Prism {
 
     Ref<Shader> Renderer::s_BasicShader = nullptr;
-    uint32_t Renderer::s_CubeVAO = 0;
-    uint32_t Renderer::s_CubeVBO = 0;
-    uint32_t Renderer::s_CubeEBO = 0;
+    Scope<Mesh> Renderer::s_Meshes[5] = {};
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
-    // (um unico dot product) so para o cubo nao parecer uma silhueta plana
-    // sem nenhuma pista de profundidade/forma.
+    // (um unico dot product) so para as primitivas nao parecerem uma
+    // silhueta plana sem nenhuma pista de profundidade/forma.
     static const char* s_VertexSrc = R"(
         #version 450 core
         layout(location = 0) in vec3 a_Position;
@@ -44,62 +43,36 @@ namespace Prism {
         }
     )";
 
+    // Indice dentro de s_Meshes - deve bater com a ordem numerica do enum
+    // PrimitiveMesh em Components.h (Cube=0, Sphere=1, Capsule=2,
+    // Cylinder=3, Plane=4).
+    static uint32_t MeshIndex(PrimitiveMesh mesh) {
+        return (uint32_t)mesh;
+    }
+
     void Renderer::Init() {
         s_BasicShader = Shader::Create("BasicLit", s_VertexSrc, s_FragmentSrc);
 
-        // Cubo unitario: 24 vertices (4 por face, para normais corretas por
-        // face em vez de normais suavizadas de vertice compartilhado).
-        // Layout por vertice: posicao (3 floats) + normal (3 floats).
-        float vertices[] = {
-            // +X
-             0.5f, -0.5f, -0.5f,  1,0,0,   0.5f,  0.5f, -0.5f,  1,0,0,   0.5f,  0.5f,  0.5f,  1,0,0,   0.5f, -0.5f,  0.5f,  1,0,0,
-            // -X
-            -0.5f, -0.5f,  0.5f, -1,0,0,  -0.5f,  0.5f,  0.5f, -1,0,0,  -0.5f,  0.5f, -0.5f, -1,0,0,  -0.5f, -0.5f, -0.5f, -1,0,0,
-            // +Y
-            -0.5f,  0.5f, -0.5f,  0,1,0,  -0.5f,  0.5f,  0.5f,  0,1,0,   0.5f,  0.5f,  0.5f,  0,1,0,   0.5f,  0.5f, -0.5f,  0,1,0,
-            // -Y
-            -0.5f, -0.5f,  0.5f,  0,-1,0, -0.5f, -0.5f, -0.5f,  0,-1,0,  0.5f, -0.5f, -0.5f,  0,-1,0,  0.5f, -0.5f,  0.5f,  0,-1,0,
-            // +Z
-            -0.5f, -0.5f,  0.5f,  0,0,1,   0.5f, -0.5f,  0.5f,  0,0,1,   0.5f,  0.5f,  0.5f,  0,0,1,  -0.5f,  0.5f,  0.5f,  0,0,1,
-            // -Z
-             0.5f, -0.5f, -0.5f,  0,0,-1, -0.5f, -0.5f, -0.5f,  0,0,-1, -0.5f,  0.5f, -0.5f,  0,0,-1,  0.5f,  0.5f, -0.5f,  0,0,-1,
+        // Gera a geometria de cada primitiva uma unica vez (CPU, ver
+        // PrimitiveMeshFactory) e sobe para a GPU como um Mesh - reusado
+        // para toda entidade que usar aquela primitiva, sem duplicar
+        // buffers por entidade.
+        auto upload = [](PrimitiveMesh type, GeneratedMesh generated) {
+            s_Meshes[MeshIndex(type)] = Mesh::Create(generated.Vertices, generated.Indices);
         };
 
-        uint32_t indices[] = {
-             0, 1, 2,  0, 2, 3,       // +X
-             4, 5, 6,  4, 6, 7,       // -X
-             8, 9,10,  8,10,11,       // +Y
-            12,13,14, 12,14,15,       // -Y
-            16,17,18, 16,18,19,       // +Z
-            20,21,22, 20,22,23,       // -Z
-        };
+        upload(PrimitiveMesh::Cube, PrimitiveMeshFactory::CreateCube());
+        upload(PrimitiveMesh::Sphere, PrimitiveMeshFactory::CreateSphere());
+        upload(PrimitiveMesh::Capsule, PrimitiveMeshFactory::CreateCapsule());
+        upload(PrimitiveMesh::Cylinder, PrimitiveMeshFactory::CreateCylinder());
+        upload(PrimitiveMesh::Plane, PrimitiveMeshFactory::CreatePlane());
 
-        glCreateVertexArrays(1, &s_CubeVAO);
-        glBindVertexArray(s_CubeVAO);
-
-        glCreateBuffers(1, &s_CubeVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, s_CubeVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-        glCreateBuffers(1, &s_CubeEBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_CubeEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-        const GLsizei stride = 6 * sizeof(float);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (const void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (const void*)(3 * sizeof(float)));
-
-        glBindVertexArray(0);
-
-        PRISM_CORE_INFO("Renderer inicializado (shader basico + cubo de teste).");
+        PRISM_CORE_INFO("Renderer inicializado (shader basico + 5 primitivas: Cube, Sphere, Capsule, Cylinder, Plane).");
     }
 
     void Renderer::Shutdown() {
-        glDeleteVertexArrays(1, &s_CubeVAO);
-        glDeleteBuffers(1, &s_CubeVBO);
-        glDeleteBuffers(1, &s_CubeEBO);
+        for (auto& mesh : s_Meshes)
+            mesh.reset();
         s_BasicShader.reset();
     }
 
@@ -112,8 +85,11 @@ namespace Prism {
         glViewport(0, 0, (GLsizei)width, (GLsizei)height);
     }
 
-    void Renderer::DrawTestCube(const float* viewProjection, const float* model, const float* color) {
+    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color) {
         if (!s_BasicShader) return;
+
+        Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
+        if (!mesh) return; // nao deveria acontecer apos Init(), mas evita um crash silencioso se algo pedir para desenhar antes da engine estar pronta
 
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
@@ -123,8 +99,8 @@ namespace Prism {
         else
             s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
 
-        glBindVertexArray(s_CubeVAO);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+        mesh->Bind();
+        glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
 
         s_BasicShader->Unbind();

@@ -2,22 +2,29 @@
 
 // ============================================================================
 // Renderer.h
-// API de desenho MINIMA da engine. Sabe desenhar um unico tipo de
-// primitiva (cubo unitario) com um shader simples (cor solida + luz
-// direcional fake) - o suficiente para MeshRendererComponent::Mesh ==
-// PrimitiveMesh::Cube (ver Components.h) aparecer na viewport.
+// API de desenho MINIMA da engine. Sabe desenhar as primitivas embutidas
+// definidas em PrimitiveMesh (ver Components.h: Cube, Sphere, Capsule,
+// Cylinder, Plane) com um shader simples (cor solida + luz direcional
+// fake) - o suficiente para qualquer MeshRendererComponent aparecer na
+// viewport.
 //
 // Isto NAO e o "Renderizador principal" definitivo mencionado no guia do
 // prototipo (esse ainda esta em aberto - forward vs deferred, batching,
 // materiais de verdade, etc). E o primeiro tijolo: uma API estatica
 // parecida com a de engines tipo Hazel/Sokol. Quem decide O QUE desenhar
-// (percorrer as entidades da Scene) e o EditorLayer, chamando
-// DrawTestCube() uma vez por entidade com MeshRendererComponent - ver
+// (percorrer as entidades da Scene) e o EditorLayer, chamando DrawMesh()
+// uma vez por entidade com MeshRendererComponent - ver
 // EditorLayer::RenderScene().
+//
+// Geometria de cada primitiva e gerada uma unica vez em Init() (ver
+// PrimitiveMeshFactory) e mantida em memoria de GPU (Mesh) pelo resto da
+// sessao - nao ha alocacao/geracao por frame nem por entidade.
 // ============================================================================
 
 #include "../Core/Base.h"
+#include "../Scene/Components.h" // PrimitiveMesh
 #include "Shader.h"
+#include "Mesh.h"
 #include <cstdint>
 
 namespace Prism {
@@ -32,17 +39,19 @@ namespace Prism {
         static void Clear(float r = 0.05f, float g = 0.05f, float b = 0.07f, float a = 1.0f);
         static void SetViewport(uint32_t width, uint32_t height);
 
-        // Desenha um cubo unitario. viewProjection e model sao matrizes 4x4
-        // column-major (16 floats), no layout que glm::value_ptr produz -
+        // Desenha a primitiva 'mesh'. viewProjection e model sao matrizes
+        // 4x4 column-major (16 floats, layout glm::value_ptr) -
         // viewProjection ja deve vir como Projection * View combinadas.
-        // color e RGB linear (0..1) - usado como base color do shader.
-        static void DrawTestCube(const float* viewProjection, const float* model, const float* color = nullptr);
+        // color e RGB linear (0..1); nullptr usa uma cor padrao.
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr);
 
     private:
         static Ref<Shader> s_BasicShader;
-        static uint32_t s_CubeVAO;
-        static uint32_t s_CubeVBO;
-        static uint32_t s_CubeEBO;
+
+        // Uma malha de GPU por primitiva embutida - indexadas pelo mesmo
+        // enum PrimitiveMesh usado em MeshRendererComponent, entao
+        // DrawMesh() so precisa de um lookup, sem switch gigante.
+        static Scope<Mesh> s_Meshes[5];
     };
 
 }

@@ -53,11 +53,14 @@ namespace Prism {
 
     // Primitivas de mesh embutidas na engine (sem importacao de assets
     // ainda - ver guia do prototipo: FBX/OBJ/glTF ficam para uma fase
-    // futura). Por ora, o Renderer so sabe desenhar Cube (ver
-    // Renderer::DrawTestCube). Novas primitivas (Sphere, Plane, Cylinder)
-    // entram aqui conforme o Renderer ganhar meshes para elas.
+    // futura). O Renderer gera a geometria de cada uma proceduralmente em
+    // Renderer::Init() - ver Renderer.cpp.
     enum class PrimitiveMesh {
-        Cube
+        Cube,
+        Sphere,
+        Capsule,
+        Cylinder,
+        Plane
     };
 
     // Marca a entidade como algo visivel na viewport 3D. Ainda nao tem

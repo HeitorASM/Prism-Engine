@@ -253,11 +253,13 @@ namespace Prism {
                 }
                 // Validacao do enum: um valor fora do range conhecido e
                 // sinal de arquivo corrompido (ou de uma versao futura do
-                // formato com mais primitivas - o teto do enum de hoje).
-                // Sem checar isto, um PrimitiveMesh invalido seguiria para
-                // dentro da Scene e so falharia (silenciosamente, sem
-                // desenhar nada) la na frente em Renderer::DrawTestCube.
-                if (meshRenderer.Mesh != PrimitiveMesh::Cube) {
+                // formato com mais primitivas). Sem checar isto, um
+                // PrimitiveMesh invalido seguiria para dentro da Scene e
+                // so falharia (silenciosamente, sem desenhar nada) la na
+                // frente em Renderer::DrawMesh.
+                if (meshRenderer.Mesh != PrimitiveMesh::Cube && meshRenderer.Mesh != PrimitiveMesh::Sphere
+                    && meshRenderer.Mesh != PrimitiveMesh::Capsule && meshRenderer.Mesh != PrimitiveMesh::Cylinder
+                    && meshRenderer.Mesh != PrimitiveMesh::Plane) {
                     PRISM_CORE_ERROR("SceneSerializer: PrimitiveMesh invalido na entidade ", i, " de '", filepath.string(), "'.");
                     return false;
                 }

@@ -266,11 +266,10 @@ namespace PrismEditor {
             glm::mat4 model = transform.GetTransform();
             glm::vec3 color = meshRenderer.Color;
 
-            switch (meshRenderer.Mesh) {
-                case Prism::PrimitiveMesh::Cube:
-                    Prism::Renderer::DrawTestCube(glm::value_ptr(viewProjection), glm::value_ptr(model), glm::value_ptr(color));
-                    break;
-            }
+            // DrawMesh() ja sabe desenhar qualquer PrimitiveMesh (Cube,
+            // Sphere, Capsule, Cylinder, Plane - ver Renderer.h/.cpp) - nao
+            // precisamos mais de um switch aqui, so repassar o tipo.
+            Prism::Renderer::DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), glm::value_ptr(color));
         }
 
         m_ViewportFramebuffer->Unbind();
@@ -573,7 +572,11 @@ namespace PrismEditor {
             auto& meshRenderer = m_SelectedEntity.GetComponent<Prism::MeshRendererComponent>();
             bool keepOpen = true;
             if (ImGui::CollapsingHeader("Mesh Renderer", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::TextDisabled("Mesh: Cubo (primitiva embutida)");
+                const char* meshNames[] = { "Cubo", "Esfera", "Capsula", "Cilindro", "Plano" };
+                int meshIndex = (int)meshRenderer.Mesh;
+                if (ImGui::Combo("Mesh", &meshIndex, meshNames, IM_ARRAYSIZE(meshNames)))
+                    meshRenderer.Mesh = (Prism::PrimitiveMesh)meshIndex;
+                ImGui::TextDisabled("Primitiva embutida (sem importacao de assets ainda).");
 
                 ImGui::ColorEdit3("Cor", glm::value_ptr(meshRenderer.Color));
                 if (ImGui::IsItemActivated())
