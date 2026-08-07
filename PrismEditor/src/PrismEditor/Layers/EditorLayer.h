@@ -50,6 +50,13 @@ namespace PrismEditor {
         void RenderViewportPanel();
         void RenderHierarchyPanel();
         void RenderPropertiesPanel();
+        // ^ RenderPropertiesPanel() desenha uma secao por component que a
+        //   entidade selecionada ja tem (com um "X" para remover, exceto
+        //   Transform); o botao "+ Add Component" no final fica em
+        //   RenderAddComponentButton() por ser um bloco grande o bastante
+        //   (o popup com a lista de components disponiveis) para nao
+        //   poluir o corpo principal da funcao.
+        void RenderAddComponentButton();
         void RenderConsolePanel();
         // ^ RenderConsolePanel() so delega para m_ConsolePanel.OnImGuiRender()
         //   - ver EditorLayer.cpp. O painel de verdade vive em

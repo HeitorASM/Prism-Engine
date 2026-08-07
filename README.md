@@ -120,8 +120,10 @@ comum de erro de build nesta engine.
    ("Salvar Como" com popup de nome, aviso de sobrescrita, múltiplos mapas
    por projeto, "Novo Mapa" funcional, atalhos Ctrl+S/Ctrl+Shift+S - ver
    nota abaixo).
-8. Entidades mais robustas (base para scripting: `ScriptComponent`,
-   possivelmente parenting/hierarquia real).
+8. ~~Entidades mais robustas.~~ ✅ feito (parcialmente - ver nota abaixo)
+   (`LightComponent`, `ColliderComponent`, `RigidBodyComponent`,
+   `ScriptComponent` novos; Properties panel virou "Add/Remove Component";
+   presets no menu Entidade: Luz, Character, Entidade Vazia).
 9. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
 10. Integrar Box3D, corpos rígidos básicos.
 11. BSP/CSG (brushes como um tipo de Entity no editor).
@@ -188,6 +190,52 @@ carregar outro mapa (seja pelo Content Browser, seja por "Novo Mapa") perde
 qualquer alteração não salva na cena atual, sem aviso — fica para quando
 existir rastreamento de "alterações não salvas" (dirty flag).
 
+## Nota sobre Entidades mais robustas / Add Component (estado atual)
+
+**Decisão de arquitetura**: em vez de "tipos de entidade" fixos (Prop,
+Character, Light como um enum rígido), a engine continua 100% ECS livre —
+uma entidade não "é" um tipo, ela é só a soma dos components que tem. Um
+Character é uma entidade com `MeshRendererComponent` + `ColliderComponent` +
+`RigidBodyComponent` + `ScriptComponent`; uma Light estática é só
+`LightComponent`; uma tocha (luz + prop físico) é as duas coisas juntas sem
+nenhum caso especial. É o mesmo modelo que Unity/Unreal usam por baixo. Os
+"presets" do menu Entidade (Criar Luz, Criar Character, Criar Entidade
+Vazia) são só atalhos de conveniência que já adicionam a combinação comum de
+components — não travam nada; qualquer component pode ser adicionado ou
+removido depois pela Properties panel.
+
+**Novos components** (`Prism/src/Prism/Scene/Components.h`):
+- `LightComponent` — tipo (Point/Spot/Directional), cor, intensidade,
+  alcance, ângulo do cone.
+- `ColliderComponent` — forma (Box/Sphere/Capsule), tamanho, flag de
+  trigger.
+- `RigidBodyComponent` — tipo de corpo (Static/Kinematic/Dynamic), massa,
+  gravidade, CCD — nomes escolhidos já pensando no Box3D (próximo item do
+  roadmap).
+- `ScriptComponent` — só um caminho relativo para um arquivo `.lua` dentro
+  de `Scripts/`. Ainda **não executa nada** — é o slot de dado que a UI e o
+  formato de arquivo já suportam, para quando Lua for embutido não precisar
+  de outra rodada de migração de `.prismmap`s salvos.
+
+**Properties panel** virou "Add/Remove Component": cada component vira uma
+seção colapsável com um "X" para remover (exceto Transform, que toda
+entidade tem por definição); um botão "+ Add Component" no final abre um
+popup só com os components que a entidade ainda não tem. Tudo passa pelo
+`CommandHistory` (Ctrl+Z desfaz adicionar/remover um component inteiro).
+
+**Limitações conhecidas, deixadas de propósito**: os campos numéricos de
+Light/Collider/RigidBody (drag floats, combos, checkboxes) ainda **não**
+geram comandos individuais de undo por edição — diferente de
+Transform/Cor, que capturam um `TransformCommand`/`MeshColorCommand` por
+gesto de arraste. Adicionar isso para mais ~15 campos infestaria bastante
+esta etapa; fica para uma passada futura se se mostrar necessário na
+prática. `LightComponent` ainda não afeta a renderização de verdade (o
+Renderer só tem uma luz direcional fixa hardcoded no shader) —
+`ColliderComponent`/`RigidBodyComponent` ainda não alimentam nenhuma
+simulação física — ambos aguardam os próximos itens do roadmap (iluminação
+de verdade / Box3D). Sem parenting/hierarquia real ainda (a Hierarchy panel
+continua sendo uma lista plana, não uma árvore).
+
 ## Nota sobre Salvar/Salvar Como/Novo Mapa (estado atual)
 
 `EditorLayer` agora rastreia `m_CurrentMapPath` — o arquivo `.prismmap`
@@ -220,6 +268,9 @@ salva/carrega uma `Scene` inteira em um único arquivo binário `.prismmap`,
 com um cabeçalho `magic + versão` (`kSceneFormatVersion`) para detectar
 arquivos corrompidos ou de um formato futuro incompatível — hoje qualquer
 versão diferente da atual é recusada (sem migração automática ainda).
+**Formato atual: v2** (v1 não é mais lido — projetos criados antes dos novos
+components de Light/Collider/RigidBody/Script, ver seção acima, precisam ser
+resalvos uma vez).
 
 Fluxo no editor: `EditorLayer::LoadOrCreateScene()` tenta carregar
 `ProjectConfig::StartMap`; se não existir (projeto novo), cria a cena de

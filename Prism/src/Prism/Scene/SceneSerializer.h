@@ -16,14 +16,17 @@
 //   por entidade:
 //     [string] tag (nome de exibicao)
 //     [Transform] Translation, Rotation, Scale (9 floats)
-//     [1 byte]  flag: tem MeshRendererComponent?
-//     se sim: [4 bytes] PrimitiveMesh (uint32_t) + [3 floats] cor
+//     [1 byte]  flag: tem MeshRendererComponent?      se sim: PrimitiveMesh (u32) + cor (3 floats)
+//     [1 byte]  flag: tem LightComponent?             se sim: LightType (u32) + cor (3 floats) + Intensity + Range + SpotAngle
+//     [1 byte]  flag: tem ColliderComponent?          se sim: ColliderShape (u32) + Size (3 floats) + IsTrigger (1 byte)
+//     [1 byte]  flag: tem RigidBodyComponent?         se sim: BodyType (u32) + Mass + UseGravity (1 byte) + CCD (1 byte)
+//     [1 byte]  flag: tem ScriptComponent?             se sim: ScriptPath (string)
 //
 // O numero de versao existe desde ja para que, quando novos components
-// (fisica, scripts) forem adicionados, Deserialize() consiga detectar um
-// arquivo de versao antiga e decidir como lidar com ele (por ora, so
-// versoes iguais a kSceneFormatVersion sao aceitas - migração entre
-// versoes fica para quando o formato realmente mudar).
+// forem adicionados, Deserialize() consiga detectar um arquivo de versao
+// antiga e decidir como lidar com ele (por ora, so versoes iguais a
+// kSceneFormatVersion sao aceitas - migração entre versoes fica para quando
+// o formato realmente mudar e valer a pena preservar cenas antigas).
 // ============================================================================
 
 #include "../Core/Base.h"

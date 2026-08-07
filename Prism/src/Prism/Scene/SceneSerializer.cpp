@@ -12,7 +12,13 @@ namespace Prism {
     // Incrementar sempre que o layout binario mudar de forma incompativel
     // (novo component obrigatorio, campo removido, etc). Deserialize()
     // recusa arquivos com versao diferente desta - ver comentario no .h.
-    static constexpr uint32_t kSceneFormatVersion = 1;
+    //
+    // v1 -> v2: adicionados LightComponent, ColliderComponent,
+    // RigidBodyComponent, ScriptComponent (todos opcionais, mesmo padrao de
+    // flag-de-presenca que MeshRendererComponent ja usava). Arquivos v1 nao
+    // sao lidos por este parser (ver Deserialize) - projetos criados antes
+    // desta mudanca precisam ser resalvos uma vez.
+    static constexpr uint32_t kSceneFormatVersion = 2;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -100,6 +106,46 @@ namespace Prism {
                 auto& meshRenderer = entity.GetComponent<MeshRendererComponent>();
                 WriteRaw(out, meshRenderer.Mesh);
                 WriteRaw(out, meshRenderer.Color);
+            }
+
+            // Os quatro components abaixo seguem o mesmo padrao de flag de
+            // presenca + campos - adicionados na v2 do formato (ver
+            // kSceneFormatVersion).
+            bool hasLight = entity.HasComponent<LightComponent>();
+            WriteRaw(out, hasLight);
+            if (hasLight) {
+                auto& light = entity.GetComponent<LightComponent>();
+                WriteRaw(out, light.Type);
+                WriteRaw(out, light.Color);
+                WriteRaw(out, light.Intensity);
+                WriteRaw(out, light.Range);
+                WriteRaw(out, light.SpotAngle);
+            }
+
+            bool hasCollider = entity.HasComponent<ColliderComponent>();
+            WriteRaw(out, hasCollider);
+            if (hasCollider) {
+                auto& collider = entity.GetComponent<ColliderComponent>();
+                WriteRaw(out, collider.Shape);
+                WriteRaw(out, collider.Size);
+                WriteRaw(out, collider.IsTrigger);
+            }
+
+            bool hasRigidBody = entity.HasComponent<RigidBodyComponent>();
+            WriteRaw(out, hasRigidBody);
+            if (hasRigidBody) {
+                auto& rigidBody = entity.GetComponent<RigidBodyComponent>();
+                WriteRaw(out, rigidBody.Type);
+                WriteRaw(out, rigidBody.Mass);
+                WriteRaw(out, rigidBody.UseGravity);
+                WriteRaw(out, rigidBody.ContinuousCollisionDetection);
+            }
+
+            bool hasScript = entity.HasComponent<ScriptComponent>();
+            WriteRaw(out, hasScript);
+            if (hasScript) {
+                auto& script = entity.GetComponent<ScriptComponent>();
+                WriteString(out, script.ScriptPath);
             }
 
             if (!out) writeFailed = true;
@@ -213,6 +259,75 @@ namespace Prism {
                 // desenhar nada) la na frente em Renderer::DrawTestCube.
                 if (meshRenderer.Mesh != PrimitiveMesh::Cube) {
                     PRISM_CORE_ERROR("SceneSerializer: PrimitiveMesh invalido na entidade ", i, " de '", filepath.string(), "'.");
+                    return false;
+                }
+            }
+
+            bool hasLight = false;
+            if (!ReadRaw(in, hasLight)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de light da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasLight) {
+                auto& light = entity.AddComponent<LightComponent>();
+                bool lightOk = ReadRaw(in, light.Type) && ReadRaw(in, light.Color)
+                            && ReadRaw(in, light.Intensity) && ReadRaw(in, light.Range) && ReadRaw(in, light.SpotAngle);
+                if (!lightOk) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (light da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                if (light.Type != LightType::Point && light.Type != LightType::Spot && light.Type != LightType::Directional) {
+                    PRISM_CORE_ERROR("SceneSerializer: LightType invalido na entidade ", i, " de '", filepath.string(), "'.");
+                    return false;
+                }
+            }
+
+            bool hasCollider = false;
+            if (!ReadRaw(in, hasCollider)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de collider da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasCollider) {
+                auto& collider = entity.AddComponent<ColliderComponent>();
+                bool colliderOk = ReadRaw(in, collider.Shape) && ReadRaw(in, collider.Size) && ReadRaw(in, collider.IsTrigger);
+                if (!colliderOk) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (collider da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                if (collider.Shape != ColliderShape::Box && collider.Shape != ColliderShape::Sphere && collider.Shape != ColliderShape::Capsule) {
+                    PRISM_CORE_ERROR("SceneSerializer: ColliderShape invalido na entidade ", i, " de '", filepath.string(), "'.");
+                    return false;
+                }
+            }
+
+            bool hasRigidBody = false;
+            if (!ReadRaw(in, hasRigidBody)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de rigidbody da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasRigidBody) {
+                auto& rigidBody = entity.AddComponent<RigidBodyComponent>();
+                bool rigidBodyOk = ReadRaw(in, rigidBody.Type) && ReadRaw(in, rigidBody.Mass)
+                                && ReadRaw(in, rigidBody.UseGravity) && ReadRaw(in, rigidBody.ContinuousCollisionDetection);
+                if (!rigidBodyOk) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (rigidbody da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                if (rigidBody.Type != BodyType::Static && rigidBody.Type != BodyType::Kinematic && rigidBody.Type != BodyType::Dynamic) {
+                    PRISM_CORE_ERROR("SceneSerializer: BodyType invalido na entidade ", i, " de '", filepath.string(), "'.");
+                    return false;
+                }
+            }
+
+            bool hasScript = false;
+            if (!ReadRaw(in, hasScript)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de script da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasScript) {
+                auto& script = entity.AddComponent<ScriptComponent>();
+                if (!ReadString(in, script.ScriptPath)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script da entidade ", i, "): ", filepath.string());
                     return false;
                 }
             }

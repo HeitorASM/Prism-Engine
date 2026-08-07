@@ -383,6 +383,49 @@ namespace PrismEditor {
                     m_CommandHistory.Execute(std::move(command));
                     m_SelectedEntity = raw->GetCreatedEntity();
                 }
+                if (ImGui::MenuItem("Criar Luz")) {
+                    auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_ActiveScene, "Luz", "Luz",
+                        [](Prism::Entity entity) { entity.AddComponent<Prism::LightComponent>(); });
+                    CreatePresetEntityCommand* raw = command.get();
+                    m_CommandHistory.Execute(std::move(command));
+                    m_SelectedEntity = raw->GetCreatedEntity();
+                }
+                if (ImGui::MenuItem("Criar Character")) {
+                    // Preset de conveniencia: combo comum para um NPC/player
+                    // controlavel por script - mesh visivel + collider +
+                    // rigidbody cinematico (nao cai por gravidade sozinho,
+                    // controle fica com o script/codigo - ver
+                    // BodyType::Kinematic em Components.h) + slot de script
+                    // vazio pronto para preencher.
+                    auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_ActiveScene, "Character", "Character",
+                        [](Prism::Entity entity) {
+                            auto& mesh = entity.AddComponent<Prism::MeshRendererComponent>();
+                            mesh.Color = glm::vec3(0.3f, 0.8f, 0.4f);
+
+                            auto& collider = entity.AddComponent<Prism::ColliderComponent>();
+                            collider.Shape = Prism::ColliderShape::Capsule;
+                            collider.Size = { 0.4f, 1.8f, 0.0f };
+
+                            auto& rigidBody = entity.AddComponent<Prism::RigidBodyComponent>();
+                            rigidBody.Type = Prism::BodyType::Kinematic;
+
+                            entity.AddComponent<Prism::ScriptComponent>();
+                        });
+                    CreatePresetEntityCommand* raw = command.get();
+                    m_CommandHistory.Execute(std::move(command));
+                    m_SelectedEntity = raw->GetCreatedEntity();
+                }
+                if (ImGui::MenuItem("Criar Entidade Vazia")) {
+                    // So Transform (todo Scene::CreateEntity ja da isso) -
+                    // ponto de partida para montar qualquer combinacao de
+                    // components manualmente via "+ Add Component".
+                    auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_ActiveScene, "Entidade Vazia", "Entidade Vazia",
+                        CreatePresetEntityCommand::SetupFn{});
+                    CreatePresetEntityCommand* raw = command.get();
+                    m_CommandHistory.Execute(std::move(command));
+                    m_SelectedEntity = raw->GetCreatedEntity();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Excluir selecionada", nullptr, false, (bool)m_SelectedEntity)) {
                     m_CommandHistory.Execute(Prism::CreateScope<DeleteEntityCommand>(m_ActiveScene, m_SelectedEntity));
                     m_SelectedEntity = {};
@@ -520,11 +563,16 @@ namespace PrismEditor {
                 if (ImGui::IsItemDeactivatedAfterEdit())
                     m_CommandHistory.Execute(Prism::CreateScope<TransformCommand>(m_SelectedEntity, m_TransformBeforeEdit, transform));
             }
+            // Transform nao tem botao de remover - toda entidade tem um por
+            // definicao (ver Scene::CreateEntity) e o resto da engine
+            // assume isso (ex: RenderScene le GetTransform() sem checar
+            // HasComponent primeiro).
         }
 
         if (m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>()) {
             auto& meshRenderer = m_SelectedEntity.GetComponent<Prism::MeshRendererComponent>();
-            if (ImGui::CollapsingHeader("Mesh Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Mesh Renderer", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextDisabled("Mesh: Cubo (primitiva embutida)");
 
                 ImGui::ColorEdit3("Cor", glm::value_ptr(meshRenderer.Color));
@@ -533,7 +581,106 @@ namespace PrismEditor {
                 if (ImGui::IsItemDeactivatedAfterEdit())
                     m_CommandHistory.Execute(Prism::CreateScope<MeshColorCommand>(m_SelectedEntity, m_ColorBeforeEdit, meshRenderer.Color));
             }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MeshRendererComponent>>(m_SelectedEntity, "Mesh Renderer"));
         }
+
+        if (m_SelectedEntity.HasComponent<Prism::LightComponent>()) {
+            auto& light = m_SelectedEntity.GetComponent<Prism::LightComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Light", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* typeNames[] = { "Point (Omni)", "Spot", "Directional" };
+                int typeIndex = (int)light.Type;
+                if (ImGui::Combo("Tipo", &typeIndex, typeNames, IM_ARRAYSIZE(typeNames)))
+                    light.Type = (Prism::LightType)typeIndex;
+
+                ImGui::ColorEdit3("Cor##Light", glm::value_ptr(light.Color));
+                ImGui::DragFloat("Intensidade", &light.Intensity, 0.05f, 0.0f, 100.0f);
+
+                if (light.Type != Prism::LightType::Directional)
+                    ImGui::DragFloat("Alcance", &light.Range, 0.1f, 0.0f, 1000.0f);
+                if (light.Type == Prism::LightType::Spot)
+                    ImGui::DragFloat("Angulo do Cone", &light.SpotAngle, 0.5f, 1.0f, 90.0f);
+
+                ImGui::TextDisabled("Ainda nao afeta a renderizacao (ver README).");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::LightComponent>>(m_SelectedEntity, "Light"));
+        }
+
+        if (m_SelectedEntity.HasComponent<Prism::ColliderComponent>()) {
+            auto& collider = m_SelectedEntity.GetComponent<Prism::ColliderComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Collider", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* shapeNames[] = { "Caixa", "Esfera", "Capsula" };
+                int shapeIndex = (int)collider.Shape;
+                if (ImGui::Combo("Forma", &shapeIndex, shapeNames, IM_ARRAYSIZE(shapeNames)))
+                    collider.Shape = (Prism::ColliderShape)shapeIndex;
+
+                switch (collider.Shape) {
+                    case Prism::ColliderShape::Box:
+                        ImGui::DragFloat3("Half-Extents", glm::value_ptr(collider.Size), 0.05f, 0.01f, 100.0f);
+                        break;
+                    case Prism::ColliderShape::Sphere:
+                        ImGui::DragFloat("Raio", &collider.Size.x, 0.05f, 0.01f, 100.0f);
+                        break;
+                    case Prism::ColliderShape::Capsule:
+                        ImGui::DragFloat("Raio##Capsule", &collider.Size.x, 0.05f, 0.01f, 100.0f);
+                        ImGui::DragFloat("Altura##Capsule", &collider.Size.y, 0.05f, 0.01f, 100.0f);
+                        break;
+                }
+
+                ImGui::Checkbox("E um Trigger", &collider.IsTrigger);
+                ImGui::TextDisabled("Ainda nao alimenta simulacao de fisica (ver README).");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::ColliderComponent>>(m_SelectedEntity, "Collider"));
+        }
+
+        if (m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()) {
+            auto& rigidBody = m_SelectedEntity.GetComponent<Prism::RigidBodyComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Rigid Body", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (!m_SelectedEntity.HasComponent<Prism::ColliderComponent>())
+                    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Sem Collider - adicione um para a fisica funcionar.");
+
+                const char* bodyTypeNames[] = { "Static", "Kinematic", "Dynamic" };
+                int bodyTypeIndex = (int)rigidBody.Type;
+                if (ImGui::Combo("Tipo##RigidBody", &bodyTypeIndex, bodyTypeNames, IM_ARRAYSIZE(bodyTypeNames)))
+                    rigidBody.Type = (Prism::BodyType)bodyTypeIndex;
+
+                bool dynamicOnly = (rigidBody.Type == Prism::BodyType::Dynamic);
+                ImGui::BeginDisabled(!dynamicOnly);
+                ImGui::DragFloat("Massa (kg)", &rigidBody.Mass, 0.1f, 0.01f, 10000.0f);
+                ImGui::Checkbox("Usa Gravidade", &rigidBody.UseGravity);
+                ImGui::EndDisabled();
+
+                ImGui::Checkbox("Colisao Continua (CCD)", &rigidBody.ContinuousCollisionDetection);
+                ImGui::TextDisabled("Ainda nao alimenta simulacao de fisica (ver README).");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
+        }
+
+        if (m_SelectedEntity.HasComponent<Prism::ScriptComponent>()) {
+            auto& script = m_SelectedEntity.GetComponent<Prism::ScriptComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Script", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                char scriptPathBuffer[256];
+                strncpy(scriptPathBuffer, script.ScriptPath.c_str(), sizeof(scriptPathBuffer) - 1);
+                scriptPathBuffer[sizeof(scriptPathBuffer) - 1] = '\0';
+                ImGui::InputTextWithHint("Arquivo", "ex: player_controller.lua", scriptPathBuffer, sizeof(scriptPathBuffer));
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                    script.ScriptPath = scriptPathBuffer;
+
+                ImGui::TextDisabled("Relativo a Scripts/. Ainda nao executa (Lua nao esta embutido ainda).");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::ScriptComponent>>(m_SelectedEntity, "Script"));
+        }
+
+        ImGui::Dummy(ImVec2(0, 8));
+        RenderAddComponentButton();
 
         ImGui::Separator();
         ImGui::TextDisabled("Camera do editor");
@@ -541,6 +688,49 @@ namespace PrismEditor {
         ImGui::Text("Distancia: %.2f", m_CameraDistance);
 
         ImGui::End();
+    }
+
+    void EditorLayer::RenderAddComponentButton() {
+        // So mostra o botao se sobrar pelo menos um component que a
+        // entidade ainda nao tem - evita um popup vazio (a entidade ja
+        // tem TransformComponent sempre, entao esse nunca entra na lista).
+        bool hasAnyMissing = !m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>();
+
+        if (!hasAnyMissing) {
+            ImGui::TextDisabled("(todos os components ja adicionados)");
+            return;
+        }
+
+        if (ImGui::Button("+ Add Component", ImVec2(-1, 0)))
+            ImGui::OpenPopup("AddComponentPopup");
+
+        if (ImGui::BeginPopup("AddComponentPopup")) {
+            if (!m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>() && ImGui::MenuItem("Mesh Renderer")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::MeshRendererComponent>>(m_SelectedEntity, "Mesh Renderer"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::LightComponent>() && ImGui::MenuItem("Light")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::LightComponent>>(m_SelectedEntity, "Light"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::ColliderComponent>() && ImGui::MenuItem("Collider")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ColliderComponent>>(m_SelectedEntity, "Collider"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>() && ImGui::MenuItem("Rigid Body")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::ScriptComponent>() && ImGui::MenuItem("Script")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(m_SelectedEntity, "Script"));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
 
     void EditorLayer::RenderConsolePanel() {
