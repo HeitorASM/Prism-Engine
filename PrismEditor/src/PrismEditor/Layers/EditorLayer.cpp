@@ -5,9 +5,16 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <algorithm>
 
 namespace PrismEditor {
+
+    // ID do popup modal de "Salvar Como" - compartilhado entre
+    // RenderSaveAsPopup() (que o abre/desenha) e o atalho Ctrl+S/Ctrl+Shift+S
+    // em RenderDockspace() (que precisa saber se ja esta aberto, para nao
+    // tentar abrir de novo por cima de si mesmo).
+    static constexpr const char* kSaveAsPopupId = "Salvar Mapa Como";
 
     EditorLayer::EditorLayer() : Layer("EditorLayer") {}
 
@@ -36,9 +43,23 @@ namespace PrismEditor {
         }
 
         m_ActiveScene = serializer.GetScene();
+        m_CurrentMapPath = mapPath;
         m_SelectedEntity = {};
         m_CommandHistory.Clear();
         return true;
+    }
+
+    void EditorLayer::NewMap() {
+        // TODO: quando existir rastreamento de "alteracoes nao salvas"
+        // (dirty flag), perguntar aqui antes de descartar a cena atual -
+        // por ora, Novo Mapa descarta sem aviso, igual acontecia ao
+        // carregar outro mapa pelo Content Browser (ver nota no README).
+        m_ActiveScene = Prism::Scene::Create("Nova Cena");
+        m_CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
+        m_SelectedEntity = {};
+        m_CommandHistory.Clear();
+
+        PRISM_INFO("Novo mapa criado (ainda nao salvo).");
     }
 
     void EditorLayer::LoadOrCreateScene() {
@@ -64,9 +85,10 @@ namespace PrismEditor {
 
         // Projeto novo (ou StartMap ainda nao definido/nao encontrado):
         // cena de exemplo em memoria, igual antes de existir persistencia.
-        // "Salvar Mapa" (ver SaveActiveScene) e o que grava isso no disco
-        // e define StartMap pela primeira vez.
+        // "Salvar Mapa"/"Salvar Como" (ver abaixo) e o que grava isso no
+        // disco - m_CurrentMapPath fica vazio ate la.
         m_ActiveScene = Prism::Scene::Create("Cena de exemplo");
+        m_CurrentMapPath.clear();
 
         Prism::Entity cube = m_ActiveScene->CreateEntity("Cubo");
         cube.GetComponent<Prism::TransformComponent>().Translation = { -1.2f, 0.0f, 0.0f };
@@ -82,40 +104,119 @@ namespace PrismEditor {
         m_SelectedEntity = cube;
     }
 
-    void EditorLayer::SaveActiveScene() {
-        auto project = Prism::Project::GetActive();
-
-        // Se o projeto ainda nao tem um StartMap definido (primeiro save),
-        // usamos o nome da cena como nome de arquivo - sanitizado o minimo
-        // (espacos viram underscore) para nao gerar um caminho invalido no
-        // Windows. Suporte a multiplos mapas por projeto, com nome escolhido
-        // pelo usuario, fica para quando existir uma janela "Salvar como".
-        bool isFirstSave = project->GetConfig().StartMap.empty();
-        std::filesystem::path startMapPath = project->GetConfig().StartMap;
-        if (isFirstSave) {
-            std::string fileName = m_ActiveScene->GetName();
-            for (auto& c : fileName) if (c == ' ') c = '_';
-            startMapPath = fileName + ".prismmap";
-        }
-
-        std::filesystem::path mapPath = project->GetMapDirectory() / startMapPath;
-
+    // Helper interno (nao declarado no .h) - escreve m_ActiveScene em
+    // 'mapPath' de fato, sem se importar com "e primeiro save?" ou popups.
+    // SaveActiveScene()/SaveActiveSceneAs() decidem QUAL caminho usar;
+    // este helper so faz a escrita e retorna se deu certo.
+    static bool WriteSceneFile(Prism::Ref<Prism::Scene> scene, const std::filesystem::path& mapPath) {
         std::error_code ec;
         std::filesystem::create_directories(mapPath.parent_path(), ec);
 
-        Prism::SceneSerializer serializer(m_ActiveScene);
+        Prism::SceneSerializer serializer(scene);
         if (!serializer.Serialize(mapPath)) {
             PRISM_ERROR("Falha ao salvar o mapa em: ", mapPath.string());
+            return false;
+        }
+
+        PRISM_INFO("Mapa salvo: ", mapPath.string());
+        return true;
+    }
+
+    void EditorLayer::SaveActiveScene() {
+        if (m_CurrentMapPath.empty()) {
+            // Cena sem arquivo associado ainda (nova, ou criada por
+            // NewMap()) - nao ha "onde" sobrescrever, entao pedimos um
+            // nome, exatamente como Salvar Como faria.
+            SaveActiveSceneAs();
             return;
         }
 
-        // So grava StartMap de volta no .prismproj depois que o .prismmap
-        // foi escrito com sucesso - evita apontar StartMap para um arquivo
-        // que nao existe se Serialize() tivesse falhado acima.
-        if (isFirstSave)
-            Prism::Project::SetStartMap(startMapPath);
+        WriteSceneFile(m_ActiveScene, m_CurrentMapPath);
+    }
 
-        PRISM_INFO("Mapa salvo: ", mapPath.string());
+    void EditorLayer::SaveActiveSceneAs() {
+        // So abre o popup - a escrita de fato acontece em
+        // RenderSaveAsPopup() quando o usuario confirma o nome, porque
+        // ImGui::OpenPopup precisa ser chamado durante o ciclo normal de
+        // render (ver RenderDockspace(), que chama RenderSaveAsPopup() a
+        // cada frame independente do popup estar aberto ou nao).
+        std::string suggested = m_ActiveScene->GetName();
+        std::snprintf(m_SaveAsNameBuffer, sizeof(m_SaveAsNameBuffer), "%s", suggested.c_str());
+        m_ShowSaveAsPopup = true;
+    }
+
+    void EditorLayer::RenderSaveAsPopup() {
+        if (m_ShowSaveAsPopup) {
+            ImGui::OpenPopup(kSaveAsPopupId);
+            m_ShowSaveAsPopup = false; // OpenPopup so precisa ser chamado uma vez, no frame em que o popup deve abrir
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kSaveAsPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Nome do mapa:");
+            ImGui::SetNextItemWidth(-1);
+
+            bool confirmedByEnter = ImGui::InputText("##SaveAsName", m_SaveAsNameBuffer, sizeof(m_SaveAsNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            auto project = Prism::Project::GetActive();
+            std::string name = m_SaveAsNameBuffer;
+
+            // Sanitizacao minima: caracteres proibidos em nomes de arquivo
+            // no Windows (e problematicos em qualquer SO) viram underscore.
+            // Sem isso, um nome como "Meu Mapa: Final?" geraria um
+            // std::filesystem::path invalido e Serialize() falharia com um
+            // erro criptico em vez de simplesmente funcionar com um nome
+            // sensato.
+            static const std::string kForbiddenChars = "/\\:*?\"<>|";
+            for (auto& c : name)
+                if (kForbiddenChars.find(c) != std::string::npos)
+                    c = '_';
+
+            bool nameEmpty = name.empty();
+
+            // Preview do caminho final - ajuda o usuario a perceber ANTES
+            // de confirmar se vai sobrescrever um mapa existente (mesmo
+            // nome de um arquivo .prismmap ja presente na pasta Maps/).
+            std::filesystem::path previewPath = project->GetMapDirectory() / (name + ".prismmap");
+            bool wouldOverwrite = !nameEmpty && std::filesystem::exists(previewPath);
+
+            ImGui::Dummy(ImVec2(0, 4));
+            if (nameEmpty) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o mapa.");
+            } else if (wouldOverwrite) {
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Ja existe um mapa com este nome - sera sobrescrito.");
+            } else {
+                ImGui::TextDisabled("%s", previewPath.filename().string().c_str());
+            }
+
+            ImGui::Dummy(ImVec2(0, 8));
+
+            bool confirmedByButton = ImGui::Button("Salvar", ImVec2(120, 0));
+            ImGui::SameLine();
+            bool cancelled = ImGui::Button("Cancelar", ImVec2(120, 0));
+
+            bool confirmed = (confirmedByEnter || confirmedByButton) && !nameEmpty;
+
+            if (confirmed) {
+                if (WriteSceneFile(m_ActiveScene, previewPath)) {
+                    m_CurrentMapPath = previewPath;
+                    m_ActiveScene->SetName(name);
+
+                    // Novo mapa salvo vira o StartMap do projeto - assim a
+                    // proxima vez que o editor abrir, reabre este mapa
+                    // (mesmo comportamento que ja existia para o primeiro
+                    // save de um projeto, agora tambem valido para
+                    // qualquer Salvar Como subsequente).
+                    std::filesystem::path relativeToMapDir = std::filesystem::relative(previewPath, project->GetMapDirectory());
+                    Prism::Project::SetStartMap(relativeToMapDir);
+                }
+                ImGui::CloseCurrentPopup();
+            } else if (cancelled) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
     }
 
     void EditorLayer::OnDetach() {}
@@ -216,19 +317,25 @@ namespace PrismEditor {
             ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
         }
 
-        // Atalhos globais de Undo/Redo. Ignorados enquanto o ImGui esta
-        // capturando texto (ex: editando o campo "Nome" na Properties
-        // panel) para nao brigar com o undo nativo de InputText - Ctrl+Z
-        // ali deve desfazer a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput) {
+        // Atalhos globais de Undo/Redo/Salvar. Ignorados enquanto o ImGui
+        // esta capturando texto (ex: editando o campo "Nome" na Properties
+        // panel, ou o proprio campo de nome do popup Salvar Como) para nao
+        // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
+        // a digitacao, nao uma acao do CommandHistory.
+        if (!io.WantTextInput && !ImGui::IsPopupOpen(kSaveAsPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_CommandHistory.Undo();
             else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
                 m_CommandHistory.Redo();
+            else if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                SaveActiveSceneAs();
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
+                SaveActiveScene();
         }
 
         RenderMenuBar();
+        RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
 
         ImGui::End();
 
@@ -244,9 +351,14 @@ namespace PrismEditor {
     void EditorLayer::RenderMenuBar() {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("Arquivo")) {
-                if (ImGui::MenuItem("Novo Mapa")) { /* TODO */ }
+                if (ImGui::MenuItem("Novo Mapa")) {
+                    NewMap();
+                }
                 if (ImGui::MenuItem("Salvar Mapa", "Ctrl+S")) {
                     SaveActiveScene();
+                }
+                if (ImGui::MenuItem("Salvar Como...", "Ctrl+Shift+S")) {
+                    SaveActiveSceneAs();
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Fechar Projeto")) {

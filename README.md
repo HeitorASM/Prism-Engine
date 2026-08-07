@@ -116,8 +116,10 @@ comum de erro de build nesta engine.
    (`PrismEditor/Panels/ContentBrowserPanel.h/.cpp` - navega Assets/Maps/
    Scripts/Cache a partir da raiz do projeto; duplo-clique num `.prismmap`
    já carrega aquele mapa na Scene ativa).
-7. Sistema de salvamento melhor: "Salvar Como" com nome, multiplos mapas por
-   projeto, "Novo Mapa" funcional (hoje e um TODO vazio).
+7. ~~Sistema de salvamento melhor.~~ ✅ feito
+   ("Salvar Como" com popup de nome, aviso de sobrescrita, múltiplos mapas
+   por projeto, "Novo Mapa" funcional, atalhos Ctrl+S/Ctrl+Shift+S - ver
+   nota abaixo).
 8. Entidades mais robustas (base para scripting: `ScriptComponent`,
    possivelmente parenting/hierarquia real).
 9. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
@@ -182,9 +184,34 @@ Limitações conhecidas, deixadas de propósito para não expandir escopo agora:
 sem criar/renomear/excluir/arrastar arquivos pelo painel (isso se conecta
 naturalmente ao fluxo de importação de assets do guia do protótipo, que
 ainda não existe); sem confirmação de "salvar antes de trocar de mapa" —
-carregar outro mapa perde qualquer alteração não salva na cena atual, sem
-aviso. Isso fica para quando o próximo passo (sistema de salvamento melhor)
-for implementado.
+carregar outro mapa (seja pelo Content Browser, seja por "Novo Mapa") perde
+qualquer alteração não salva na cena atual, sem aviso — fica para quando
+existir rastreamento de "alterações não salvas" (dirty flag).
+
+## Nota sobre Salvar/Salvar Como/Novo Mapa (estado atual)
+
+`EditorLayer` agora rastreia `m_CurrentMapPath` — o arquivo `.prismmap`
+associado à cena ativa, vazio quando a cena ainda não foi salva em lugar
+nenhum (cena nova, ou a cena de exemplo do primeiro `OnAttach`).
+
+- **Salvar Mapa** (Ctrl+S): grava em `m_CurrentMapPath` se ele já existe;
+  caso contrário, se comporta como Salvar Como (não há "onde" sobrescrever
+  ainda).
+- **Salvar Como...** (Ctrl+Shift+S): sempre abre um popup pedindo um nome,
+  mostra um preview do caminho final, avisa em amarelo se um mapa com esse
+  nome já existe (seria sobrescrito), e salva num arquivo **novo** dentro de
+  `Project::GetMapDirectory()` — nunca sobrescreve outro mapa sem avisar.
+  Depois de salvar, esse novo mapa também vira o `StartMap` do projeto (é
+  reaberto automaticamente da próxima vez).
+- **Novo Mapa**: cria uma `Scene` vazia e limpa `m_CurrentMapPath` — a
+  próxima vez que "Salvar Mapa" for usado, pede um nome (mesma lógica do
+  primeiro save).
+
+Múltiplos mapas por projeto já funcionam na prática: cada "Salvar Como" com
+um nome diferente cria um arquivo `.prismmap` separado dentro de `Maps/`,
+todos navegáveis pelo Content Browser — só falta uma UI dedicada para listar
+"todos os mapas do projeto" fora do Content Browser genérico, se isso vier a
+fazer falta.
 
 ## Nota sobre persistência de Scene (estado atual)
 

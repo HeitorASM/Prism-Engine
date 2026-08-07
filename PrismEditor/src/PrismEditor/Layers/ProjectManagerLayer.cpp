@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <fstream>
 #include <algorithm>
+#include <cstdio>
 
 namespace PrismEditor {
 

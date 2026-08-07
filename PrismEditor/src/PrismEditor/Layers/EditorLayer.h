@@ -61,20 +61,40 @@ namespace PrismEditor {
 
         // Carrega o mapa em 'path' na Scene ativa, substituindo o que
         // estiver aberto no momento (sem perguntar "salvar antes?" ainda -
-        // ver nota no README sobre proximos passos de salvamento). Chamado
-        // tanto por LoadOrCreateScene() (StartMap na abertura do editor)
-        // quanto pelo duplo-clique num .prismmap no Content Browser.
-        // Retorna false se a leitura falhar - a Scene ativa permanece
-        // intocada nesse caso (ver SceneSerializer::Deserialize).
+        // ver nota no README). Chamado tanto por LoadOrCreateScene()
+        // (StartMap na abertura do editor) quanto pelo duplo-clique num
+        // .prismmap no Content Browser. Retorna false se a leitura falhar -
+        // a Scene ativa permanece intocada nesse caso (ver
+        // SceneSerializer::Deserialize). Em caso de sucesso, atualiza
+        // m_CurrentMapPath para 'path' - dai em diante "Salvar Mapa" grava
+        // de volta neste mesmo arquivo.
         bool LoadScene(const std::filesystem::path& mapPath);
 
-        // Salva a Scene ativa em Project::GetMapDirectory()/<StartMap>,
-        // criando o caminho no ProjectConfig se ainda nao existir (primeiro
-        // save de um projeto novo). Chamado pelo menu Arquivo > Salvar Mapa.
-        // Ainda sem atalho Ctrl+S (Ctrl+Z/Ctrl+Y ja funcionam - ver
-        // RenderDockspace() - mas Ctrl+S fica para quando fizer sentido
-        // adicionar um pequeno sistema de atalhos mais generico).
+        // Cria uma Scene nova vazia (so o nome, sem entidades) e a torna a
+        // Scene ativa. m_CurrentMapPath e limpo - a proxima vez que "Salvar
+        // Mapa" for usado, se comporta como "Salvar Como" (ainda nao ha
+        // arquivo associado a esta cena). Chamado pelo menu Arquivo > Novo Mapa.
+        void NewMap();
+
+        // Salva a Scene ativa. Se m_CurrentMapPath ja aponta para um
+        // arquivo (cena carregada do disco, ou ja salva antes nesta
+        // sessao), grava nele direto. Caso contrario (cena nova, nunca
+        // salva), se comporta como SaveActiveSceneAs() - abre o popup de
+        // nome, ja que nao ha "onde" salvar ainda. Chamado pelo menu
+        // Arquivo > Salvar Mapa / Ctrl+S.
         void SaveActiveScene();
+
+        // Sempre abre o popup pedindo um nome (mesmo se a cena ja tiver um
+        // arquivo associado) e salva num arquivo NOVO dentro de
+        // Project::GetMapDirectory() - nao sobrescreve o mapa anterior.
+        // m_CurrentMapPath passa a apontar para o arquivo recem-criado.
+        // Chamado pelo menu Arquivo > Salvar Como.
+        void SaveActiveSceneAs();
+
+        // Desenha o popup modal de nome usado por SaveActiveSceneAs() -
+        // chamado a cada frame de RenderDockspace() (ImGui::OpenPopup
+        // exige isso mesmo quando o popup esta fechado, ver EditorLayer.cpp).
+        void RenderSaveAsPopup();
 
         // Tenta carregar Project::GetConfig().StartMap; se nao existir
         // ainda (projeto novo, primeira vez abrindo o editor), cria uma
@@ -102,6 +122,17 @@ namespace PrismEditor {
         // de Project::GetMapDirectory(), ver Project.h) e o proximo passo
         // natural depois deste (ver README, secao "Proximos passos").
         Prism::Ref<Prism::Scene> m_ActiveScene;
+
+        // Caminho (absoluto) do arquivo .prismmap associado a m_ActiveScene
+        // - vazio significa "esta cena ainda nao foi salva em lugar
+        // nenhum" (cena nova, criada por NewMap() ou pela cena de exemplo
+        // do primeiro OnAttach). "Salvar Mapa" grava neste caminho quando
+        // ele existe; quando esta vazio, se comporta como "Salvar Como".
+        std::filesystem::path m_CurrentMapPath;
+
+        // Estado do popup modal de "Salvar Como" (ver RenderSaveAsPopup).
+        bool m_ShowSaveAsPopup = false;
+        char m_SaveAsNameBuffer[128] = "";
 
         // Entidade atualmente selecionada na Hierarchy panel. Invalida
         // (Entity{}) quando nada esta selecionado.

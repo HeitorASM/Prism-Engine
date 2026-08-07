@@ -43,6 +43,7 @@ namespace Prism {
         void OnUpdate(float deltaTime);
 
         const std::string& GetName() const { return m_Name; }
+        void SetName(const std::string& name) { m_Name = name; }
 
         // Acesso direto ao registro EnTT - usado pelo Renderer/EditorLayer
         // para iterar sobre grupos de components (ex: todas as entidades
