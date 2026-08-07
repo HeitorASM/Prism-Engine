@@ -14,15 +14,11 @@ namespace PrismEditor {
     ProjectManagerLayer::ProjectManagerLayer() : Layer("ProjectManagerLayer") {}
 
     void ProjectManagerLayer::OnUpdate(float deltaTime) {
-        if (m_Finished) {
-            // PopLayer() apenas enfileira a remocao; a Layer so e de fato
-            // removida (e deletada) depois que Application::Run() termina de
-            // iterar a LayerStack neste frame, entao ainda e seguro continuar
-            // usando "this" no restante desta chamada se precisar. Mesmo
-            // assim, evitamos guardar o ponteiro para uso em frames futuros.
-            Prism::Application::Get().PopLayer(this);
-            return;
-        }
+        (void)deltaTime;
+        // A remocao de si mesma agora acontece diretamente em
+        // CreateAndOpenProject()/OpenProject(), no mesmo instante em que o
+        // EditorLayer e empilhado - ver comentario la. OnUpdate() nao
+        // precisa mais fazer nada aqui.
     }
 
     void ProjectManagerLayer::OnAttach() {
@@ -30,7 +26,18 @@ namespace PrismEditor {
 
         // Sugestao inicial de caminho: pasta "PrismProjects" ao lado do executavel.
         std::filesystem::path suggested = std::filesystem::current_path() / "PrismProjects";
-        strncpy(m_NewProjectPathBuffer, suggested.string().c_str(), sizeof(m_NewProjectPathBuffer) - 1);
+        std::string suggestedStr = suggested.string();
+
+        // snprintf em vez de strncpy: strncpy NAO garante terminador nulo
+        // se a string de origem for >= ao tamanho do buffer (copia
+        // exatamente N bytes, sem truncar com '\0' no final nesse caso).
+        // Um m_NewProjectPathBuffer sem terminador nulo valido dentro dos
+        // seus 512 bytes faz qualquer strlen() interno (o proprio
+        // ImGui::InputText calcula isso) ler memoria alem do array -
+        // corrupcao sutil que so costuma se manifestar bem depois, dentro
+        // do proprio ImGui, como um ponteiro invalido. snprintf sempre
+        // termina em '\0' dentro do tamanho do buffer, garantido.
+        std::snprintf(m_NewProjectPathBuffer, sizeof(m_NewProjectPathBuffer), "%s", suggestedStr.c_str());
     }
 
     void ProjectManagerLayer::OnImGuiRender() {
@@ -170,15 +177,20 @@ namespace PrismEditor {
         AddToRecentProjects(prismprojFile);
         SaveRecentProjectsList();
 
-        // Troca de tela: entrega o controle ao EditorLayer e agenda a propria
-        // remocao. Ambas as chamadas so enfileiram a operacao (ver
-        // Application::PushLayer/PopLayer) - a troca de fato acontece com
-        // seguranca no fim do frame atual, entao a ordem push-depois-pop
-        // aqui nao importa e nao ha risco de invalidar a LayerStack no meio
-        // do OnImGuiRender que estamos executando agora.
+        // Troca de tela: PushLayer(EditorLayer) e PopLayer(this) sao
+        // enfileirados JUNTOS, no mesmo frame (ambos dentro de
+        // m_PendingLayerOps - ver Application::PushLayer/PopLayer). Isso
+        // garante que os dois sejam processados no MESMO
+        // ProcessPendingLayerOps() do proximo frame, sem nenhum frame
+        // intermediario onde ProjectManagerLayer e EditorLayer coexistem
+        // na LayerStack e ambos tentam desenhar UI ao mesmo tempo (esse
+        // frame de sobreposicao foi a causa real de um crash de
+        // ImGui::InputText - ver historico do projeto). A ordem
+        // push-antes-pop nao importa aqui, so que ambos sejam enfileirados
+        // no mesmo lugar/momento.
         Prism::Application& app = Prism::Application::Get();
         app.PushLayer(new EditorLayer());
-        m_Finished = true;
+        app.PopLayer(this);
     }
 
     void ProjectManagerLayer::OpenProject(const std::filesystem::path& prismprojFile) {
@@ -191,9 +203,10 @@ namespace PrismEditor {
         AddToRecentProjects(prismprojFile);
         SaveRecentProjectsList();
 
+        // Ver comentario identico em CreateAndOpenProject() acima.
         Prism::Application& app = Prism::Application::Get();
         app.PushLayer(new EditorLayer());
-        m_Finished = true;
+        app.PopLayer(this);
     }
 
     void ProjectManagerLayer::LoadRecentProjectsList() {

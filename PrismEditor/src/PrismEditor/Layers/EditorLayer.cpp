@@ -20,7 +20,25 @@ namespace PrismEditor {
         fbSpec.Height = 720;
         m_ViewportFramebuffer = Prism::Framebuffer::Create(fbSpec);
 
+        m_ContentBrowser.ResetToProjectRoot();
+        m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
+            LoadScene(mapPath);
+        });
+
         LoadOrCreateScene();
+    }
+
+    bool EditorLayer::LoadScene(const std::filesystem::path& mapPath) {
+        Prism::SceneSerializer serializer(Prism::Scene::Create());
+        if (!serializer.Deserialize(mapPath)) {
+            PRISM_ERROR("Falha ao carregar o mapa: ", mapPath.string());
+            return false;
+        }
+
+        m_ActiveScene = serializer.GetScene();
+        m_SelectedEntity = {};
+        m_CommandHistory.Clear();
+        return true;
     }
 
     void EditorLayer::LoadOrCreateScene() {
@@ -30,18 +48,16 @@ namespace PrismEditor {
         // Historico de undo/redo e por definicao amarrado a UMA Scene em
         // memoria - trocar a Scene (carregando um mapa do disco) sem
         // limpar o historico deixaria Undo() tentando desfazer acoes sobre
-        // entidades que nao existem mais na nova Scene.
+        // entidades que nao existem mais na nova Scene. LoadScene() ja faz
+        // isso; aqui so garantimos o mesmo comportamento no caminho de
+        // "criar cena de exemplo" abaixo.
         m_CommandHistory.Clear();
 
         if (!startMap.empty()) {
             std::filesystem::path mapPath = project->GetMapDirectory() / startMap;
             if (std::filesystem::exists(mapPath)) {
-                Prism::SceneSerializer serializer(Prism::Scene::Create());
-                if (serializer.Deserialize(mapPath)) {
-                    m_ActiveScene = serializer.GetScene();
-                    m_SelectedEntity = {};
+                if (LoadScene(mapPath))
                     return;
-                }
                 PRISM_WARN("Falha ao carregar '", mapPath.string(), "' - criando cena de exemplo em memoria.");
             }
         }
@@ -222,6 +238,7 @@ namespace PrismEditor {
         RenderHierarchyPanel();
         RenderPropertiesPanel();
         RenderConsolePanel();
+        RenderContentBrowserPanel();
     }
 
     void EditorLayer::RenderMenuBar() {
@@ -265,6 +282,7 @@ namespace PrismEditor {
                 ImGui::MenuItem("Hierarquia", nullptr, true, false);
                 ImGui::MenuItem("Propriedades", nullptr, true, false);
                 ImGui::MenuItem("Console", nullptr, true, false);
+                ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -415,6 +433,10 @@ namespace PrismEditor {
 
     void EditorLayer::RenderConsolePanel() {
         m_ConsolePanel.OnImGuiRender();
+    }
+
+    void EditorLayer::RenderContentBrowserPanel() {
+        m_ContentBrowser.OnImGuiRender();
     }
 
 }

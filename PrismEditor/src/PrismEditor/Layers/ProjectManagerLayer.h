@@ -42,13 +42,6 @@ namespace PrismEditor {
         std::vector<std::filesystem::path> m_RecentProjects;
 
         bool m_ShowNewProjectPopup = false;
-
-        // Quando true, a proxima chamada de OnUpdate se remove da LayerStack.
-        // Fazemos a remocao no OnUpdate (nao no meio do CreateAndOpenProject)
-        // porque remover "this" da pilha enquanto ainda estamos dentro de uma
-        // funcao membro chamada PELA propria pilha e arriscado (use-after-free
-        // potencial). Adiar para o proximo OnUpdate e o padrao seguro.
-        bool m_Finished = false;
     };
 
 }

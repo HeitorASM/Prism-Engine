@@ -48,6 +48,7 @@ PrismEditor/    -> o executável do editor
       EditorLayer.*           -> dockspace + painéis do editor
     PrismEditor/Panels/
       ConsolePanel.*          -> painel de log (lê Prism::LogBuffer)
+      ContentBrowserPanel.*   -> navega os arquivos do projeto (Assets/Maps/Scripts/Cache)
     PrismEditor/Commands/
       EditorCommands.h        -> Commands concretos (Transform, criar/excluir entidade, etc)
 
@@ -111,7 +112,10 @@ comum de erro de build nesta engine.
 5. ~~Console de verdade.~~ ✅ feito
    (le de `Prism::LogBuffer`, cor por nivel, filtro de texto, toggles de
    verbosidade, auto-scroll - ver `PrismEditor/Panels/ConsolePanel.h`).
-6. Content Browser (painel de arquivos do projeto - ver Assets/Maps/Scripts).
+6. ~~Content Browser (painel de arquivos do projeto).~~ ✅ feito
+   (`PrismEditor/Panels/ContentBrowserPanel.h/.cpp` - navega Assets/Maps/
+   Scripts/Cache a partir da raiz do projeto; duplo-clique num `.prismmap`
+   já carrega aquele mapa na Scene ativa).
 7. Sistema de salvamento melhor: "Salvar Como" com nome, multiplos mapas por
    projeto, "Novo Mapa" funcional (hoje e um TODO vazio).
 8. Entidades mais robustas (base para scripting: `ScriptComponent`,
@@ -163,6 +167,24 @@ quando existir um sistema de atalhos mais genérico); Ctrl+Z/Ctrl+Y já
 funcionam globalmente, exceto enquanto o ImGui está capturando texto (ex:
 editando o campo "Nome"), onde o undo nativo do campo de texto tem
 prioridade.
+
+## Nota sobre o Content Browser (estado atual)
+
+`PrismEditor::ContentBrowserPanel` navega a partir de
+`Project::GetProjectDirectory()` (a raiz inteira do projeto, não só
+`Assets/`) — assim dá pra ver `Maps/` e `Scripts/` também. Duplo-clique numa
+pasta entra nela; botão "< Voltar" sobe um nível (desabilitado na raiz);
+duplo-clique num `.prismmap` chama `EditorLayer::LoadScene()`, que substitui
+a Scene ativa pela do arquivo clicado (sem perguntar "salvar antes?" ainda —
+ver limitação abaixo).
+
+Limitações conhecidas, deixadas de propósito para não expandir escopo agora:
+sem criar/renomear/excluir/arrastar arquivos pelo painel (isso se conecta
+naturalmente ao fluxo de importação de assets do guia do protótipo, que
+ainda não existe); sem confirmação de "salvar antes de trocar de mapa" —
+carregar outro mapa perde qualquer alteração não salva na cena atual, sem
+aviso. Isso fica para quando o próximo passo (sistema de salvamento melhor)
+for implementado.
 
 ## Nota sobre persistência de Scene (estado atual)
 

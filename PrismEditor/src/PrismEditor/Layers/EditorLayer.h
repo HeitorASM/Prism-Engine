@@ -20,12 +20,17 @@
 // Undo/Redo (Ctrl+Z / Ctrl+Y) cobre: mover/rotacionar/escalar entidade,
 // mudar cor, criar entidade, excluir entidade - ver m_CommandHistory e
 // PrismEditor/Commands/EditorCommands.h.
+//
+// Content Browser (m_ContentBrowser) mostra os arquivos do projeto ativo
+// (Assets/Maps/Scripts/Cache) e permite navegar/selecionar; duplo-clique
+// num .prismmap chama LoadScene() para abrir aquele mapa.
 // ============================================================================
 
 #include <Prism.h>
 #include <glm/glm.hpp>
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
+#include "../Panels/ContentBrowserPanel.h"
 
 namespace PrismEditor {
 
@@ -51,6 +56,17 @@ namespace PrismEditor {
         //   PrismEditor/Panels/ConsolePanel.h porque tem estado e logica
         //   proprios (filtros, auto-scroll) grandes o bastante para nao
         //   fazer sentido inline aqui.
+        void RenderContentBrowserPanel();
+        // ^ mesmo padrao do Console: delega para m_ContentBrowser.OnImGuiRender().
+
+        // Carrega o mapa em 'path' na Scene ativa, substituindo o que
+        // estiver aberto no momento (sem perguntar "salvar antes?" ainda -
+        // ver nota no README sobre proximos passos de salvamento). Chamado
+        // tanto por LoadOrCreateScene() (StartMap na abertura do editor)
+        // quanto pelo duplo-clique num .prismmap no Content Browser.
+        // Retorna false se a leitura falhar - a Scene ativa permanece
+        // intocada nesse caso (ver SceneSerializer::Deserialize).
+        bool LoadScene(const std::filesystem::path& mapPath);
 
         // Salva a Scene ativa em Project::GetMapDirectory()/<StartMap>,
         // criando o caminho no ProjectConfig se ainda nao existir (primeiro
@@ -110,6 +126,11 @@ namespace PrismEditor {
         // seu proprio estado de UI (filtros, auto-scroll), por isso vive em
         // uma classe separada em vez de ser so metodos soltos aqui.
         ConsolePanel m_ConsolePanel;
+
+        // Painel de navegacao pelos arquivos do projeto (Assets/Maps/
+        // Scripts/Cache) - primeira forma de ver o conteudo de um projeto
+        // sem sair do editor. Duplo-clique num .prismmap chama LoadScene().
+        ContentBrowserPanel m_ContentBrowser;
 
         // Camera de orbita minima para a viewport do editor (nao e a camera
         // FPS/TPS de jogo mencionada no guia - essa vira quando existir um
