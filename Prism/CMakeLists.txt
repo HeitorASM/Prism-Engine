@@ -22,6 +22,8 @@ target_link_libraries(Prism PUBLIC
     glm
     imgui
     EnTT::EnTT
+    lua
+    sol2
 )
 
 target_compile_features(Prism PUBLIC cxx_std_20)

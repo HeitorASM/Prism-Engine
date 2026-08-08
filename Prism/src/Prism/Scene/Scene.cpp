@@ -1,6 +1,10 @@
 #include "Scene.h"
 #include "Entity.h"
+#include "../Scripting/ScriptEngine.h"
+#include "../Project/Project.h"
+#include "../Core/Log.h"
 #include <algorithm>
+#include <filesystem>
 
 namespace Prism {
 
@@ -19,6 +23,14 @@ namespace Prism {
 
     void Scene::DestroyEntity(Entity entity) {
         entt::entity handle = entity.GetHandle();
+
+        // Se o modo Play estiver rodando e esta entidade tiver um script
+        // carregado, desliga ele (chama OnDestroy()) ANTES de destruir a
+        // entidade - depois de m_Registry.destroy() os components dela
+        // (incluindo ScriptComponent) deixam de existir, entao precisa ser
+        // nesta ordem.
+        if (m_IsRunning && m_Registry.all_of<ScriptComponent>(handle))
+            ScriptEngine::UnloadScript(entity);
 
         // Se a entidade tem um pai, tira ela da lista de Children dele
         // primeiro - senao o pai ficaria com um entt::entity morto na
@@ -105,10 +117,57 @@ namespace Prism {
     }
 
     void Scene::OnUpdate(float deltaTime) {
-        // TODO(fase seguinte): scripts (Lua) e fisica (Box3D) vao atualizar
-        // TransformComponent das entidades relevantes aqui. Por ora a Scene
-        // e estatica - so o EditorLayer gira a entidade de teste manualmente
-        // para fins de demonstracao visual (ver EditorLayer::RenderScene).
+        // Scripts so rodam durante o modo Play (m_IsRunning) - fora disso
+        // a Scene fica estatica, exibindo so o estado editado (mesmo
+        // comportamento de Unity/Unreal/Godot fora do botao Play). Fisica
+        // (Box3D, proximo item do roadmap) vai entrar aqui tambem quando
+        // integrada, seguindo a mesma regra de so simular enquanto roda.
+        if (!m_IsRunning)
+            return;
+
+        auto view = m_Registry.view<ScriptComponent>();
+        for (auto entityHandle : view) {
+            // Copia o handle para uma Entity de curta duracao - so para
+            // repassar ao ScriptEngine, que trabalha em termos de Entity
+            // (nao entt::entity cru) para poder chamar GetComponent<T>()
+            // de dentro dos bindings Lua (ver ScriptEngine.cpp).
+            ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
+        }
+    }
+
+    void Scene::OnScriptsStart() {
+        if (m_IsRunning)
+            return; // idempotente - ja rodando, nao recarrega tudo de novo
+        m_IsRunning = true;
+
+        auto view = m_Registry.view<ScriptComponent>();
+        for (auto entityHandle : view) {
+            auto& script = view.get<ScriptComponent>(entityHandle);
+            if (script.ScriptPath.empty())
+                continue; // ScriptComponent existe mas nenhum arquivo foi escolhido ainda - nada a carregar
+
+            // ScriptComponent::ScriptPath e RELATIVO a Scripts/ do projeto
+            // ativo (ver comentario em Components.h) - resolve para
+            // absoluto aqui, ja que ScriptEngine::LoadScript le do disco
+            // direto e nao conhece Project.
+            auto project = Project::GetActive();
+            if (!project) {
+                PRISM_CORE_ERROR("Scene::OnScriptsStart: nenhum projeto ativo - nao e possivel resolver o caminho de scripts.");
+                break;
+            }
+            std::filesystem::path absolutePath = project->GetScriptDirectory() / script.ScriptPath;
+            ScriptEngine::LoadScript(Entity(entityHandle, this), absolutePath);
+        }
+    }
+
+    void Scene::OnScriptsStop() {
+        if (!m_IsRunning)
+            return; // idempotente
+        m_IsRunning = false;
+
+        auto view = m_Registry.view<ScriptComponent>();
+        for (auto entityHandle : view)
+            ScriptEngine::UnloadScript(Entity(entityHandle, this));
     }
 
 }

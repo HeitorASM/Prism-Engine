@@ -66,10 +66,30 @@ namespace Prism {
         bool IsAncestorOf(entt::entity possibleAncestor, entt::entity entity);
 
         // Chamado uma vez por frame pelo dono da Scene (hoje, EditorLayer).
-        // Ainda nao ha nada para simular (fisica/scripts entram em fases
-        // futuras - ver README) - existe desde ja para nao exigir mudar a
-        // assinatura quando esses sistemas chegarem.
+        // So chama scripts (ver OnScriptsStart/Stop abaixo) enquanto a
+        // Scene esta "rodando" (m_IsRunning) - fora disso (a viewport
+        // normal do editor, fora do modo Play) a Scene fica estatica, como
+        // sempre foi, so exibindo o estado editado. Fisica (Box3D) tambem
+        // vai se plugar aqui quando integrada, seguindo a mesma regra.
         void OnUpdate(float deltaTime);
+
+        // Liga o modo "rodando": chama ScriptEngine::LoadScript (que por
+        // sua vez chama OnCreate()) para toda entidade com ScriptComponent
+        // que tenha um caminho de arquivo preenchido. Depois disso,
+        // OnUpdate() passa a chamar ScriptEngine::UpdateScript() por
+        // frame. E o que o futuro modo Play vai chamar ao abrir a janela
+        // separada (ver README "Nota sobre modo Play") - tambem pode ser
+        // chamado isoladamente pelo editor so para testar scripts sem UI
+        // de Play completa ainda existir.
+        void OnScriptsStart();
+
+        // Desliga o modo "rodando": chama ScriptEngine::UnloadScript (que
+        // chama OnDestroy()) para toda entidade com script carregado, e
+        // para de atualiza-los em OnUpdate(). Idempotente - chamar sem
+        // estar rodando nao faz nada.
+        void OnScriptsStop();
+
+        bool IsRunning() const { return m_IsRunning; }
 
         const std::string& GetName() const { return m_Name; }
         void SetName(const std::string& name) { m_Name = name; }
@@ -108,6 +128,7 @@ namespace Prism {
     private:
         std::string m_Name;
         entt::registry m_Registry;
+        bool m_IsRunning = false;
 
         friend class Entity;
     };

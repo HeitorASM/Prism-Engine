@@ -37,6 +37,14 @@ namespace PrismEditor {
     }
 
     bool EditorLayer::LoadScene(const std::filesystem::path& mapPath) {
+        // Se a cena atual estiver rodando (Play), desliga os scripts dela
+        // ANTES de trocar - senao ScriptEngine ficaria com instancias
+        // "orfas" carregadas para uma Scene que nao existe mais (a chave
+        // usa o ponteiro da Scene antiga, que nunca mais vai bater com
+        // nada depois de trocar m_ActiveScene abaixo).
+        if (m_ActiveScene && m_ActiveScene->IsRunning())
+            m_ActiveScene->OnScriptsStop();
+
         Prism::SceneSerializer serializer(Prism::Scene::Create());
         if (!serializer.Deserialize(mapPath)) {
             PRISM_ERROR("Falha ao carregar o mapa: ", mapPath.string());
@@ -55,6 +63,9 @@ namespace PrismEditor {
         // (dirty flag), perguntar aqui antes de descartar a cena atual -
         // por ora, Novo Mapa descarta sem aviso, igual acontecia ao
         // carregar outro mapa pelo Content Browser (ver nota no README).
+        if (m_ActiveScene && m_ActiveScene->IsRunning())
+            m_ActiveScene->OnScriptsStop(); // ver comentario identico em LoadScene()
+
         m_ActiveScene = Prism::Scene::Create("Nova Cena");
         m_CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
         m_SelectedEntity = {};
@@ -793,6 +804,29 @@ namespace PrismEditor {
                 ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
                 ImGui::EndMenu();
             }
+
+            // Botao Play/Stop: liga/desliga scripts (Scene::OnScriptsStart/
+            // Stop) SEM abrir a janela separada do modo Play completo ainda
+            // (isso fica para quando o item do roadmap "modo Play" for
+            // implementado - ver README). Por ora, "Play" so faz OnCreate/
+            // OnUpdate dos scripts rodarem dentro da propria viewport do
+            // editor - suficiente para testar um script sem sair do
+            // editor. Alinhado a direita da menu bar via um espacador.
+            float playButtonWidth = 90.0f;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - playButtonWidth - 16.0f);
+            bool isRunning = m_ActiveScene->IsRunning();
+            if (isRunning) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
+                if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
+                    m_ActiveScene->OnScriptsStop();
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
+                if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
+                    m_ActiveScene->OnScriptsStart();
+                ImGui::PopStyleColor();
+            }
+
             ImGui::EndMenuBar();
         }
     }
@@ -1198,7 +1232,26 @@ namespace PrismEditor {
                 if (ImGui::IsItemDeactivatedAfterEdit())
                     script.ScriptPath = scriptPathBuffer;
 
-                ImGui::TextDisabled("Relativo a Scripts/. Ainda nao executa (Lua nao esta embutido ainda).");
+                if (script.ScriptPath.empty()) {
+                    ImGui::TextDisabled("Nenhum arquivo escolhido ainda.");
+                } else if (!m_ActiveScene->IsRunning()) {
+                    ImGui::TextDisabled("Aperte Play (menu bar) para rodar os scripts da cena.");
+                } else {
+                    // So faz sentido recarregar um script INDIVIDUALMENTE
+                    // enquanto a cena esta rodando (Play) - fora disso nao
+                    // ha nenhuma instancia carregada para recarregar, e
+                    // Scene::OnScriptsStart() ja carrega tudo de uma vez
+                    // quando o Play comeca.
+                    if (ImGui::Button("Recarregar")) {
+                        auto project = Prism::Project::GetActive();
+                        if (project) {
+                            std::filesystem::path absolutePath = project->GetScriptDirectory() / script.ScriptPath;
+                            Prism::ScriptEngine::LoadScript(m_SelectedEntity, absolutePath);
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Reaplica o arquivo (chama OnCreate de novo)");
+                }
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::ScriptComponent>>(m_SelectedEntity, "Script"));

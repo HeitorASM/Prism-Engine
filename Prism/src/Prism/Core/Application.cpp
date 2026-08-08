@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
+#include "../Scripting/ScriptEngine.h"
 #include <GLFW/glfw3.h>
 
 namespace Prism {
@@ -30,11 +31,20 @@ namespace Prism {
         // parte de renderizacao da engine (shaders/geometria da GPU) agora.
         Renderer::Init();
 
+        // ScriptEngine::Init() cria a VM Lua global do processo (ver
+        // ScriptEngine.h) - feito aqui, junto do resto da fundacao da
+        // engine, para que qualquer Layer (EditorLayer, e futuramente um
+        // executavel de Runtime sem editor) ja encontre Lua pronto para
+        // uso em OnAttach(), sem precisar se preocupar com a ordem de
+        // inicializacao.
+        ScriptEngine::Init();
+
         m_ImGuiLayer = new ImGuiLayer();
         PushOverlay(m_ImGuiLayer);
     }
 
     Application::~Application() {
+        ScriptEngine::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
     }

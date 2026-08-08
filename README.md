@@ -17,8 +17,11 @@ scroll para zoom) e resize automático do framebuffer conforme o painel muda
 de tamanho.
 
 Ainda **não** implementados (por design, para não travar o projeto tentando
-fazer tudo de uma vez): Scene/Entity real, scripting Lua, física Box3D,
-BSP/CSG, importação de assets (FBX/OBJ/glTF/áudio), sistema de luzes.
+fazer tudo de uma vez): física Box3D, BSP/CSG, importação de assets
+(FBX/OBJ/glTF/áudio), sistema de luzes de verdade (afetando a renderização).
+Scene/Entity real e scripting Lua básico já foram implementados desde a
+escrita original deste parágrafo - ver "Nota sobre a Scene/ECS" e "Nota
+sobre Scripting Lua" mais abaixo.
 
 ## Arquitetura em uma frase
 
@@ -39,6 +42,7 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
                    PrimitiveMeshFactory (gera geometria de Cube/Sphere/
                    Capsule/Cylinder/Plane), Renderer (API minima de desenho)
     Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
+    Scripting/  -> ScriptEngine (VM Lua via sol2, ciclo de vida de scripts)
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
 
@@ -135,6 +139,100 @@ todas as entidades da cena ja foram criadas no `Deserialize()`.
 indentacao visual customizada alem da propria arvore do ImGui; sem
 suporte a copiar/colar uma subarvore inteira.
 
+## Nota sobre Scripting Lua (estado atual)
+
+**Correcoes de build aplicadas apos a primeira integracao** (se voce ja
+tinha configurado o CMake antes, apague a pasta `build/`/`out/` e
+reconfigure do zero):
+- `onelua.c` (um "amalgamation" alternativo que ja inclui todos os outros
+  `.c` do Lua sozinho) estava sendo compilado JUNTO com os `.c`
+  individuais - toda funcao do Lua ficava definida duas vezes
+  (`lua_next ja definido...`, etc). Corrigido excluindo `onelua.c` do GLOB
+  em `vendor/CMakeLists.txt` (so os `.c` individuais sao compilados).
+- `LUA_USE_WINDOWS` estava sendo definida manualmente via
+  `target_compile_definitions`, mas `luaconf.h` (dentro do proprio source
+  do Lua) ja se autodetecta em Windows sozinho - a definicao manual
+  chegava via linha de comando do compilador ANTES do preprocessador
+  rodar o `#if !defined(LUA_USE_WINDOWS)` de `luaconf.h`, causando
+  "redefinicao de macro" (C4005) em todo `.c` do Lua. Corrigido removendo
+  a definicao manual - `luaconf.h` cuida disso sozinho.
+- `ScriptEngine::LoadScript` usava `sol::state::safe_script(codigo, env,
+  chunkname)`, uma sobrecarga do sol2 com um bug de resolucao conhecido no
+  MSVC (SFINAE escolhe a sobrecarga errada - ver
+  github.com/ThePhD/sol2/issues/572), que aparecia como "C2064: term does
+  not evaluate to a function taking 2 arguments" em `state_view.hpp`.
+  Corrigido trocando para `load()` + `sol::set_environment()` + chamada
+  manual do chunk - mesmo resultado, sem passar pela sobrecarga
+  problematica.
+
+Lua 5.4 esta embutido via `sol2` (bindings header-only) - ver
+`vendor/CMakeLists.txt` (ambos baixados via FetchContent, mesmo padrao do
+GLFW/glm/EnTT/ImGui). `Prism::ScriptEngine`
+(`Prism/src/Prism/Scripting/ScriptEngine.h/.cpp`) cuida da VM Lua global do
+processo (uma so, nao uma por script - cada script isolado via
+`sol::environment` proprio) e do ciclo de vida de scripts individuais.
+
+**API exposta a scripts Lua (deliberadamente minima por enquanto)**:
+- `entity` - variavel global implicita dentro de cada script, a propria
+  entidade dona do `ScriptComponent`.
+- `entity:GetTransform()` - retorna a `Transform` (Translation/Rotation/Scale,
+  cada uma um `Vec3` com `.x`/`.y`/`.z`) da propria entidade, editavel
+  diretamente (`entity:GetTransform().Translation.y = 5`).
+- `entity:GetName()`, `entity:SetPosition(x,y,z)`, `entity:Translate(dx,dy,dz)`.
+- `log(msg)` / `log_warn(msg)` / `log_error(msg)` - escreve no mesmo Console
+  panel do editor (prefixo `[Lua]`).
+
+Fisica (Box3D) e Input ainda nao existem na engine, entao scripts nao tem
+acesso a nenhum dos dois ainda - proximos TODOs marcados direto no codigo
+de `ScriptEngine::RegisterAPI()`.
+
+**Tres callbacks opcionais** que um arquivo `.lua` pode definir no seu
+escopo global: `OnCreate()`, `OnUpdate(deltaTime)`, `OnDestroy()`. Nenhum e
+obrigatorio. Ver `PrismEditor/assets/ScriptExamples/example_spin.lua` para
+um exemplo comentado completo (gira uma entidade em Y).
+
+**Ciclo de vida / modo Play**: scripts SO rodam enquanto a Scene esta
+"rodando" (`Scene::IsRunning()`) - fora disso a viewport do editor fica
+estatica, exibindo so o estado editado (igual antes do scripting existir).
+Um botao **Play/Parar** foi adicionado a direita da menu bar do editor:
+Play chama `Scene::OnScriptsStart()` (carrega + `OnCreate()` de todo
+`ScriptComponent` com um caminho preenchido); Parar chama
+`Scene::OnScriptsStop()` (`OnDestroy()` + descarrega tudo). Isto NAO e
+ainda o modo Play "de verdade" planejado no README (janela separada, com a
+camera de jogo Primary) - e so o scripting rodando dentro da propria
+viewport do editor, suficiente para testar um script sem mais UI. O modo
+Play com janela separada fica para quando fizer sentido combinar os dois.
+
+Trocar de mapa (Novo Mapa / carregar outro `.prismmap` pelo Content
+Browser) enquanto rodando para os scripts da cena antiga primeiro
+(`OnScriptsStop()`) antes de trocar `m_ActiveScene` - evita instancias
+Lua "orfas" apontando para uma Scene que nao existe mais.
+
+**Erros de script nunca derrubam o editor**: erro de sintaxe ao carregar,
+ou erro de runtime em `OnCreate`/`OnUpdate`/`OnDestroy`, viram
+`PRISM_CORE_ERROR` no Console - o script fica marcado como "com erro"
+(`LoadedScript::HasRuntimeError`) e para de ser chamado a cada frame (evita
+spammar o mesmo erro a 60fps), ate ser corrigido e recarregado.
+
+**Recarregar um script individualmente**: com a cena rodando, a Properties
+panel mostra um botao "Recarregar" na secao Script de uma entidade
+selecionada - chama `ScriptEngine::LoadScript()` de novo so para aquela
+entidade (chama `OnDestroy` da instancia antiga, depois `OnCreate` da
+nova), sem precisar parar/tocar Play de novo para a cena inteira.
+
+**Bibliotecas padrao do Lua abertas**: so `base`/`math`/`string`/`table` -
+`io`/`os`/`package`/`debug` ficam de fora de proposito (um script de
+gameplay nao deveria conseguir ler arquivos do disco ou rodar comandos do
+SO so por existir numa Scene).
+
+**Limitacoes conhecidas, deixadas de proposito**: sem hot-reload automatico
+de arquivo (o botao "Recarregar" e manual); sem um painel de "scripts
+ativos"/breakpoints/debugger; `entity:GetTransform()` nao inclui
+ancestrais (retorna so o `TransformComponent` LOCAL, nao
+`Scene::GetWorldTransform` - um script que precise da posicao de MUNDO
+ainda nao tem essa funcao exposta); sem suporte a scripts chamarem funcoes
+de OUTRAS entidades ainda (so a propria `entity` e visivel).
+
 ## Próximos passos sugeridos (nesta ordem)
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
@@ -172,7 +270,9 @@ suporte a copiar/colar uma subarvore inteira.
 11. ~~Parenting / hierarquia real (arvore de entidades).~~ ✅ feito
     (`RelationshipComponent`, `Scene::SetParent`/`GetWorldTransform`,
     Hierarchy panel com drag-and-drop, `.prismmap` v4 - ver nota acima).
-12. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
+12. ~~Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.~~ ✅ feito
+    (`Prism::ScriptEngine`, botao Play/Parar na menu bar, API minima de
+    Transform + log - ver nota "Scripting Lua" acima).
 13. Integrar Box3D, corpos rígidos básicos.
 14. BSP/CSG (brushes como um tipo de Entity no editor).
 
