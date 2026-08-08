@@ -6,6 +6,8 @@
 #include <fstream>
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
 namespace Prism {
 
@@ -27,7 +29,20 @@ namespace Prism {
     // v2 -> v3: adicionado CameraComponent (opcional, mesmo padrao de flag
     // de presenca). Arquivos v2 nao sao lidos por este parser - mapas
     // salvos antes desta mudanca precisam ser resalvos uma vez.
-    static constexpr uint32_t kSceneFormatVersion = 3;
+    //
+    // v3 -> v4: adicionado RelationshipComponent (parenting). Diferente
+    // dos outros components opcionais, NAO usa flag de presenca + campos -
+    // usa so um int32_t por entidade (indice do pai na ordem de escrita
+    // deste arquivo, -1 = sem pai/raiz). entt::entity bruto NUNCA e salvo
+    // (o handle e so valido durante a sessao atual - ao recarregar, o
+    // EnTT pode reciclar/reordenar handles livremente); o indice posicional
+    // e estavel porque Serialize()/Deserialize() sempre iteram/criam
+    // entidades na MESMA ordem (ver ForEachEntity). Children nao e salvo
+    // separado - Deserialize() reconstroi Children chamando
+    // Scene::SetParent() para cada entidade que tem um Parent valido,
+    // depois que TODAS as entidades ja foram criadas (precisa dos handles
+    // novos de ambos os lados existirem antes de ligar o parentesco).
+    static constexpr uint32_t kSceneFormatVersion = 4;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -89,9 +104,17 @@ namespace Prism {
         WriteString(out, m_Scene->GetName());
 
         // Conta entidades primeiro (ForEachEntity nao expoe o total
-        // diretamente) para escrever o cabecalho antes dos dados.
+        // diretamente) para escrever o cabecalho antes dos dados. Ao mesmo
+        // tempo, monta o mapa handle -> indice posicional (0, 1, 2...) na
+        // MESMA ordem que o loop de escrita abaixo vai seguir - e esse
+        // indice, nao o entt::entity bruto, que vira o "id do pai" no
+        // arquivo (ver comentario de v3->v4 em kSceneFormatVersion acima).
         uint32_t entityCount = 0;
-        m_Scene->ForEachEntity([&](entt::entity, TagComponent&) { entityCount++; });
+        std::unordered_map<entt::entity, int32_t> handleToIndex;
+        m_Scene->ForEachEntity([&](entt::entity handle, TagComponent&) {
+            handleToIndex[handle] = (int32_t)entityCount;
+            entityCount++;
+        });
         WriteRaw(out, entityCount);
 
         bool writeFailed = false;
@@ -172,6 +195,23 @@ namespace Prism {
                 WriteRaw(out, camera.Primary);
             }
 
+            // RelationshipComponent - adicionado na v4 do formato. So o
+            // indice do PAI e gravado (ver comentario de kSceneFormatVersion);
+            // -1 quando a entidade nao tem RelationshipComponent ou nao tem
+            // pai (e raiz). Um pai que aponta para fora deste mapa (nao
+            // deveria acontecer, ja que so entidades da propria Scene podem
+            // virar pai via Scene::SetParent) tambem vira -1 em vez de
+            // gravar lixo.
+            int32_t parentIndex = -1;
+            if (auto* rel = m_Scene->GetRegistry().try_get<RelationshipComponent>(handle)) {
+                if (rel->Parent != entt::null) {
+                    auto it = handleToIndex.find(rel->Parent);
+                    if (it != handleToIndex.end())
+                        parentIndex = it->second;
+                }
+            }
+            WriteRaw(out, parentIndex);
+
             if (!out) writeFailed = true;
         });
 
@@ -244,6 +284,17 @@ namespace Prism {
         // (ver loop abaixo) - assim uma leitura que falha no meio nao deixa
         // a Scene ativa pela metade.
         Ref<Scene> loaded = Scene::Create(sceneName);
+
+        // parentIndices[i] = indice do pai da entidade i no arquivo (-1 =
+        // sem pai). Resolvido para handles/SetParent DEPOIS que todas as
+        // entidades existirem (ver loop separado apos este) - nao da para
+        // chamar SetParent no meio deste loop porque o pai de uma entidade
+        // pode aparecer DEPOIS dela no arquivo (ordem de escrita nao
+        // garante pai-antes-do-filho).
+        std::vector<int32_t> parentIndices;
+        parentIndices.reserve(entityCount);
+        std::vector<Entity> createdEntities;
+        createdEntities.reserve(entityCount);
 
         for (uint32_t i = 0; i < entityCount; i++) {
             std::string tag;
@@ -377,6 +428,32 @@ namespace Prism {
                     return false;
                 }
             }
+
+            // RelationshipComponent - so o indice do pai (ver comentario
+            // de kSceneFormatVersion/v3->v4 no topo do arquivo). Guardado
+            // aqui, resolvido em SetParent() so depois que TODAS as
+            // entidades desta cena existirem (loop logo abaixo).
+            int32_t parentIndex = -1;
+            if (!ReadRaw(in, parentIndex)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (indice de pai da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            parentIndices.push_back(parentIndex);
+            createdEntities.push_back(entity);
+        }
+
+        // Segunda passada: resolve os indices de pai em chamadas reais de
+        // SetParent, agora que createdEntities[i] existe para qualquer i
+        // (inclusive indices que aparecem "a frente" no arquivo). Indices
+        // fora do range [0, entityCount) sao tratados como -1 (sem pai) -
+        // protecao extra contra um arquivo corrompido/de origem duvidosa,
+        // ja que aceitar um indice invalido aqui acessaria
+        // createdEntities fora dos limites.
+        for (uint32_t i = 0; i < entityCount; i++) {
+            int32_t parentIndex = parentIndices[i];
+            if (parentIndex < 0 || (uint32_t)parentIndex >= entityCount)
+                continue;
+            loaded->SetParent(createdEntities[i], createdEntities[(uint32_t)parentIndex]);
         }
 
         m_Scene = loaded;

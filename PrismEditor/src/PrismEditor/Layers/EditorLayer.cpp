@@ -313,17 +313,18 @@ namespace PrismEditor {
             const auto& spec = m_CameraPreviewFramebuffer->GetSpecification();
             float aspect = spec.Height > 0 ? (float)spec.Width / (float)spec.Height : 1.0f;
 
-            auto& transform = primaryCameraEntity.GetComponent<Prism::TransformComponent>();
             auto& camera = primaryCameraEntity.GetComponent<Prism::CameraComponent>();
 
-            // View da camera de jogo: inversa da matriz de mundo da
-            // entidade (posicao + rotacao) - GetTransform() ja inclui
-            // Scale, que nao faz sentido para uma camera, mas
-            // TransformComponent nao tem um "GetTransformNoScale()"
-            // separado ainda; cameras tipicamente ficam com Scale=1 (o
-            // preset de criacao garante isso), entao nao e um problema na
-            // pratica.
-            glm::mat4 view = glm::inverse(transform.GetTransform());
+            // View da camera de jogo: inversa da matriz de MUNDO da
+            // entidade (ancestrais inclusos, via GetWorldTransform - ver
+            // parenting em Scene.h; ex: uma camera filha de um Character
+            // acompanha o pai). GetWorldTransform ja inclui Scale, que nao
+            // faz sentido para uma camera, mas cameras tipicamente ficam
+            // com Scale=1 em toda a cadeia de ancestrais (o preset de
+            // criacao garante isso na propria entidade), entao nao e um
+            // problema na pratica.
+            glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(primaryCameraEntity);
+            glm::mat4 view = glm::inverse(worldTransform);
             glm::mat4 projection = camera.GetProjection(aspect);
             glm::mat4 viewProjection = projection * view;
 
@@ -334,7 +335,8 @@ namespace PrismEditor {
             // capsula de colisao de um Character): a face interna do mesh
             // que a envolve fica transparente na preview, entao a camera
             // enxerga o resto da cena em vez de uma parede solida.
-            Prism::Renderer::SetCameraPosition(glm::value_ptr(transform.Translation));
+            glm::vec3 worldPos = glm::vec3(worldTransform[3]);
+            Prism::Renderer::SetCameraPosition(glm::value_ptr(worldPos));
 
             RenderSceneEntities(viewProjection);
             // Nao chama RenderCameraGizmos aqui de proposito - a propria
@@ -360,9 +362,13 @@ namespace PrismEditor {
         // matriz view/projection recebida.
         auto view_ = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::MeshRendererComponent>();
         for (auto entityHandle : view_) {
-            auto [transform, meshRenderer] = view_.get<Prism::TransformComponent, Prism::MeshRendererComponent>(entityHandle);
+            auto& meshRenderer = view_.get<Prism::MeshRendererComponent>(entityHandle);
 
-            glm::mat4 model = transform.GetTransform();
+            // GetWorldTransform (nao TransformComponent::GetTransform() sozinho)
+            // combina o transform local desta entidade com o de todos os
+            // ancestrais (ver RelationshipComponent/parenting em Scene.h) -
+            // e assim que mover um pai move os filhos junto na viewport.
+            glm::mat4 model = m_ActiveScene->GetWorldTransform(Prism::Entity(entityHandle, m_ActiveScene.get()));
             glm::vec3 color = meshRenderer.Color;
 
             // DrawMesh() ja sabe desenhar qualquer PrimitiveMesh (Cube,
@@ -381,7 +387,7 @@ namespace PrismEditor {
         // (os planos near/far tem o mesmo tamanho, sem convergencia).
         auto view = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
         for (auto entityHandle : view) {
-            auto [transform, camera] = view.get<Prism::TransformComponent, Prism::CameraComponent>(entityHandle);
+            auto& camera = view.get<Prism::CameraComponent>(entityHandle);
 
             // Tamanho fixo de exibicao (nao o Far real da camera, que pode
             // ser gigante e tornar o gizmo inutilizavel visualmente) - so
@@ -409,7 +415,7 @@ namespace PrismEditor {
                 farHalfWidth = farHalfHeight * kGizmoAspect;
             }
 
-            glm::mat4 model = transform.GetTransform();
+            glm::mat4 model = m_ActiveScene->GetWorldTransform(Prism::Entity(entityHandle, m_ActiveScene.get()));
             // Camera olha para -Z local (convencao padrao de camera em
             // OpenGL/glm, igual view = glm::inverse(model) em RenderScene()
             // assume implicitamente).
@@ -454,18 +460,19 @@ namespace PrismEditor {
         if (!m_SelectedEntity || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>())
             return;
 
-        auto& transform = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
         auto& collider = m_SelectedEntity.GetComponent<Prism::ColliderComponent>();
 
-        // Gizmo do collider usa a matriz de mundo completa da entidade
-        // (posicao + rotacao + escala, via TransformComponent::GetTransform)
-        // - mesmo approach usado por RenderCameraGizmos acima. O TAMANHO
-        // "base" da forma de colisao vem de collider.Size; se a entidade
-        // tiver Scale != 1 no Transform, o gizmo escala junto (reflete o
-        // que a fisica de verdade faria depois, quando Box3D estiver
-        // integrado - Box3D tambem aplica a escala do corpo aos shapes).
+        // Gizmo do collider usa a matriz de MUNDO completa da entidade
+        // (ancestrais inclusos, via GetWorldTransform - ver parenting em
+        // Scene.h) - mesmo approach usado por RenderCameraGizmos acima. O
+        // TAMANHO "base" da forma de colisao vem de collider.Size; se a
+        // entidade (ou algum ancestral) tiver Scale != 1, o gizmo escala
+        // junto (reflete o que a fisica de verdade faria depois, quando
+        // Box3D estiver integrado - Box3D tambem aplica a escala do corpo
+        // aos shapes).
+        glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(m_SelectedEntity);
         auto toWorld = [&](const glm::vec3& local) {
-            return glm::vec3(transform.GetTransform() * glm::vec4(local, 1.0f));
+            return glm::vec3(worldTransform * glm::vec4(local, 1.0f));
         };
 
         // Amarelo: convencao comum de "gizmo de colisao selecionado" (Unity
@@ -885,30 +892,117 @@ namespace PrismEditor {
     void EditorLayer::RenderHierarchyPanel() {
         ImGui::Begin("Hierarquia");
 
-        // Lista toda entidade da cena ativa (qualquer entidade com
-        // TagComponent, ou seja, todas - ver Scene::CreateEntity). Clicar
-        // seleciona; a selecao e o que a Properties panel usa para saber o
-        // que mostrar/editar.
-        m_ActiveScene->ForEachEntity([&](entt::entity handle, Prism::TagComponent& tag) {
-            Prism::Entity entity(handle, m_ActiveScene.get());
-            bool isSelected = (m_SelectedEntity == entity);
-
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth
-                | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-            if (isSelected)
-                flags |= ImGuiTreeNodeFlags_Selected;
-
-            ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", tag.Tag.c_str());
-            if (ImGui::IsItemClicked())
-                m_SelectedEntity = entity;
+        // So desenha as RAIZES (entidades sem pai) - cada uma desenha seus
+        // proprios filhos recursivamente por dentro de RenderHierarchyNode.
+        // Isso substitui a lista plana antiga por uma arvore de verdade
+        // (ver RelationshipComponent em Components.h).
+        m_ActiveScene->ForEachRootEntity([&](entt::entity handle, Prism::TagComponent&) {
+            RenderHierarchyNode(Prism::Entity(handle, m_ActiveScene.get()));
         });
 
+        // Area vazia do painel tambem e um alvo de drop valido - soltar
+        // uma entidade aqui a torna raiz de novo (reparentar para
+        // "nenhum pai"). Precisa vir DEPOIS do loop acima para cobrir o
+        // espaco em branco abaixo da arvore inteira.
+        ImGui::Dummy(ImGui::GetContentRegionAvail());
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PRISM_ENTITY_HANDLE")) {
+                entt::entity draggedHandle = *(const entt::entity*)payload->Data;
+                Prism::Entity dragged(draggedHandle, m_ActiveScene.get());
+                if (dragged) {
+                    Prism::Entity oldParent;
+                    if (auto* rel = m_ActiveScene->GetRegistry().try_get<Prism::RelationshipComponent>(draggedHandle)) {
+                        if (rel->Parent != entt::null)
+                            oldParent = Prism::Entity(rel->Parent, m_ActiveScene.get());
+                    }
+                    if (oldParent) // so gera comando se realmente tinha pai (senao ja era raiz, nada muda)
+                        m_CommandHistory.Execute(Prism::CreateScope<SetParentCommand>(m_ActiveScene, dragged, oldParent, Prism::Entity{}));
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
         // Clicar em area vazia do painel desseleciona - convencao comum em
-        // editores (Unity/Godot fazem o mesmo).
+        // editores (Unity/Godot fazem o mesmo). IsAnyItemHovered ja e
+        // false aqui porque o Dummy acima nao conta como "item" para fins
+        // de clique (so como alvo de drag-and-drop).
         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered())
             m_SelectedEntity = {};
 
         ImGui::End();
+    }
+
+    void EditorLayer::RenderHierarchyNode(Prism::Entity entity) {
+        entt::entity handle = entity.GetHandle();
+        auto& tag = entity.GetComponent<Prism::TagComponent>();
+        bool isSelected = (m_SelectedEntity == entity);
+
+        auto* rel = m_ActiveScene->GetRegistry().try_get<Prism::RelationshipComponent>(handle);
+        bool hasChildren = rel && !rel->Children.empty();
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth
+            | ImGuiTreeNodeFlags_DefaultOpen;
+        if (!hasChildren)
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (isSelected)
+            flags |= ImGuiTreeNodeFlags_Selected;
+
+        bool open = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", tag.Tag.c_str());
+        if (ImGui::IsItemClicked())
+            m_SelectedEntity = entity;
+
+        // Origem do drag: qualquer node pode ser arrastado. So guardamos o
+        // handle bruto (4 bytes) no payload - suficiente para reconstruir
+        // uma Prism::Entity do lado de quem recebe (m_ActiveScene.get() e
+        // sempre a mesma Scene).
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            ImGui::SetDragDropPayload("PRISM_ENTITY_HANDLE", &handle, sizeof(entt::entity));
+            ImGui::Text("%s", tag.Tag.c_str());
+            ImGui::EndDragDropSource();
+        }
+
+        // Alvo do drag: soltar outra entidade sobre este node a torna
+        // FILHA dele. Scene::SetParent ja recusa ciclos internamente (ver
+        // Scene.cpp) - um IsAncestorOf() extra aqui so evita nem tentar
+        // caso a UI queira, no futuro, desenhar feedback visual diferente
+        // para um drop invalido; por ora deixamos SetParent decidir.
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PRISM_ENTITY_HANDLE")) {
+                entt::entity draggedHandle = *(const entt::entity*)payload->Data;
+                if (draggedHandle != handle) {
+                    Prism::Entity dragged(draggedHandle, m_ActiveScene.get());
+                    if (dragged) {
+                        Prism::Entity oldParent;
+                        if (auto* draggedRel = m_ActiveScene->GetRegistry().try_get<Prism::RelationshipComponent>(draggedHandle)) {
+                            if (draggedRel->Parent != entt::null)
+                                oldParent = Prism::Entity(draggedRel->Parent, m_ActiveScene.get());
+                        }
+                        m_CommandHistory.Execute(Prism::CreateScope<SetParentCommand>(m_ActiveScene, dragged, oldParent, entity));
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        if (open && hasChildren) {
+            // Copia a lista de filhos antes de iterar: um reparentamento
+            // (drag-and-drop) disparado enquanto desenhamos esta arvore
+            // poderia mudar RelationshipComponent::Children no meio do
+            // loop - iterar a copia evita invalidar o iterator/o proprio
+            // vector sendo lido.
+            std::vector<entt::entity> childrenCopy = rel->Children;
+            for (entt::entity childHandle : childrenCopy) {
+                if (m_ActiveScene->GetRegistry().valid(childHandle))
+                    RenderHierarchyNode(Prism::Entity(childHandle, m_ActiveScene.get()));
+            }
+            ImGui::TreePop();
+        } else if (open && !hasChildren) {
+            // Leaf com NoTreePushOnOpen nao empurra um nivel de arvore -
+            // nada a fazer aqui, mas o 'open' de um Leaf via
+            // NoTreePushOnOpen sempre vem true quando clicado (nao abre
+            // nada de fato); sem TreePop correspondente porque
+            // NoTreePushOnOpen nunca empurrou um.
+        }
     }
 
     void EditorLayer::RenderPropertiesPanel() {

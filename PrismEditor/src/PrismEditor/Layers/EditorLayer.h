@@ -49,6 +49,10 @@ namespace PrismEditor {
         void RenderMenuBar();
         void RenderViewportPanel();
         void RenderHierarchyPanel();
+        // Desenha um unico node da arvore (e recursivamente seus filhos) -
+        // extraido de RenderHierarchyPanel() porque a recursao precisa
+        // chamar a si mesma para cada nivel da hierarquia.
+        void RenderHierarchyNode(Prism::Entity entity);
         void RenderPropertiesPanel();
         // ^ RenderPropertiesPanel() desenha uma secao por component que a
         //   entidade selecionada ja tem (com um "X" para remover, exceto

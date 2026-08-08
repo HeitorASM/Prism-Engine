@@ -21,6 +21,7 @@
 //     [1 byte]  flag: tem ColliderComponent?          se sim: ColliderShape (u32) + Size (3 floats) + IsTrigger (1 byte)
 //     [1 byte]  flag: tem RigidBodyComponent?         se sim: BodyType (u32) + Mass + UseGravity (1 byte) + CCD (1 byte)
 //     [1 byte]  flag: tem ScriptComponent?             se sim: ScriptPath (string)
+//     [4 bytes] indice do pai (int32_t, -1 = sem pai) - ver comentario na v4 no .cpp
 //
 // O numero de versao existe desde ja para que, quando novos components
 // forem adicionados, Deserialize() consiga detectar um arquivo de versao

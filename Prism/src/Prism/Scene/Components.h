@@ -14,7 +14,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp> // glm::yawPitchRoll (extensao GTX, header separado do gtc/quaternion)
+#include <entt/entt.hpp>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace Prism {
 
@@ -216,6 +219,28 @@ namespace Prism {
 
         RigidBodyComponent() = default;
         RigidBodyComponent(const RigidBodyComponent&) = default;
+    };
+
+    // Relacao pai/filho entre entidades - opcional (uma entidade sem este
+    // component e "raiz", ou seja, filha implicita da propria Scene). Usa
+    // entt::entity puro (nao Prism::Entity) de proposito: components nao
+    // devem depender de Scene* (ver comentario no topo do arquivo) - quem
+    // resolve o handle de volta para uma Entity utilizavel e sempre quem
+    // tem acesso a Scene (ver Scene::GetWorldTransform/SetParent).
+    //
+    // Guardamos Parent + a lista de Children ao mesmo tempo (em vez de so
+    // Parent, e reconstruir os filhos varrendo a Scene toda) porque a
+    // Hierarchy panel do editor precisa desenhar a arvore todo frame -
+    // reconstruir isso a cada frame seria um scan O(n) desnecessario. O
+    // preco e manter as duas pontas em sincronia manualmente - toda
+    // mudanca de parentesco DEVE passar por Scene::SetParent (nunca mexer
+    // em Parent/Children direto), que cuida dos dois lados de uma vez.
+    struct RelationshipComponent {
+        entt::entity Parent = entt::null;
+        std::vector<entt::entity> Children;
+
+        RelationshipComponent() = default;
+        RelationshipComponent(const RelationshipComponent&) = default;
     };
 
     // Slot de script anexado a uma entidade - ainda NAO executa nada (Lua

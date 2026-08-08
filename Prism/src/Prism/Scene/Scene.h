@@ -17,6 +17,7 @@
 #include "../Core/Base.h"
 #include "Components.h"
 #include <entt/entt.hpp>
+#include <glm/glm.hpp>
 #include <string>
 #include <cstdint>
 
@@ -34,7 +35,35 @@ namespace Prism {
         // Components.h). O nome e so um rotulo de exibicao, pode repetir.
         Entity CreateEntity(const std::string& name = "Entity");
 
+        // Destroi a entidade E toda a sua subarvore de filhos (recursivo) -
+        // e o comportamento padrao em Unity/Godot: excluir um pai sem
+        // filhos "orfaos" soltos na cena. Tambem remove a entidade da
+        // lista de Children do proprio pai, se houver um.
         void DestroyEntity(Entity entity);
+
+        // Reparenta 'child' para debaixo de 'newParent' (entt::null =
+        // vira raiz). Cuida dos DOIS lados do RelationshipComponent
+        // (Parent do filho + Children do pai antigo/novo) - nunca mexer
+        // nesses campos direto fora daqui. Recusa (retorna false, sem
+        // mudar nada) operacoes que criariam um ciclo (um ancestral nao
+        // pode virar filho do proprio descendente) ou newParent == child.
+        bool SetParent(Entity child, Entity newParent);
+
+        // Matriz de mundo de uma entidade, ja combinando o TransformComponent
+        // local dela com o de todos os ancestrais (via RelationshipComponent).
+        // Entidades sem RelationshipComponent (ou sem Parent valido) usam so
+        // o proprio TransformComponent::GetTransform() - identico ao
+        // comportamento de antes do parenting existir. Isto e o unico lugar
+        // que deveria ser usado para desenhar/posicionar uma entidade no
+        // espaco do mundo (viewport, gizmos, fisica futura) - o
+        // TransformComponent sozinho so tem o espaco LOCAL (relativo ao pai).
+        glm::mat4 GetWorldTransform(Entity entity);
+
+        // true se 'possibleAncestor' e o proprio 'entity' ou um ancestral
+        // dele (pai, avo, etc). Usado por SetParent para recusar ciclos e
+        // pela Hierarchy panel para recusar um drag-and-drop invalido antes
+        // mesmo de chamar SetParent.
+        bool IsAncestorOf(entt::entity possibleAncestor, entt::entity entity);
 
         // Chamado uma vez por frame pelo dono da Scene (hoje, EditorLayer).
         // Ainda nao ha nada para simular (fisica/scripts entram em fases
@@ -57,6 +86,20 @@ namespace Prism {
         void ForEachEntity(Fn&& f) {
             m_Registry.view<TagComponent>().each([&](auto entityHandle, TagComponent& tag) {
                 f(entityHandle, tag);
+            });
+        }
+
+        // Igual ForEachEntity, mas so entidades SEM pai (raizes da arvore -
+        // sem RelationshipComponent, ou com Parent == entt::null). Usado
+        // pela Hierarchy panel para comecar a desenhar a arvore a partir do
+        // topo; cada nivel abaixo e desenhado recursivamente seguindo
+        // RelationshipComponent::Children (ver EditorLayer::RenderHierarchyPanel).
+        template<typename Fn>
+        void ForEachRootEntity(Fn&& f) {
+            m_Registry.view<TagComponent>().each([&](auto entityHandle, TagComponent& tag) {
+                auto* rel = m_Registry.try_get<RelationshipComponent>(entityHandle);
+                if (!rel || rel->Parent == entt::null)
+                    f(entityHandle, tag);
             });
         }
 

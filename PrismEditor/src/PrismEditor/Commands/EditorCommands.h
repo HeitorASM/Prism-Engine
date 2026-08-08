@@ -249,6 +249,33 @@ namespace PrismEditor {
         Prism::CameraComponent m_Camera;
     };
 
+    // Reparenta uma entidade (drag-and-drop na Hierarchy panel - ver
+    // EditorLayer::RenderHierarchyNode). Guarda o pai ANTIGO no construtor
+    // (antes de qualquer mudanca) para Undo() devolver exatamente para o
+    // mesmo lugar na arvore, mesmo que a entidade tenha sido movida varias
+    // vezes depois - cada movimento e seu proprio comando no historico.
+    class SetParentCommand : public Prism::Command {
+    public:
+        SetParentCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity child, Prism::Entity oldParent, Prism::Entity newParent)
+            : m_Scene(scene), m_Child(child), m_OldParent(oldParent), m_NewParent(newParent) {}
+
+        void Execute() override {
+            m_Scene->SetParent(m_Child, m_NewParent);
+        }
+
+        void Undo() override {
+            m_Scene->SetParent(m_Child, m_OldParent);
+        }
+
+        std::string GetName() const override { return "Reparentar Entidade"; }
+
+    private:
+        Prism::Ref<Prism::Scene> m_Scene;
+        Prism::Entity m_Child;
+        Prism::Entity m_OldParent;
+        Prism::Entity m_NewParent;
+    };
+
     // --- Add/Remove Component genericos -------------------------------
     // Um unico par de templates cobre os quatro components "opcionais"
     // novos (Light, Collider, RigidBody, Script) em vez de escrever a

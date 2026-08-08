@@ -98,6 +98,43 @@ GLFW ou OpenGL, em **todo** arquivo `.cpp`. Veja o comentário completo em
 `Prism/src/Prism/Renderer/OpenGLContext.cpp`. Ignorar isso é a causa mais
 comum de erro de build nesta engine.
 
+## Nota sobre Parenting / Hierarquia (estado atual)
+
+Entidades agora podem ter uma entidade PAI (`Prism::RelationshipComponent`
+em `Components.h`) - a Hierarchy panel virou uma arvore de verdade (era
+uma lista plana): arraste uma entidade sobre outra para torna-la filha, ou
+solte na area vazia do painel para torna-la raiz de novo. Cada
+reparentamento passa pelo `CommandHistory` (`SetParentCommand`), entao
+Ctrl+Z desfaz.
+
+`Scene::GetWorldTransform(Entity)` combina o `TransformComponent` local de
+uma entidade com o de TODOS os ancestrais - e o unico lugar que deveria ser
+usado para desenhar/posicionar algo no espaco do mundo (a viewport, os
+gizmos de camera/collider e a preview da camera Primary ja foram
+atualizados para usar isto em vez do `TransformComponent::GetTransform()`
+local sozinho). Mover/rotacionar/escalar um pai move os filhos junto
+automaticamente.
+
+`Scene::DestroyEntity` agora e recursivo: excluir uma entidade tambem
+exclui toda a subarvore de filhos dela (mesmo comportamento de
+Unity/Unreal/Godot) - nao ha suporte a "desanexar filhos antes de
+excluir o pai" na UI ainda.
+
+`Scene::SetParent` recusa (retorna `false`, sem mudar nada) qualquer
+operacao que criaria um ciclo (um ancestral virando filho do proprio
+descendente) - protegido tanto no drag-and-drop quanto internamente.
+
+**Formato de arquivo**: `.prismmap` subiu para **v4** (indice do pai por
+entidade, ver comentario em `SceneSerializer.cpp`) - mapas salvos em v3
+precisam ser resalvos uma vez. `RelationshipComponent::Children` NAO e
+salvo diretamente - e reconstruido a partir dos indices de pai depois que
+todas as entidades da cena ja foram criadas no `Deserialize()`.
+
+**Limitacoes conhecidas, deixadas de proposito**: sem opcao de UI para
+"desanexar da hierarquia" alem do drag-and-drop para a area vazia; sem
+indentacao visual customizada alem da propria arvore do ImGui; sem
+suporte a copiar/colar uma subarvore inteira.
+
 ## Próximos passos sugeridos (nesta ordem)
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
@@ -132,9 +169,12 @@ comum de erro de build nesta engine.
     viewport).~~ ✅ feito (ver nota abaixo). Modo "Play" fica para depois,
     como uma janela separada (ver nota abaixo) - não dentro do viewport do
     editor.
-11. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
-12. Integrar Box3D, corpos rígidos básicos.
-13. BSP/CSG (brushes como um tipo de Entity no editor).
+11. ~~Parenting / hierarquia real (arvore de entidades).~~ ✅ feito
+    (`RelationshipComponent`, `Scene::SetParent`/`GetWorldTransform`,
+    Hierarchy panel com drag-and-drop, `.prismmap` v4 - ver nota acima).
+12. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
+13. Integrar Box3D, corpos rígidos básicos.
+14. BSP/CSG (brushes como um tipo de Entity no editor).
 
 ## Nota sobre `CameraComponent` funcional (estado atual)
 
