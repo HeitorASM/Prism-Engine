@@ -43,7 +43,22 @@ namespace Prism {
         // 4x4 column-major (16 floats, layout glm::value_ptr) -
         // viewProjection ja deve vir como Projection * View combinadas.
         // color e RGB linear (0..1); nullptr usa uma cor padrao.
+        //
+        // Internamente descarta (no fragment shader) a face de qualquer
+        // triangulo que esteja de costas para SetCameraPosition() - ver
+        // comentario grande em Renderer.cpp acima de s_VertexSrc. Chame
+        // SetCameraPosition() antes de qualquer DrawMesh() do frame (ou da
+        // preview) para esse efeito funcionar corretamente; sem chamar,
+        // usa (0,0,0) por padrao.
         static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr);
+
+        // Define a posicao (world space, 3 floats xyz) da camera usada
+        // pelo teste de "face interna transparente" dentro de DrawMesh() -
+        // ver comentario la. Chamar uma vez por framebuffer renderizado
+        // (viewport principal e preview da camera usam posicoes
+        // diferentes - ver EditorLayer::RenderScene/RenderCameraPreview),
+        // antes de qualquer DrawMesh() daquele framebuffer.
+        static void SetCameraPosition(const float* worldPos);
 
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
@@ -57,6 +72,7 @@ namespace Prism {
     private:
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
+        static float s_CameraWorldPos[3];
 
         // VAO/VBO dedicados ao DrawLines() - o buffer e reescrito
         // (glBufferData) a cada chamada, ja que gizmos mudam de forma

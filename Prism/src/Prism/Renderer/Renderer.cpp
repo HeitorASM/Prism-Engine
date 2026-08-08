@@ -10,10 +10,37 @@ namespace Prism {
     Scope<Mesh> Renderer::s_Meshes[5] = {};
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
+    float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
     // (um unico dot product) so para as primitivas nao parecerem uma
     // silhueta plana sem nenhuma pista de profundidade/forma.
+    //
+    // Tambem descarta (discard) o fragmento quando a normal do triangulo
+    // esta de costas para a camera (dot(normal, viewDir) < 0) - isto e, a
+    // FACE INTERNA de qualquer mesh fechado (Cube/Sphere/Capsule/Cylinder)
+    // fica transparente. Isso resolve o problema de uma camera (ou
+    // qualquer outra coisa) posicionada DENTRO de um mesh fechado (ex: uma
+    // CameraComponent dentro da capsula de colisao de um Character): em
+    // vez de enxergar a face interna solida do mesh (o que parece um erro
+    // visual, ja que a maioria das engines faz backface culling e nunca
+    // desenha essa face), a face de dentro simplesmente nao e desenhada e
+    // a camera ve direto para o resto da cena.
+    //
+    // Deliberadamente feito no FRAGMENT SHADER via dot product (em vez de
+    // glCullFace(GL_BACK) no lado C++) porque as primitivas hoje NAO tem
+    // winding order (CW/CCW) consistente entre si - Cube e CCW visto de
+    // fora, mas Sphere/Capsule/Cylinder (gerados por UV-mapping
+    // lat/lon, ver PrimitiveMeshFactory) saem com o winding oposto.
+    // Ligar culling por winding no pipeline faria essas primitivas
+    // sumirem inteiras (ou mostrarem so a face errada) em vez de so
+    // esconder a face interna. Testar dot(normal, viewDir) funciona
+    // igual independente do winding - e mais barato para a GPU calcular
+    // culling por indice, mas para o tamanho de cena que este prototipo
+    // desenha hoje a diferenca de custo e desprezivel. Uma correcao futura
+    // (normalizar o winding de cada PrimitiveMeshFactory::Create* e trocar
+    // para glCullFace) fica registrada no README como proximo passo
+    // opcional de performance, nao como bug.
     static const char* s_VertexSrc = R"(
         #version 450 core
         layout(location = 0) in vec3 a_Position;
@@ -23,23 +50,37 @@ namespace Prism {
         uniform mat4 u_Model;
 
         out vec3 v_Normal;
+        out vec3 v_WorldPos;
 
         void main() {
             v_Normal = mat3(u_Model) * a_Normal;
-            gl_Position = u_ViewProjection * u_Model * vec4(a_Position, 1.0);
+            vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+            v_WorldPos = worldPos.xyz;
+            gl_Position = u_ViewProjection * worldPos;
         }
     )";
 
     static const char* s_FragmentSrc = R"(
         #version 450 core
         in vec3 v_Normal;
+        in vec3 v_WorldPos;
         out vec4 o_Color;
 
         uniform vec3 u_BaseColor;
+        uniform vec3 u_CameraWorldPos;
 
         void main() {
+            vec3 normal = normalize(v_Normal);
+            vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
+
+            // Face voltada para "dentro" (de costas para a camera) - ver
+            // comentario grande acima de s_VertexSrc sobre o motivo de
+            // usar discard em vez de glCullFace aqui.
+            if (dot(normal, viewDir) < 0.0)
+                discard;
+
             vec3 lightDir = normalize(vec3(0.5, 0.8, 0.3));
-            float diffuse = max(dot(normalize(v_Normal), lightDir), 0.0);
+            float diffuse = max(dot(normal, lightDir), 0.0);
             vec3 ambient = u_BaseColor * 0.25;
             vec3 color = ambient + u_BaseColor * diffuse;
             o_Color = vec4(color, 1.0);
@@ -142,6 +183,7 @@ namespace Prism {
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
+        s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
         if (color)
             s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
         else
@@ -152,6 +194,12 @@ namespace Prism {
         glBindVertexArray(0);
 
         s_BasicShader->Unbind();
+    }
+
+    void Renderer::SetCameraPosition(const float* worldPos) {
+        s_CameraWorldPos[0] = worldPos[0];
+        s_CameraWorldPos[1] = worldPos[1];
+        s_CameraWorldPos[2] = worldPos[2];
     }
 
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {

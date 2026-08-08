@@ -275,8 +275,14 @@ namespace PrismEditor {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
         glm::mat4 viewProjection = projection * view;
 
+        // Necessario ANTES de qualquer DrawMesh() deste framebuffer - ver
+        // comentario em Renderer::SetCameraPosition (Renderer.h) sobre o
+        // teste de "face interna transparente".
+        Prism::Renderer::SetCameraPosition(glm::value_ptr(cameraPos));
+
         RenderSceneEntities(viewProjection);
         RenderCameraGizmos(viewProjection);
+        RenderSelectedColliderGizmo(viewProjection);
 
         m_ViewportFramebuffer->Unbind();
     }
@@ -320,6 +326,15 @@ namespace PrismEditor {
             glm::mat4 view = glm::inverse(transform.GetTransform());
             glm::mat4 projection = camera.GetProjection(aspect);
             glm::mat4 viewProjection = projection * view;
+
+            // Necessario ANTES de qualquer DrawMesh() deste framebuffer -
+            // ver comentario em Renderer::SetCameraPosition (Renderer.h).
+            // E EXATAMENTE este teste que resolve o problema original de
+            // uma CameraComponent posicionada dentro de outro mesh (ex: a
+            // capsula de colisao de um Character): a face interna do mesh
+            // que a envolve fica transparente na preview, entao a camera
+            // enxerga o resto da cena em vez de uma parede solida.
+            Prism::Renderer::SetCameraPosition(glm::value_ptr(transform.Translation));
 
             RenderSceneEntities(viewProjection);
             // Nao chama RenderCameraGizmos aqui de proposito - a propria
@@ -430,6 +445,158 @@ namespace PrismEditor {
 
             Prism::Renderer::DrawLines(glm::value_ptr(points[0]), (uint32_t)points.size(), glm::value_ptr(viewProjection), glm::value_ptr(color));
         }
+    }
+
+    void EditorLayer::RenderSelectedColliderGizmo(const glm::mat4& viewProjection) {
+        // So desenha se a entidade selecionada tiver Transform + Collider -
+        // sem selecao (m_SelectedEntity invalida) ou sem ColliderComponent,
+        // nao ha nada a fazer.
+        if (!m_SelectedEntity || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>())
+            return;
+
+        auto& transform = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
+        auto& collider = m_SelectedEntity.GetComponent<Prism::ColliderComponent>();
+
+        // Gizmo do collider usa a matriz de mundo completa da entidade
+        // (posicao + rotacao + escala, via TransformComponent::GetTransform)
+        // - mesmo approach usado por RenderCameraGizmos acima. O TAMANHO
+        // "base" da forma de colisao vem de collider.Size; se a entidade
+        // tiver Scale != 1 no Transform, o gizmo escala junto (reflete o
+        // que a fisica de verdade faria depois, quando Box3D estiver
+        // integrado - Box3D tambem aplica a escala do corpo aos shapes).
+        auto toWorld = [&](const glm::vec3& local) {
+            return glm::vec3(transform.GetTransform() * glm::vec4(local, 1.0f));
+        };
+
+        // Amarelo: convencao comum de "gizmo de colisao selecionado" (Unity
+        // usa verde-claro, Unreal usa laranja/vermelho, Godot usa um roxo
+        // claro - amarelo aqui so para ficar bem distinto do ciano/cinza ja
+        // usados pelas cameras, ver RenderCameraGizmos acima).
+        glm::vec3 color(0.95f, 0.85f, 0.2f);
+
+        // Gera os pontos (pares consecutivos = segmentos, ver DrawLines) de
+        // um circulo de raio 'radius' no plano perpendicular a 'axis' (0=X,
+        // 1=Y, 2=Z), centrado em 'center' (espaco local, antes de toWorld),
+        // com 'segments' segmentos - usado tanto para Sphere (3 circulos
+        // ortogonais) quanto para as tampas da Capsule.
+        auto appendCircle = [&](std::vector<glm::vec3>& points, glm::vec3 center, float radius, int axis, int segments) {
+            glm::vec3 prev;
+            for (int i = 0; i <= segments; i++) {
+                float t = (float)i / (float)segments * 2.0f * 3.14159265f;
+                float c = radius * cosf(t);
+                float s = radius * sinf(t);
+                glm::vec3 p = center;
+                if (axis == 0)      p += glm::vec3(0.0f, c, s); // circulo no plano YZ (perpendicular a X)
+                else if (axis == 1) p += glm::vec3(c, 0.0f, s); // circulo no plano XZ (perpendicular a Y)
+                else                p += glm::vec3(c, s, 0.0f); // circulo no plano XY (perpendicular a Z)
+
+                if (i > 0) { points.push_back(prev); points.push_back(p); }
+                prev = p;
+            }
+        };
+
+        // Gera um arco de 180 graus (meio-circulo) de raio 'radius',
+        // centrado em 'center', comecando na direcao 'startAxis' e
+        // terminando na direcao 'endAxis' (dois eixos ortogonais entre si -
+        // ex: startAxis=(1,0,0), endAxis=(0,1,0) desenha o quarto de volta
+        // de +X ate +Y, e o proximo quarto de +Y ate -X, completando meia
+        // volta). Usado para as calotas hemisfericas da Capsule (2 arcos
+        // por calota = uma "cruz" de meridianos, dando a nocao de cupula
+        // sem precisar de uma malha completa).
+        auto appendArc = [&](std::vector<glm::vec3>& points, glm::vec3 center, float radius, glm::vec3 startAxis, glm::vec3 endAxis, int segments) {
+            glm::vec3 prev;
+            for (int i = 0; i <= segments; i++) {
+                float t = (float)i / (float)segments * 3.14159265f; // 0 .. PI (meia volta)
+                glm::vec3 p = center + radius * (startAxis * cosf(t) + endAxis * sinf(t));
+                if (i > 0) { points.push_back(prev); points.push_back(p); }
+                prev = p;
+            }
+        };
+
+        std::vector<glm::vec3> localPoints;
+        constexpr int kCircleSegments = 24;
+        constexpr int kArcSegments = 12;
+
+        switch (collider.Shape) {
+            case Prism::ColliderShape::Box: {
+                // Size e ja meio-extensao (half-extents) - ver comentario em
+                // ColliderComponent (Components.h).
+                glm::vec3 e = collider.Size;
+                glm::vec3 c[8] = {
+                    { -e.x,-e.y,-e.z }, {  e.x,-e.y,-e.z }, {  e.x, e.y,-e.z }, { -e.x, e.y,-e.z }, // face -Z
+                    { -e.x,-e.y, e.z }, {  e.x,-e.y, e.z }, {  e.x, e.y, e.z }, { -e.x, e.y, e.z }, // face +Z
+                };
+                int edges[12][2] = {
+                    {0,1},{1,2},{2,3},{3,0}, // face -Z
+                    {4,5},{5,6},{6,7},{7,4}, // face +Z
+                    {0,4},{1,5},{2,6},{3,7}, // arestas conectando as duas faces
+                };
+                for (auto& e2 : edges) { localPoints.push_back(c[e2[0]]); localPoints.push_back(c[e2[1]]); }
+                break;
+            }
+            case Prism::ColliderShape::Sphere: {
+                float r = collider.Size.x; // so Size.x e usado como raio, ver ColliderComponent
+                appendCircle(localPoints, glm::vec3(0.0f), r, 0, kCircleSegments);
+                appendCircle(localPoints, glm::vec3(0.0f), r, 1, kCircleSegments);
+                appendCircle(localPoints, glm::vec3(0.0f), r, 2, kCircleSegments);
+                break;
+            }
+            case Prism::ColliderShape::Capsule: {
+                // Size.x = raio, Size.y = altura TOTAL da capsula, incluindo
+                // as duas calotas hemisfericas (Size.z ignorado - ver
+                // ColliderComponent). O "cilindro" do meio vai de
+                // -halfCylinderHeight a +halfCylinderHeight; cada calota e
+                // uma hemisfera de raio 'radius' colada em cada ponta,
+                // desenhada com 2 arcos de meridiano (planos XY e ZY) + o
+                // equador (reaproveitando appendCircle) - suficiente para
+                // ler "isto e uma capsula, nao um cilindro" de relance, sem
+                // precisar de uma malha completa de esfera.
+                float radius = collider.Size.x;
+                float halfCylinderHeight = std::max(collider.Size.y * 0.5f - radius, 0.0f); // metade da parte cilindrica, descontando as 2 calotas de raio 'radius'
+
+                // Equador do cilindro (topo e base da parte reta).
+                appendCircle(localPoints, glm::vec3(0.0f, halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
+                appendCircle(localPoints, glm::vec3(0.0f, -halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
+
+                // Calota de cima: hemisferio acima de y=halfCylinderHeight,
+                // desenhado como 2 meridianos de 180 graus (de +X a +Y, e
+                // de +Z a +Y) - a metade "de cima" do arco (de 0 a PI/2 ja
+                // cobre o quarto que importa, mas usar o arco completo de
+                // +X/+Z ate -X/-Z passando por +Y da a cupula inteira numa
+                // linha so por meridiano).
+                glm::vec3 topCenter(0.0f, halfCylinderHeight, 0.0f);
+                appendArc(localPoints, topCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
+                appendArc(localPoints, topCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
+                appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, 1, 0), kArcSegments);
+                appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, 1, 0), kArcSegments);
+
+                // Calota de baixo: espelhada (aponta para -Y em vez de +Y).
+                glm::vec3 bottomCenter(0.0f, -halfCylinderHeight, 0.0f);
+                appendArc(localPoints, bottomCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
+                appendArc(localPoints, bottomCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
+                appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, -1, 0), kArcSegments);
+                appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), kArcSegments);
+
+                // 4 linhas verticais ao redor do cilindro (nas direcoes
+                // +X/-X/+Z/-Z) conectando o equador de cima ao de baixo -
+                // sem essas, as duas calotas + equadores pareceriam 2
+                // esferas soltas em vez de uma capsula conectada.
+                glm::vec3 dirs[4] = { {radius,0,0}, {-radius,0,0}, {0,0,radius}, {0,0,-radius} };
+                for (auto& d : dirs) {
+                    localPoints.push_back(topCenter + d);
+                    localPoints.push_back(bottomCenter + d);
+                }
+                break;
+            }
+        }
+
+        std::vector<glm::vec3> worldPoints;
+        worldPoints.reserve(localPoints.size());
+        for (auto& p : localPoints)
+            worldPoints.push_back(toWorld(p));
+
+        if (!worldPoints.empty())
+            Prism::Renderer::DrawLines(glm::value_ptr(worldPoints[0]), (uint32_t)worldPoints.size(), glm::value_ptr(viewProjection), glm::value_ptr(color));
     }
 
     void EditorLayer::SetPrimaryCamera(Prism::Entity newPrimary) {

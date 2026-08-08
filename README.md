@@ -199,6 +199,78 @@ painel Camera não tem um aviso/indicador de "atravessando geometria" (ex:
 destacar em vermelho quando a posição da câmera está dentro de outro
 Collider) - hoje isso só é visível olhando a imagem da preview.
 
+## Gizmo de Collider (Box/Sphere/Capsule)
+
+Toda entidade com `ColliderComponent` já guardava `Shape` (Box, Sphere ou
+Capsule) e `Size` como dado (ver comentário em `Components.h`), mas não
+havia nenhuma forma de VER essa forma de colisão no editor - por exemplo, a
+cápsula de colisão de um Character/player. Isso dificultava saber onde
+exatamente ela está (ex: para posicionar uma `CameraComponent` fora dela,
+em vez de dentro - ver seção da Camera acima).
+
+`EditorLayer::RenderSelectedColliderGizmo` desenha o wireframe do Collider
+da entidade **atualmente selecionada** (não de todas as entidades com
+Collider da cena, para não poluir a viewport) - clique na entidade na
+Hierarchy panel (ou depois, quando existir picking por clique na viewport)
+para ver o gizmo, em amarelo. Box desenha as 12 arestas de uma caixa;
+Sphere desenha 3 círculos ortogonais (XY/XZ/YZ); Capsule desenha uma
+aproximação cilíndrica (2 círculos + 4 linhas verticais, sem as calotas
+hemisféricas de verdade - suficiente para ver posição/raio/altura, não uma
+representação geometricamente exata). O gizmo usa a matriz de mundo
+completa da entidade (`TransformComponent::GetTransform()`), então
+acompanha posição, rotação e escala.
+
+Com isso, o fluxo para tirar uma câmera de dentro do collider de um
+Character fica: selecionar o Character (vê a cápsula em amarelo na
+viewport) → selecionar a entidade da câmera → editar `Translation` dela na
+Properties panel (seção Transform, sempre presente) → acompanhar em tempo
+real no painel "Camera" o momento em que ela sai de dentro da cápsula.
+
+## Correção: cápsula do gizmo parecia cilindro
+
+A primeira versão do gizmo de Capsule (seção acima) desenhava só o "meio"
+(2 círculos + 4 linhas verticais) - sem as calotas hemisféricas, então
+visualmente parecia um cilindro em vez de uma cápsula. Corrigido: cada
+calota agora desenha 4 meridianos de 180° (`appendArc`, dois planos
+ortogonais XY e ZY), formando a cúpula de verdade em cada ponta - ainda uma
+aproximação (não é uma malha completa de esfera), mas já lê como "cápsula"
+de relance.
+
+## Correção: face interna dos meshes sólida em vez de transparente
+
+Mesmo com a preview separada da câmera (seção acima), o problema de fundo
+persistia: se a câmera ficasse posicionada dentro de outro mesh (ex: dentro
+da cápsula de colisão de um Character), a preview mostrava a face INTERNA
+do mesh, sólida - porque o Renderer nunca fazia nenhum tipo de culling,
+então ambas as faces de qualquer triângulo eram sempre desenhadas.
+
+Corrigido dentro do fragment shader do `s_BasicShader` (`Renderer.cpp`): a
+cada fragmento, calcula `dot(normal, viewDir)` (`viewDir` = direção da
+câmera atual até aquele ponto) e faz `discard` quando o resultado é
+negativo - ou seja, a face que está de costas para a câmera simplesmente
+não é desenhada, exatamente como um backface culling normal faria, só que
+via shader em vez de `glCullFace`.
+
+**Por que via shader em vez de `glCullFace(GL_BACK)`**: seria a forma
+"padrão"/mais barata, mas descobri que as primitivas atuais
+(`PrimitiveMeshFactory`) não têm winding order (CW/CCW) consistente entre
+si - o Cube é CCW visto de fora, mas Sphere/Capsule/Cylinder (gerados por
+UV-mapping lat/lon) saem com o winding oposto. Ligar `glCullFace`
+diretamente faria essas primitivas sumirem inteiras (ou mostrarem a face
+errada) em vez de só esconder a face interna. O teste por produto escalar
+funciona igual não importa o winding de cada mesh, então foi a correção
+seguro de se fazer agora. Uma limpeza futura (normalizar o winding de cada
+`PrimitiveMeshFactory::Create*` e trocar para `glCullFace`, mais barato
+para a GPU) fica registrada aqui como possível otimização, não como bug -
+para o volume de geometria que este protótipo desenha hoje a diferença de
+custo é desprezível.
+
+Nova função `Renderer::SetCameraPosition(worldPos)` - precisa ser chamada
+uma vez por framebuffer, antes de qualquer `DrawMesh()` daquele
+framebuffer (viewport principal usa a posição da câmera de órbita; a
+preview da câmera usa `Translation` da própria entidade Primary - ver
+`EditorLayer::RenderScene`/`RenderCameraPreview`).
+
 ## Nota sobre o Console (estado atual)
 
 `Prism::LogBuffer` (`Prism/src/Prism/Core/LogBuffer.h/.cpp`) se conecta como

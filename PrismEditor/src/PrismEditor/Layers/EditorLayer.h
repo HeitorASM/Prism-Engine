@@ -155,6 +155,17 @@ namespace PrismEditor {
         // desenhar os meshes - ver EditorLayer.cpp.
         void RenderCameraGizmos(const glm::mat4& viewProjection);
 
+        // Desenha o wireframe do ColliderComponent (Box/Sphere/Capsule) da
+        // entidade atualmente SELECIONADA (m_SelectedEntity) - so dela, nao
+        // de toda entidade com Collider da cena, para nao poluir a viewport
+        // (diferente de RenderCameraGizmos, que desenha todas as cameras
+        // sempre). Isso cobre o caso de querer ver a capsula de colisao de
+        // um Character/player para saber exatamente onde ela esta (ex: para
+        // posicionar uma camera fora dela) - clique na entidade na
+        // Hierarchy ou na propria viewport para ver o gizmo. Chamado de
+        // dentro de RenderScene(), depois de RenderCameraGizmos().
+        void RenderSelectedColliderGizmo(const glm::mat4& viewProjection);
+
         // Garante que no maximo UMA entidade da cena tenha
         // CameraComponent::Primary = true: ao marcar 'newPrimary' como
         // Primary, desmarca qualquer outra que estivesse marcada.
