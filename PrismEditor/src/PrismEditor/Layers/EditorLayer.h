@@ -66,6 +66,17 @@ namespace PrismEditor {
         void RenderContentBrowserPanel();
         // ^ mesmo padrao do Console: delega para m_ContentBrowser.OnImGuiRender().
 
+        // Painel "Camera" - mostra a visao da entidade com
+        // CameraComponent::Primary=true, renderizada num framebuffer PROPRIO
+        // (m_CameraPreviewFramebuffer), separado do m_ViewportFramebuffer da
+        // viewport principal do editor. Isso e deliberado: a viewport
+        // principal do editor NUNCA e substituida pela camera de jogo (ela
+        // continua sempre sendo a camera de orbita livre, do mesmo jeito que
+        // Unity/Unreal/Godot fazem) - assim voce nunca fica "preso" dentro
+        // de um mesh ou sem visao de trabalho so por ter marcado uma camera
+        // como Primary. Ver RenderCameraPreview() em EditorLayer.cpp.
+        void RenderCameraPreviewPanel();
+
         // Carrega o mapa em 'path' na Scene ativa, substituindo o que
         // estiver aberto no momento (sem perguntar "salvar antes?" ainda -
         // ver nota no README). Chamado tanto por LoadOrCreateScene()
@@ -109,10 +120,47 @@ namespace PrismEditor {
         void LoadOrCreateScene();
 
         // Desenha todas as entidades da Scene com MeshRendererComponent
-        // dentro do m_ViewportFramebuffer. Chamado de OnUpdate, antes do
-        // ImGui - o resultado (uma textura de cor) e que aparece dentro do
-        // painel Viewport neste mesmo frame.
+        // dentro do m_ViewportFramebuffer, usando a camera de orbita do
+        // editor (m_CameraYaw/Pitch/Distance) - NAO usa nenhuma
+        // CameraComponent::Primary aqui, mesmo que exista uma na cena (ver
+        // nota em RenderCameraPreviewPanel() acima sobre o motivo). Chamado
+        // de OnUpdate, antes do ImGui - o resultado (uma textura de cor) e
+        // que aparece dentro do painel Viewport neste mesmo frame.
         void RenderScene(float deltaTime);
+
+        // Desenha a cena a partir do ponto de vista da entidade com
+        // CameraComponent::Primary=true (se houver) dentro de
+        // m_CameraPreviewFramebuffer - mesma logica de desenho de
+        // RenderScene(), mas com a view/projection vindas da camera de jogo
+        // em vez da orbita do editor. Chamado de OnUpdate logo depois de
+        // RenderScene(). Sem entidade Primary na cena, so limpa o
+        // framebuffer (ver EditorLayer.cpp) - RenderCameraPreviewPanel()
+        // mostra uma mensagem nesse caso em vez da imagem.
+        void RenderCameraPreview(float deltaTime);
+
+        // Desenha as entidades com Transform+MeshRenderer da Scene ativa no
+        // framebuffer atualmente bindado, usando a view/projection dadas -
+        // extraido de RenderScene()/RenderCameraPreview() para as duas
+        // compartilharem a mesma logica de desenho sem duplicar o loop.
+        // NAO faz Bind/Unbind/Clear do framebuffer - isso e responsabilidade
+        // de quem chama.
+        void RenderSceneEntities(const glm::mat4& viewProjection);
+
+        // Desenha um wireframe de frustum (Renderer::DrawLines) para toda
+        // entidade com CameraComponent na cena - a Primary usa uma cor
+        // diferente das demais, para ficar claro qual camera o modo Play
+        // vai usar. Chamado de dentro de RenderScene() (nao de
+        // RenderCameraPreview() - nao faz sentido a camera desenhar o
+        // proprio gizmo dela mesma na sua propria preview), depois de
+        // desenhar os meshes - ver EditorLayer.cpp.
+        void RenderCameraGizmos(const glm::mat4& viewProjection);
+
+        // Garante que no maximo UMA entidade da cena tenha
+        // CameraComponent::Primary = true: ao marcar 'newPrimary' como
+        // Primary, desmarca qualquer outra que estivesse marcada.
+        // Chamado pela Properties panel quando o checkbox "Primary" e
+        // ligado - ver RenderPropertiesPanel().
+        void SetPrimaryCamera(Prism::Entity newPrimary);
 
     private:
         bool m_ViewportFocused = false;
@@ -123,6 +171,17 @@ namespace PrismEditor {
         // attachment dele e o que vira ImGui::Image() dentro do painel
         // Viewport - ver RenderViewportPanel().
         Prism::Scope<Prism::Framebuffer> m_ViewportFramebuffer;
+
+        // Framebuffer offscreen SEPARADO, usado so pelo painel "Camera"
+        // (RenderCameraPreviewPanel/RenderCameraPreview) para mostrar a
+        // visao da camera de jogo Primary sem nunca tocar no
+        // m_ViewportFramebuffer da viewport principal - ver nota em
+        // RenderCameraPreviewPanel() no header acima sobre o motivo dessa
+        // separacao. Criado sob demanda (fica nulo ate a primeira vez que o
+        // painel Camera e aberto) para nao gastar uma textura de GPU extra
+        // em projetos que nunca abrem esse painel.
+        Prism::Scope<Prism::Framebuffer> m_CameraPreviewFramebuffer;
+        float m_CameraPreviewSize[2] = { 0.0f, 0.0f };
 
         // A cena ativa do editor. Por ora criada em memoria com uma entidade
         // de exemplo em OnAttach() - salvar/carregar cenas do disco (dentro
@@ -170,10 +229,17 @@ namespace PrismEditor {
         // sem sair do editor. Duplo-clique num .prismmap chama LoadScene().
         ContentBrowserPanel m_ContentBrowser;
 
-        // Camera de orbita minima para a viewport do editor (nao e a camera
-        // FPS/TPS de jogo mencionada no guia - essa vira quando existir um
-        // modo "jogar dentro do editor"). Controle: botao direito do mouse
-        // segurado sobre a viewport + arrastar orbita; scroll aproxima/afasta.
+        // Camera de orbita da viewport principal do editor (nao e a camera
+        // FPS/TPS de jogo mencionada no guia). Controle: botao direito do
+        // mouse segurado sobre a viewport + arrastar orbita; scroll
+        // aproxima/afasta. Esta e SEMPRE a camera usada por RenderScene()/
+        // painel Viewport, mesmo quando a cena tem uma CameraComponent
+        // marcada como Primary - a camera de jogo tem sua propria preview
+        // separada (ver m_CameraPreviewFramebuffer / RenderCameraPreviewPanel
+        // acima), exatamente como Unity/Unreal/Godot fazem. Isso evita o
+        // problema de "ficar preso" dentro de um mesh (ex: camera de
+        // personagem posicionada dentro da capsula de colisao) sem visao de
+        // trabalho na viewport principal.
         float m_CameraYaw = -35.0f;   // graus
         float m_CameraPitch = 25.0f;  // graus
         float m_CameraDistance = 6.0f;

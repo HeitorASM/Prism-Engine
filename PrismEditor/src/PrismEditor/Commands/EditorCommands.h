@@ -195,6 +195,10 @@ namespace PrismEditor {
             if (m_HadScript)
                 m_Script = entity.GetComponent<Prism::ScriptComponent>();
 
+            m_HadCamera = entity.HasComponent<Prism::CameraComponent>();
+            if (m_HadCamera)
+                m_Camera = entity.GetComponent<Prism::CameraComponent>();
+
             m_EntityToDelete = entity;
         }
 
@@ -217,6 +221,8 @@ namespace PrismEditor {
                 entity.AddComponent<Prism::RigidBodyComponent>() = m_RigidBody;
             if (m_HadScript)
                 entity.AddComponent<Prism::ScriptComponent>() = m_Script;
+            if (m_HadCamera)
+                entity.AddComponent<Prism::CameraComponent>() = m_Camera;
             m_EntityToDelete = entity;
         }
 
@@ -239,6 +245,8 @@ namespace PrismEditor {
         Prism::RigidBodyComponent m_RigidBody;
         bool m_HadScript = false;
         Prism::ScriptComponent m_Script;
+        bool m_HadCamera = false;
+        Prism::CameraComponent m_Camera;
     };
 
     // --- Add/Remove Component genericos -------------------------------

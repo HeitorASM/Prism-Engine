@@ -18,7 +18,16 @@ namespace Prism {
     // flag-de-presenca que MeshRendererComponent ja usava). Arquivos v1 nao
     // sao lidos por este parser (ver Deserialize) - projetos criados antes
     // desta mudanca precisam ser resalvos uma vez.
-    static constexpr uint32_t kSceneFormatVersion = 2;
+    // v1 -> v2: adicionados LightComponent, ColliderComponent,
+    // RigidBodyComponent, ScriptComponent (todos opcionais, mesmo padrao de
+    // flag-de-presenca que MeshRendererComponent ja usava). Arquivos v1 nao
+    // sao lidos por este parser (ver Deserialize) - projetos criados antes
+    // desta mudanca precisam ser resalvos uma vez.
+    //
+    // v2 -> v3: adicionado CameraComponent (opcional, mesmo padrao de flag
+    // de presenca). Arquivos v2 nao sao lidos por este parser - mapas
+    // salvos antes desta mudanca precisam ser resalvos uma vez.
+    static constexpr uint32_t kSceneFormatVersion = 3;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -146,6 +155,21 @@ namespace Prism {
             if (hasScript) {
                 auto& script = entity.GetComponent<ScriptComponent>();
                 WriteString(out, script.ScriptPath);
+            }
+
+            // CameraComponent - adicionado na v3 do formato (ver
+            // kSceneFormatVersion). Mesmo padrao de flag de presenca dos
+            // outros components opcionais acima.
+            bool hasCamera = entity.HasComponent<CameraComponent>();
+            WriteRaw(out, hasCamera);
+            if (hasCamera) {
+                auto& camera = entity.GetComponent<CameraComponent>();
+                WriteRaw(out, camera.ProjectionType);
+                WriteRaw(out, camera.FOV);
+                WriteRaw(out, camera.OrthoSize);
+                WriteRaw(out, camera.NearClip);
+                WriteRaw(out, camera.FarClip);
+                WriteRaw(out, camera.Primary);
             }
 
             if (!out) writeFailed = true;
@@ -330,6 +354,26 @@ namespace Prism {
                 auto& script = entity.AddComponent<ScriptComponent>();
                 if (!ReadString(in, script.ScriptPath)) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+            }
+
+            bool hasCamera = false;
+            if (!ReadRaw(in, hasCamera)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de camera da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasCamera) {
+                auto& camera = entity.AddComponent<CameraComponent>();
+                bool cameraOk = ReadRaw(in, camera.ProjectionType) && ReadRaw(in, camera.FOV)
+                             && ReadRaw(in, camera.OrthoSize) && ReadRaw(in, camera.NearClip)
+                             && ReadRaw(in, camera.FarClip) && ReadRaw(in, camera.Primary);
+                if (!cameraOk) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                if (camera.ProjectionType != CameraProjectionType::Perspective && camera.ProjectionType != CameraProjectionType::Orthographic) {
+                    PRISM_CORE_ERROR("SceneSerializer: CameraProjectionType invalido na entidade ", i, " de '", filepath.string(), "'.");
                     return false;
                 }
             }

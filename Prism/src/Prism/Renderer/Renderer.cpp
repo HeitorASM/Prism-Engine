@@ -6,7 +6,10 @@
 namespace Prism {
 
     Ref<Shader> Renderer::s_BasicShader = nullptr;
+    Ref<Shader> Renderer::s_LineShader = nullptr;
     Scope<Mesh> Renderer::s_Meshes[5] = {};
+    uint32_t Renderer::s_LineVAO = 0;
+    uint32_t Renderer::s_LineVBO = 0;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
     // (um unico dot product) so para as primitivas nao parecerem uma
@@ -43,6 +46,33 @@ namespace Prism {
         }
     )";
 
+    // Shader de linha: sem normal, sem luz - so posicao transformada e uma
+    // cor solida via uniform. Deliberadamente separado do s_BasicShader
+    // (que exige atributo de normal no layout location 1) para o VAO de
+    // linhas poder ter um layout de vertice mais simples (so vec3
+    // posicao) sem enviar normais fake para a GPU.
+    static const char* s_LineVertexSrc = R"(
+        #version 450 core
+        layout(location = 0) in vec3 a_Position;
+
+        uniform mat4 u_ViewProjection;
+
+        void main() {
+            gl_Position = u_ViewProjection * vec4(a_Position, 1.0);
+        }
+    )";
+
+    static const char* s_LineFragmentSrc = R"(
+        #version 450 core
+        out vec4 o_Color;
+
+        uniform vec3 u_BaseColor;
+
+        void main() {
+            o_Color = vec4(u_BaseColor, 1.0);
+        }
+    )";
+
     // Indice dentro de s_Meshes - deve bater com a ordem numerica do enum
     // PrimitiveMesh em Components.h (Cube=0, Sphere=1, Capsule=2,
     // Cylinder=3, Plane=4).
@@ -67,13 +97,31 @@ namespace Prism {
         upload(PrimitiveMesh::Cylinder, PrimitiveMeshFactory::CreateCylinder());
         upload(PrimitiveMesh::Plane, PrimitiveMeshFactory::CreatePlane());
 
-        PRISM_CORE_INFO("Renderer inicializado (shader basico + 5 primitivas: Cube, Sphere, Capsule, Cylinder, Plane).");
+        s_LineShader = Shader::Create("Line", s_LineVertexSrc, s_LineFragmentSrc);
+
+        // VAO/VBO de linhas: so posicao (3 floats), sem EBO - DrawLines()
+        // sempre desenha via GL_LINES direto do VBO, sem indexacao. O VBO
+        // comeca vazio (GL_DYNAMIC_DRAW, sem dados ainda) - o conteudo real
+        // e enviado a cada chamada de DrawLines() via glBufferData, ja que
+        // gizmos mudam de forma frame a frame.
+        glCreateVertexArrays(1, &s_LineVAO);
+        glCreateBuffers(1, &s_LineVBO);
+        glVertexArrayVertexBuffer(s_LineVAO, 0, s_LineVBO, 0, 3 * sizeof(float));
+        glEnableVertexArrayAttrib(s_LineVAO, 0);
+        glVertexArrayAttribFormat(s_LineVAO, 0, 3, GL_FLOAT, GL_FALSE, 0);
+        glVertexArrayAttribBinding(s_LineVAO, 0, 0);
+
+        PRISM_CORE_INFO("Renderer inicializado (shader basico + 5 primitivas: Cube, Sphere, Capsule, Cylinder, Plane; shader de linhas para gizmos).");
     }
 
     void Renderer::Shutdown() {
         for (auto& mesh : s_Meshes)
             mesh.reset();
         s_BasicShader.reset();
+        s_LineShader.reset();
+
+        if (s_LineVBO) { glDeleteBuffers(1, &s_LineVBO); s_LineVBO = 0; }
+        if (s_LineVAO) { glDeleteVertexArrays(1, &s_LineVAO); s_LineVAO = 0; }
     }
 
     void Renderer::Clear(float r, float g, float b, float a) {
@@ -104,6 +152,23 @@ namespace Prism {
         glBindVertexArray(0);
 
         s_BasicShader->Unbind();
+    }
+
+    void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
+        if (!s_LineShader || pointCount == 0) return;
+
+        glBindVertexArray(s_LineVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, s_LineVBO);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(pointCount * 3 * sizeof(float)), points, GL_DYNAMIC_DRAW);
+
+        s_LineShader->Bind();
+        s_LineShader->SetMat4("u_ViewProjection", viewProjection);
+        s_LineShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
+
+        glDrawArrays(GL_LINES, 0, (GLsizei)pointCount);
+
+        glBindVertexArray(0);
+        s_LineShader->Unbind();
     }
 
 }

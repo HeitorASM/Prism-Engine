@@ -45,8 +45,26 @@ namespace Prism {
         // color e RGB linear (0..1); nullptr usa uma cor padrao.
         static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr);
 
+        // Desenha uma lista de segmentos de linha soltos (cada par de
+        // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
+        // GL_LINE_STRIP) em espaco de mundo, sem shading (cor solida via
+        // uniform, sem luz). Usado hoje so para gizmos de edicao (ex: o
+        // frustum do CameraComponent na viewport - ver
+        // EditorLayer::RenderCameraGizmos) - nao participa da geometria
+        // "de jogo" desenhada por DrawMesh. pointCount deve ser par.
+        static void DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color);
+
     private:
         static Ref<Shader> s_BasicShader;
+        static Ref<Shader> s_LineShader;
+
+        // VAO/VBO dedicados ao DrawLines() - o buffer e reescrito
+        // (glBufferData) a cada chamada, ja que gizmos mudam de forma
+        // frame a frame (ex: FOV editado ao vivo). Volume de dados e
+        // minusculo (poucas dezenas de linhas), entao nao vale a pena
+        // otimizar isso agora - ver comentario em Renderer.cpp.
+        static uint32_t s_LineVAO;
+        static uint32_t s_LineVBO;
 
         // Uma malha de GPU por primitiva embutida - indexadas pelo mesmo
         // enum PrimitiveMesh usado em MeshRendererComponent, entao

@@ -128,12 +128,76 @@ comum de erro de build nesta engine.
    presets no menu Entidade: Luz, Character, Entidade Vazia).
 9. ~~Mais meshes básicas.~~ ✅ feito
    (Sphere, Capsule, Cylinder, Plane, além do Cube - ver nota abaixo).
-10. `CameraComponent` funcional (edição completa + gizmo visual na
-    viewport). Modo "Play" fica para depois, como uma janela separada (ver
-    nota abaixo) - não dentro do viewport do editor.
+10. ~~`CameraComponent` funcional (edição completa + gizmo visual na
+    viewport).~~ ✅ feito (ver nota abaixo). Modo "Play" fica para depois,
+    como uma janela separada (ver nota abaixo) - não dentro do viewport do
+    editor.
 11. Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.
 12. Integrar Box3D, corpos rígidos básicos.
 13. BSP/CSG (brushes como um tipo de Entity no editor).
+
+## Nota sobre `CameraComponent` funcional (estado atual)
+
+`CameraComponent` (`Prism/src/Prism/Scene/Components.h`) ganhou
+`ProjectionType` (Perspective/Orthographic), `GetProjection(aspectRatio)`
+(monta a matriz de projeção a partir dos campos do component) e a regra de
+"no máximo uma câmera `Primary` por Scene" - imposta na UI, não no
+component em si (ver `EditorLayer::SetPrimaryCamera`).
+
+**Viewport do editor**: sempre usa a câmera de órbita livre
+(`EditorLayer::RenderScene`) - nunca é substituída pela câmera de jogo,
+mesmo quando existe uma `Primary` (ver correção abaixo). A câmera de jogo
+Primary é renderizada à parte, no painel "Camera"
+(`EditorLayer::RenderCameraPreview`): `view = inverse(Transform)`,
+`projection = CameraComponent::GetProjection` - a mesma lógica que o modo
+Play vai usar depois numa janela separada, então o que você edita já é o
+que o jogo vai ver (WYSIWYG) - só que numa preview própria, não na
+viewport principal.
+
+**Gizmo visual**: toda entidade com `CameraComponent` desenha um frustum em
+wireframe na viewport (`EditorLayer::RenderCameraGizmos`), via um novo
+`Renderer::DrawLines` (shader de linha dedicado, sem iluminação, VAO/VBO
+próprios reescritos a cada chamada - ver `Renderer.h/.cpp`). A câmera
+`Primary` aparece em ciano; as demais em cinza, para diferenciar de relance
+qual câmera o modo Play vai usar quando há mais de uma na cena. O tamanho do
+frustum desenhado é fixo (não usa o `FarClip` real, que pode ser enorme) -
+é só uma indicação visual de posição/direção/abertura, não uma preview
+exata.
+
+**Properties panel**: nova seção "Camera" (Projeção, FOV ou Tamanho
+Ortográfico dependendo do tipo, Near/Far Clip, checkbox Primary). Marcar
+Primary numa câmera desmarca qualquer outra automaticamente
+(`SetPrimaryCamera`). Preset "Criar Câmera" no menu Entidade e opção
+"Camera" no botão "+ Add Component" - os dois já cuidam de manter só uma
+Primary por cena.
+
+**Formato de arquivo**: `.prismmap` subiu para **v3** (`CameraComponent`
+adicionado, mesmo padrão de flag de presença dos outros components
+opcionais) - mapas salvos em v2 precisam ser resalvos uma vez.
+
+**Correção importante (depois do primeiro teste)**: a primeira versão desta
+feature fazia a viewport principal do editor ser SUBSTITUÍDA pela câmera de
+jogo quando ela existia como Primary - isso causava um problema sério
+sempre que a câmera ficava posicionada dentro de outro mesh (ex: uma câmera
+de personagem dentro da cápsula de colisão do Character): a viewport
+passava a mostrar o interior/face de trás da geometria (culling normal
+fazendo seu trabalho), sem nenhuma visão de trabalho disponível para
+corrigir a posição. Corrigido: agora a viewport principal usa SEMPRE a
+câmera de órbita livre do editor, do mesmo jeito que Unity/Unreal/Godot
+fazem - a câmera de jogo Primary ganhou seu próprio painel de preview
+("Camera"), renderizado num framebuffer separado
+(`m_CameraPreviewFramebuffer`), então dá pra ver os dois ao mesmo tempo e
+ajustar a posição da câmera olhando a preview.
+
+**Limitações conhecidas, deixadas de propósito**: os campos da seção Camera
+ainda não geram comandos individuais de undo por edição (mesma limitação já
+documentada para Light/Collider/RigidBody). Sem picking por clique no gizmo
+ainda (selecionar a câmera continua sendo só pela Hierarchy panel). Sem
+suporte a `AspectRatio` fixo/customizado por câmera - sempre usa o aspect
+ratio do painel Viewport (ou da janela do modo Play, quando existir). O
+painel Camera não tem um aviso/indicador de "atravessando geometria" (ex:
+destacar em vermelho quando a posição da câmera está dentro de outro
+Collider) - hoje isso só é visível olhando a imagem da preview.
 
 ## Nota sobre o Console (estado atual)
 

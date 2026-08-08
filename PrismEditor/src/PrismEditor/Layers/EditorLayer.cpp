@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+#include <vector>
 
 namespace PrismEditor {
 
@@ -233,6 +234,18 @@ namespace PrismEditor {
         m_ActiveScene->OnUpdate(deltaTime);
 
         RenderScene(deltaTime);
+
+        // Resize do framebuffer de preview segue o mesmo padrao do
+        // m_ViewportFramebuffer acima - so que usando o tamanho do painel
+        // Camera (m_CameraPreviewSize), setado por RenderCameraPreviewPanel().
+        if (m_CameraPreviewFramebuffer) {
+            const auto& previewSpec = m_CameraPreviewFramebuffer->GetSpecification();
+            if (m_CameraPreviewSize[0] > 0.0f && m_CameraPreviewSize[1] > 0.0f &&
+                (previewSpec.Width != (uint32_t)m_CameraPreviewSize[0] || previewSpec.Height != (uint32_t)m_CameraPreviewSize[1])) {
+                m_CameraPreviewFramebuffer->Resize((uint32_t)m_CameraPreviewSize[0], (uint32_t)m_CameraPreviewSize[1]);
+            }
+        }
+        RenderCameraPreview(deltaTime);
     }
 
     void EditorLayer::RenderScene(float deltaTime) {
@@ -242,8 +255,15 @@ namespace PrismEditor {
         const auto& spec = m_ViewportFramebuffer->GetSpecification();
         float aspect = spec.Height > 0 ? (float)spec.Width / (float)spec.Height : 1.0f;
 
-        // Camera de orbita: posicao calculada a partir de yaw/pitch/distancia
-        // ao redor da origem, olhando sempre para o centro da cena.
+        // A viewport principal do editor usa SEMPRE a camera de orbita
+        // livre - nunca a CameraComponent::Primary da cena, mesmo que
+        // exista uma. Ver o comentario em m_CameraYaw (EditorLayer.h) e em
+        // RenderCameraPreviewPanel() para o motivo: substituir a viewport
+        // principal pela camera de jogo te deixa "preso" dentro de
+        // qualquer mesh onde a camera esteja posicionada (ex: dentro da
+        // capsula de colisao de um character), sem visao de trabalho para
+        // corrigir isso. A camera de jogo tem sua propria preview separada
+        // (RenderCameraPreview/m_CameraPreviewFramebuffer).
         float yawRad = glm::radians(m_CameraYaw);
         float pitchRad = glm::radians(m_CameraPitch);
         glm::vec3 cameraPos;
@@ -255,10 +275,74 @@ namespace PrismEditor {
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
         glm::mat4 viewProjection = projection * view;
 
+        RenderSceneEntities(viewProjection);
+        RenderCameraGizmos(viewProjection);
+
+        m_ViewportFramebuffer->Unbind();
+    }
+
+    void EditorLayer::RenderCameraPreview(float deltaTime) {
+        // Sem framebuffer ainda (painel Camera nunca foi aberto) - nada a
+        // fazer. Criado sob demanda em RenderCameraPreviewPanel().
+        if (!m_CameraPreviewFramebuffer)
+            return;
+
+        m_CameraPreviewFramebuffer->Bind();
+        Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
+
+        // Acha a entidade com CameraComponent::Primary=true - mesma busca
+        // que RenderScene() fazia antes desta mudanca (agora vive so aqui,
+        // ja que so a preview usa a camera de jogo).
+        Prism::Entity primaryCameraEntity;
+        auto cameraView = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
+        for (auto entityHandle : cameraView) {
+            auto [transform, camera] = cameraView.get<Prism::TransformComponent, Prism::CameraComponent>(entityHandle);
+            if (camera.Primary) {
+                primaryCameraEntity = Prism::Entity(entityHandle, m_ActiveScene.get());
+                break; // so a primeira Primary encontrada conta - SetPrimaryCamera() ja garante que so existe uma
+            }
+        }
+
+        if (primaryCameraEntity) {
+            const auto& spec = m_CameraPreviewFramebuffer->GetSpecification();
+            float aspect = spec.Height > 0 ? (float)spec.Width / (float)spec.Height : 1.0f;
+
+            auto& transform = primaryCameraEntity.GetComponent<Prism::TransformComponent>();
+            auto& camera = primaryCameraEntity.GetComponent<Prism::CameraComponent>();
+
+            // View da camera de jogo: inversa da matriz de mundo da
+            // entidade (posicao + rotacao) - GetTransform() ja inclui
+            // Scale, que nao faz sentido para uma camera, mas
+            // TransformComponent nao tem um "GetTransformNoScale()"
+            // separado ainda; cameras tipicamente ficam com Scale=1 (o
+            // preset de criacao garante isso), entao nao e um problema na
+            // pratica.
+            glm::mat4 view = glm::inverse(transform.GetTransform());
+            glm::mat4 projection = camera.GetProjection(aspect);
+            glm::mat4 viewProjection = projection * view;
+
+            RenderSceneEntities(viewProjection);
+            // Nao chama RenderCameraGizmos aqui de proposito - a propria
+            // camera nao deve desenhar o frustum dela mesma dentro da sua
+            // propria preview (ficaria com a geometria do gizmo colada na
+            // tela toda, ja que a camera esta dentro do proprio frustum).
+        }
+        // Sem Primary: framebuffer fica so com o Clear acima (fundo escuro
+        // solido) - RenderCameraPreviewPanel() mostra uma mensagem de texto
+        // em cima dessa imagem vazia, explicando que nenhuma camera foi
+        // marcada como Primary ainda.
+
+        m_CameraPreviewFramebuffer->Unbind();
+    }
+
+    void EditorLayer::RenderSceneEntities(const glm::mat4& viewProjection) {
         // Desenha TODA entidade da cena que tenha Transform + MeshRenderer -
         // isto e o "sistema de renderizacao" no sentido ECS: uma funcao que
         // itera sobre o conjunto de components relevantes, sem saber nada
         // sobre quantas entidades existem ou o que cada uma "e" alem disso.
+        // Compartilhada por RenderScene() (viewport principal) e
+        // RenderCameraPreview() (preview da camera de jogo) - so muda a
+        // matriz view/projection recebida.
         auto view_ = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::MeshRendererComponent>();
         for (auto entityHandle : view_) {
             auto [transform, meshRenderer] = view_.get<Prism::TransformComponent, Prism::MeshRendererComponent>(entityHandle);
@@ -271,8 +355,89 @@ namespace PrismEditor {
             // precisamos mais de um switch aqui, so repassar o tipo.
             Prism::Renderer::DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), glm::value_ptr(color));
         }
+    }
 
-        m_ViewportFramebuffer->Unbind();
+    void EditorLayer::RenderCameraGizmos(const glm::mat4& viewProjection) {
+        // Desenha um frustum simples (piramide com base retangular, apice
+        // na posicao da camera) para toda entidade com CameraComponent -
+        // sem isso, uma camera seria invisivel na viewport (ela nao tem
+        // MeshRendererComponent). So Perspective desenha um frustum de
+        // verdade (leque abrindo do apice); Orthographic desenha uma caixa
+        // (os planos near/far tem o mesmo tamanho, sem convergencia).
+        auto view = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
+        for (auto entityHandle : view) {
+            auto [transform, camera] = view.get<Prism::TransformComponent, Prism::CameraComponent>(entityHandle);
+
+            // Tamanho fixo de exibicao (nao o Far real da camera, que pode
+            // ser gigante e tornar o gizmo inutilizavel visualmente) - so
+            // near/far "curtos" para dar a nocao de direcao/abertura.
+            constexpr float kGizmoNear = 0.15f;
+            constexpr float kGizmoFar = 0.6f;
+
+            float nearHalfHeight, nearHalfWidth, farHalfHeight, farHalfWidth;
+            // Aspect fixo 16:9 para o gizmo, independente do aspect real do
+            // viewport de destino - o gizmo e so uma indicacao visual de
+            // "aqui existe uma camera olhando nesta direcao", nao uma
+            // preview exata do frustum (isso ficaria caro/complexo de
+            // manter em sincronia com o Framebuffer real).
+            constexpr float kGizmoAspect = 16.0f / 9.0f;
+
+            if (camera.ProjectionType == Prism::CameraProjectionType::Orthographic) {
+                float halfHeight = camera.OrthoSize * 0.5f * 0.15f; // escalado para o mesmo tamanho visual do frustum perspective
+                nearHalfHeight = farHalfHeight = halfHeight;
+                nearHalfWidth = farHalfWidth = halfHeight * kGizmoAspect;
+            } else {
+                float tanHalfFov = tanf(glm::radians(camera.FOV) * 0.5f);
+                nearHalfHeight = kGizmoNear * tanHalfFov;
+                nearHalfWidth = nearHalfHeight * kGizmoAspect;
+                farHalfHeight = kGizmoFar * tanHalfFov;
+                farHalfWidth = farHalfHeight * kGizmoAspect;
+            }
+
+            glm::mat4 model = transform.GetTransform();
+            // Camera olha para -Z local (convencao padrao de camera em
+            // OpenGL/glm, igual view = glm::inverse(model) em RenderScene()
+            // assume implicitamente).
+            auto toWorld = [&](float x, float y, float z) {
+                return glm::vec3(model * glm::vec4(x, y, -z, 1.0f));
+            };
+
+            glm::vec3 apex = toWorld(0, 0, 0);
+            glm::vec3 nearTL = toWorld(-nearHalfWidth,  nearHalfHeight, kGizmoNear);
+            glm::vec3 nearTR = toWorld( nearHalfWidth,  nearHalfHeight, kGizmoNear);
+            glm::vec3 nearBL = toWorld(-nearHalfWidth, -nearHalfHeight, kGizmoNear);
+            glm::vec3 nearBR = toWorld( nearHalfWidth, -nearHalfHeight, kGizmoNear);
+            glm::vec3 farTL  = toWorld(-farHalfWidth,   farHalfHeight,  kGizmoFar);
+            glm::vec3 farTR  = toWorld( farHalfWidth,   farHalfHeight,  kGizmoFar);
+            glm::vec3 farBL  = toWorld(-farHalfWidth,  -farHalfHeight,  kGizmoFar);
+            glm::vec3 farBR  = toWorld( farHalfWidth,  -farHalfHeight,  kGizmoFar);
+
+            // 8 segmentos: retangulo near, retangulo far, 4 arestas
+            // conectando near->far (para Perspective isso converge para o
+            // apice se near for pequeno o bastante - aqui so desenhamos o
+            // retangulo near normalmente, ja que kGizmoNear > 0).
+            std::vector<glm::vec3> points = {
+                nearTL, nearTR,  nearTR, nearBR,  nearBR, nearBL,  nearBL, nearTL, // retangulo near
+                farTL, farTR,    farTR, farBR,    farBR, farBL,    farBL, farTL,   // retangulo far
+                nearTL, farTL,   nearTR, farTR,   nearBR, farBR,   nearBL, farBL,  // arestas conectando
+                apex, nearTL,    apex, nearTR,    apex, nearBR,    apex, nearBL,   // apice ao retangulo near (indica a origem/posicao da camera)
+            };
+
+            // Primary usa uma cor diferente (ciano) das demais (cinza) -
+            // ajuda a identificar de relance qual camera o modo Play vai
+            // usar quando ha mais de uma na cena.
+            glm::vec3 color = camera.Primary ? glm::vec3(0.25f, 0.85f, 0.95f) : glm::vec3(0.6f, 0.6f, 0.6f);
+
+            Prism::Renderer::DrawLines(glm::value_ptr(points[0]), (uint32_t)points.size(), glm::value_ptr(viewProjection), glm::value_ptr(color));
+        }
+    }
+
+    void EditorLayer::SetPrimaryCamera(Prism::Entity newPrimary) {
+        auto view = m_ActiveScene->GetRegistry().view<Prism::CameraComponent>();
+        for (auto entityHandle : view) {
+            Prism::Entity entity(entityHandle, m_ActiveScene.get());
+            entity.GetComponent<Prism::CameraComponent>().Primary = (entity == newPrimary);
+        }
     }
 
     void EditorLayer::OnEvent(Prism::Event& event) {
@@ -345,6 +510,7 @@ namespace PrismEditor {
         RenderPropertiesPanel();
         RenderConsolePanel();
         RenderContentBrowserPanel();
+        RenderCameraPreviewPanel();
     }
 
     void EditorLayer::RenderMenuBar() {
@@ -413,6 +579,20 @@ namespace PrismEditor {
                     CreatePresetEntityCommand* raw = command.get();
                     m_CommandHistory.Execute(std::move(command));
                     m_SelectedEntity = raw->GetCreatedEntity();
+                }
+                if (ImGui::MenuItem("Criar Camera")) {
+                    // Preset de camera de jogo: so Transform + CameraComponent
+                    // (nasce Primary=true - ver Components.h). Se ja existir
+                    // outra Primary na cena, desmarcamos ela para manter a
+                    // regra de "no maximo uma Primary" (mesmo ajuste feito
+                    // em RenderAddComponentButton() para o botao Add Component).
+                    auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_ActiveScene, "Camera", "Camera",
+                        [](Prism::Entity entity) { entity.AddComponent<Prism::CameraComponent>(); });
+                    CreatePresetEntityCommand* raw = command.get();
+                    m_CommandHistory.Execute(std::move(command));
+                    m_SelectedEntity = raw->GetCreatedEntity();
+                    if (m_SelectedEntity)
+                        SetPrimaryCamera(m_SelectedEntity); // garante unicidade - desmarca qualquer Primary anterior
                 }
                 if (ImGui::MenuItem("Criar Entidade Vazia")) {
                     // So Transform (todo Scene::CreateEntity ja da isso) -
@@ -484,6 +664,51 @@ namespace PrismEditor {
             if (io.MouseWheel != 0.0f) {
                 m_CameraDistance = std::clamp(m_CameraDistance - io.MouseWheel * 0.5f, 1.0f, 25.0f);
             }
+        }
+
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
+    void EditorLayer::RenderCameraPreviewPanel() {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::Begin("Camera");
+
+        ImVec2 size = ImGui::GetContentRegionAvail();
+        m_CameraPreviewSize[0] = std::max(size.x, 1.0f);
+        m_CameraPreviewSize[1] = std::max(size.y, 1.0f);
+
+        // Framebuffer criado sob demanda, na primeira vez que este painel
+        // e desenhado - evita alocar uma textura de GPU extra em sessoes
+        // que nunca abrem o painel Camera (ele fica fechado por padrao?
+        // nao - ImGui::Begin sempre desenha a janela se ela nao foi
+        // explicitamente escondida - mas o custo de checar aqui e minimo,
+        // e deixa o codigo resistente a um futuro "fechar painel").
+        if (!m_CameraPreviewFramebuffer)
+            m_CameraPreviewFramebuffer = Prism::Framebuffer::Create({ (uint32_t)m_CameraPreviewSize[0], (uint32_t)m_CameraPreviewSize[1] });
+
+        // Existe alguma entidade Primary agora? Se nao, RenderCameraPreview()
+        // so limpou o framebuffer (fundo solido) - mostramos uma mensagem
+        // em vez da imagem, para deixar claro que falta marcar uma camera
+        // como Primary (Properties panel > secao Camera > checkbox Primary).
+        bool hasPrimary = false;
+        {
+            auto view = m_ActiveScene->GetRegistry().view<Prism::CameraComponent>();
+            for (auto entityHandle : view) {
+                if (view.get<Prism::CameraComponent>(entityHandle).Primary) {
+                    hasPrimary = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasPrimary) {
+            uint32_t textureID = m_CameraPreviewFramebuffer->GetColorAttachmentID();
+            ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2(m_CameraPreviewSize[0], m_CameraPreviewSize[1]),
+                         ImVec2(0, 1), ImVec2(1, 0)); // UV invertido no Y, mesmo motivo do painel Viewport.
+        } else {
+            ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
+            ImGui::TextWrapped("Nenhuma camera marcada como Primary. Selecione uma entidade com CameraComponent e marque \"Primary\" na Properties panel.");
         }
 
         ImGui::End();
@@ -665,6 +890,42 @@ namespace PrismEditor {
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
         }
 
+        if (m_SelectedEntity.HasComponent<Prism::CameraComponent>()) {
+            auto& camera = m_SelectedEntity.GetComponent<Prism::CameraComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Camera", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* projectionNames[] = { "Perspectiva", "Ortografica" };
+                int projectionIndex = (int)camera.ProjectionType;
+                if (ImGui::Combo("Projecao", &projectionIndex, projectionNames, IM_ARRAYSIZE(projectionNames)))
+                    camera.ProjectionType = (Prism::CameraProjectionType)projectionIndex;
+
+                if (camera.ProjectionType == Prism::CameraProjectionType::Perspective)
+                    ImGui::DragFloat("FOV", &camera.FOV, 0.5f, 1.0f, 179.0f);
+                else
+                    ImGui::DragFloat("Tamanho Ortografico", &camera.OrthoSize, 0.1f, 0.01f, 1000.0f);
+
+                ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, camera.FarClip - 0.01f);
+                ImGui::DragFloat("Far Clip", &camera.FarClip, 1.0f, camera.NearClip + 0.01f, 100000.0f);
+
+                // Marcar esta camera como Primary desmarca qualquer outra
+                // na cena (ver SetPrimaryCamera) - so faz sentido existir
+                // uma Primary por vez, ja que e ela que o modo Play (e a
+                // propria viewport do editor, como fallback - ver
+                // RenderScene) usa para renderizar.
+                bool isPrimary = camera.Primary;
+                if (ImGui::Checkbox("Primary", &isPrimary)) {
+                    if (isPrimary)
+                        SetPrimaryCamera(m_SelectedEntity);
+                    else
+                        camera.Primary = false; // desmarcar a unica Primary e permitido - so significa "nenhuma camera de jogo definida ainda"
+                }
+                if (!isPrimary)
+                    ImGui::TextDisabled("Nao e a camera principal - o modo Play/viewport nao vai usar esta.");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::CameraComponent>>(m_SelectedEntity, "Camera"));
+        }
+
         if (m_SelectedEntity.HasComponent<Prism::ScriptComponent>()) {
             auto& script = m_SelectedEntity.GetComponent<Prism::ScriptComponent>();
             bool keepOpen = true;
@@ -701,7 +962,8 @@ namespace PrismEditor {
                            || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>();
+                           || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::CameraComponent>();
 
         if (!hasAnyMissing) {
             ImGui::TextDisabled("(todos os components ja adicionados)");
@@ -730,6 +992,27 @@ namespace PrismEditor {
             }
             if (!m_SelectedEntity.HasComponent<Prism::ScriptComponent>() && ImGui::MenuItem("Script")) {
                 m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(m_SelectedEntity, "Script"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::CameraComponent>() && ImGui::MenuItem("Camera")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(m_SelectedEntity, "Camera"));
+                // CameraComponent nasce com Primary=true por padrao (ver
+                // Components.h) - se ja existir outra camera Primary na
+                // cena, isso violaria a regra de "no maximo uma" ate o
+                // usuario mexer manualmente no checkbox. Corrige aqui na
+                // hora, fora do historico de undo (e so um ajuste de
+                // consistencia, nao uma edicao que o usuario pediu).
+                bool anyOtherPrimary = false;
+                auto view = m_ActiveScene->GetRegistry().view<Prism::CameraComponent>();
+                for (auto entityHandle : view) {
+                    Prism::Entity entity(entityHandle, m_ActiveScene.get());
+                    if (entity != m_SelectedEntity && entity.GetComponent<Prism::CameraComponent>().Primary) {
+                        anyOtherPrimary = true;
+                        break;
+                    }
+                }
+                if (anyOtherPrimary)
+                    m_SelectedEntity.GetComponent<Prism::CameraComponent>().Primary = false;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

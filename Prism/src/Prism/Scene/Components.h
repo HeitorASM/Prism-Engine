@@ -74,18 +74,54 @@ namespace Prism {
         MeshRendererComponent(const MeshRendererComponent&) = default;
     };
 
+    // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS - ver
+    // guia do prototipo); Orthographic fica reservado para usos futuros
+    // (ex: uma camera 2D/isometrica, ou uma vista "top-down" de edicao) -
+    // ja suportado no dado e no calculo de projecao (ver
+    // CameraComponent::GetProjection) para nao exigir migracao depois.
+    enum class CameraProjectionType {
+        Perspective,
+        Orthographic
+    };
+
     // Camera de cena (distinta da camera de editor em EditorLayer, que so
-    // existe para navegar a viewport). Ainda nao usada em runtime - reservada
-    // para quando existir um modo "Play" que roda a cena do ponto de vista
-    // de uma camera de jogo em vez da camera de editor.
+    // existe para navegar a viewport). Usada pelo modo "Play" (janela
+    // separada - ver README) a partir da entidade com Primary=true; tambem
+    // usada pela propria viewport do editor quando a cena tem uma camera
+    // Primary (ver EditorLayer::RenderScene) - a camera de orbita do editor
+    // vira so o fallback para cenas sem nenhuma CameraComponent ainda.
     struct CameraComponent {
-        float FOV = 45.0f;
+        CameraProjectionType ProjectionType = CameraProjectionType::Perspective;
+
+        float FOV = 45.0f;              // graus, so usado se Perspective
+        float OrthoSize = 10.0f;        // altura vertical do volume ortografico, so usado se Orthographic
         float NearClip = 0.1f;
         float FarClip = 1000.0f;
+
+        // Apenas UMA entidade por Scene deve ter Primary=true por vez - e
+        // essa que o modo Play (e a viewport do editor, como fallback da
+        // camera de orbita) usa para renderizar. A UI (Properties panel)
+        // e responsavel por impor essa regra ao marcar uma nova Primary
+        // (ver EditorLayer::RenderPropertiesPanel) - o component em si nao
+        // valida isso, pois nao tem acesso a Scene/outras entidades.
         bool Primary = true;
 
         CameraComponent() = default;
         CameraComponent(const CameraComponent&) = default;
+
+        // Monta a matriz de projecao a partir dos campos acima e do aspect
+        // ratio do viewport atual (largura/altura em pixels do
+        // Framebuffer/janela que vai exibir esta camera - nao guardado no
+        // component, pois muda com o tamanho da janela/painel, nao com a
+        // camera em si).
+        glm::mat4 GetProjection(float aspectRatio) const {
+            if (ProjectionType == CameraProjectionType::Orthographic) {
+                float halfHeight = OrthoSize * 0.5f;
+                float halfWidth = halfHeight * aspectRatio;
+                return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, NearClip, FarClip);
+            }
+            return glm::perspective(glm::radians(FOV), aspectRatio, NearClip, FarClip);
+        }
     };
 
     // Tipos de luz suportados - nomes escolhidos para bater com o
