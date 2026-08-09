@@ -5,6 +5,8 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <algorithm> // std::min (UploadLights)
+#include <string>    // std::to_string (UploadLights - nomes de uniform por indice)
 
 namespace Prism {
 
@@ -63,6 +65,26 @@ namespace Prism {
         }
     )";
 
+    // Shader multi-luz: substitui a antiga luz direcional fake hardcoded
+    // por um array de ate MAX_LIGHTS luzes de verdade, vindas de
+    // LightComponent (ver Components.h) atraves de Renderer::CollectGPULights
+    // + UploadLights. MAX_LIGHTS aqui e uma constante GLSL espelhando
+    // Prism::MAX_LIGHTS (Renderer.h) - os dois DEVEM bater.
+    //
+    // Cada luz tem um campo inteiro 'Type' que decide qual formula de
+    // atenuacao/cone usar (ver funcao CalculateLight abaixo) - igual o
+    // enum Prism::LightType (Point=0, Spot=1, Directional=2, ...).
+    // Adicionar um novo tipo (ex: Area) significa: adicionar mais um
+    // "else if (light.Type == N)" aqui, SEM mudar a struct GPULight nem
+    // o array de uniforms - ver comentario grande sobre extensibilidade
+    // em Components.h/Renderer.h.
+    //
+    // Modelo de iluminacao continua Lambert simples (sem especular, sem
+    // PBR) - propositalmente, para bater com o nivel de fidelidade do
+    // resto do renderer neste estagio do prototipo (ver README). Trocar
+    // por um modelo mais realista (Blinn-Phong, PBR/Cook-Torrance) e uma
+    // mudanca isolada dentro de CalculateLight/main, que nao afeta a
+    // API C++ (GPULight/LightComponent) nem o editor.
     static const char* s_FragmentSrc = R"(
         #version 450 core
         in vec3 v_Normal;
@@ -71,6 +93,73 @@ namespace Prism {
 
         uniform vec3 u_BaseColor;
         uniform vec3 u_CameraWorldPos;
+
+        #define MAX_LIGHTS 16
+        #define LIGHT_TYPE_POINT       0
+        #define LIGHT_TYPE_SPOT        1
+        #define LIGHT_TYPE_DIRECTIONAL 2
+
+        struct GPULight {
+            int   Type;
+            vec3  Position;
+            vec3  Direction;
+            vec3  Color;
+            float Intensity;
+            float Range;
+            float CosOuterAngle;
+            float CosInnerAngle;
+        };
+
+        uniform int u_LightCount;
+        uniform GPULight u_Lights[MAX_LIGHTS];
+
+        // Atenuacao por distancia estilo "smooth falloff" (usada por
+        // engines como Unity/Unreal em vez do inverse-square puro, que
+        // tende a infinito perto da fonte e nunca chega literalmente a
+        // zero) - cai suavemente de 1.0 (na fonte) a 0.0 (em Range),
+        // clampada para nunca ficar negativa.
+        float AttenuateByDistance(float distance, float range) {
+            if (range <= 0.0) return 1.0;
+            float ratio = clamp(distance / range, 0.0, 1.0);
+            float falloff = 1.0 - ratio * ratio;
+            return falloff * falloff;
+        }
+
+        // Retorna a contribuicao de UMA luz (ja multiplicada por cor,
+        // intensidade, atenuacao de distancia/cone e o termo difuso de
+        // Lambert) para o fragmento atual. 'normal' e 'viewWorldPos' sao
+        // por-fragmento; 'light' e um elemento do array de uniforms.
+        vec3 CalculateLight(GPULight light, vec3 normal, vec3 worldPos) {
+            vec3 lightDir;
+            float attenuation = 1.0;
+
+            if (light.Type == LIGHT_TYPE_DIRECTIONAL) {
+                // Posicao da entidade e ignorada (ver LightComponent,
+                // Components.h) - so a direcao importa, luz "infinita".
+                lightDir = normalize(-light.Direction);
+            } else {
+                // Point e Spot: luz vem de um ponto no espaco.
+                vec3 toLight = light.Position - worldPos;
+                float distance = length(toLight);
+                lightDir = distance > 0.0001 ? (toLight / distance) : vec3(0.0, 1.0, 0.0);
+                attenuation = AttenuateByDistance(distance, light.Range);
+
+                if (light.Type == LIGHT_TYPE_SPOT) {
+                    // Cone: quanto o fragmento esta alinhado com a
+                    // direcao do spot (cos do angulo entre eles) versus
+                    // os cossenos pre-calculados do angulo interno/externo
+                    // (ver LightComponent::SpotAngle/InnerSpotAngle,
+                    // Components.h). smoothstep da a borda suave entre
+                    // CosOuterAngle (0% de luz) e CosInnerAngle (100%).
+                    float cosAngleToFragment = dot(normalize(-light.Direction), lightDir);
+                    float spotFactor = smoothstep(light.CosOuterAngle, light.CosInnerAngle, cosAngleToFragment);
+                    attenuation *= spotFactor;
+                }
+            }
+
+            float diffuse = max(dot(normal, lightDir), 0.0);
+            return light.Color * light.Intensity * diffuse * attenuation;
+        }
 
         void main() {
             vec3 normal = normalize(v_Normal);
@@ -82,10 +171,18 @@ namespace Prism {
             if (dot(normal, viewDir) < 0.0)
                 discard;
 
-            vec3 lightDir = normalize(vec3(0.5, 0.8, 0.3));
-            float diffuse = max(dot(normal, lightDir), 0.0);
-            vec3 ambient = u_BaseColor * 0.25;
-            vec3 color = ambient + u_BaseColor * diffuse;
+            // Ambiente fixo e pequeno - evita faces totalmente pretas em
+            // areas sem nenhuma luz alcancando (nao ha GI/luz indireta
+            // ainda). Mesmo valor (0.25) que o shader antigo usava, para
+            // cenas sem luzes configuradas nao ficarem mais escuras do
+            // que estavam antes desta mudanca.
+            vec3 lightAccum = vec3(0.25);
+
+            for (int i = 0; i < u_LightCount; i++) {
+                lightAccum += CalculateLight(u_Lights[i], normal, v_WorldPos);
+            }
+
+            vec3 color = u_BaseColor * lightAccum;
             o_Color = vec4(color, 1.0);
         }
     )";
@@ -177,7 +274,7 @@ namespace Prism {
         glViewport(0, 0, (GLsizei)width, (GLsizei)height);
     }
 
-    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color) {
+    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights) {
         if (!s_BasicShader) return;
 
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
@@ -191,6 +288,13 @@ namespace Prism {
             s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
         else
             s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
+
+        // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
+        // desenha so com o ambiente fixo do shader (u_LightCount = 0).
+        if (lights)
+            UploadLights(*lights);
+        else
+            s_BasicShader->SetInt("u_LightCount", 0);
 
         mesh->BindForCurrentContext();
         glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
@@ -231,8 +335,106 @@ namespace Prism {
         s_LineShader->Unbind();
     }
 
+    std::vector<GPULight> Renderer::CollectGPULights(Scene& scene) {
+        std::vector<GPULight> result;
+        result.reserve(MAX_LIGHTS);
+
+        // Toda entidade com TransformComponent + LightComponent conta como
+        // fonte de luz. Usa a transform de MUNDO (mesma logica que
+        // DrawScene ja usa para meshes) - uma luz filha de um objeto pai
+        // (ex: uma lanterna presa na mao de um personagem) acompanha a
+        // posicao/rotacao do pai corretamente.
+        auto view = scene.GetRegistry().view<TransformComponent, LightComponent>();
+        for (auto entityHandle : view) {
+            if (result.size() >= MAX_LIGHTS) {
+                // Limite atingido - ver comentario em CollectGPULights
+                // (Renderer.h) sobre por que isso e silencioso por
+                // enquanto (sem priorizacao por distancia/importancia).
+                break;
+            }
+
+            const auto& light = view.get<LightComponent>(entityHandle);
+            glm::mat4 worldTransform = scene.GetWorldTransform(Entity(entityHandle, &scene));
+
+            GPULight gpuLight;
+            gpuLight.Color = light.Color;
+            gpuLight.Intensity = light.Intensity;
+            gpuLight.Range = light.Range;
+
+            // Posicao de mundo = coluna de translacao da matriz de
+            // transform combinada (ultima coluna, xyz).
+            gpuLight.Position = glm::vec3(worldTransform[3]);
+
+            // Direcao "para frente" da entidade em espaco de mundo:
+            // rotaciona o eixo -Z local (convencao da engine para "frente"
+            // de uma entidade, mesma usada pela CameraComponent) pela
+            // parte de rotacao/escala da matriz de mundo. Relevante para
+            // Spot e Directional; Point ignora esse campo no shader.
+            glm::vec3 forwardLocal = { 0.0f, 0.0f, -1.0f };
+            gpuLight.Direction = glm::normalize(glm::mat3(worldTransform) * forwardLocal);
+
+            // Traducao especifica por tipo - este e o UNICO lugar que
+            // precisa de um novo "case" ao adicionar um LightType novo
+            // (ex: Area) - ver comentario grande em Components.h sobre
+            // extensibilidade. Point e o "default" (gpuLight.Type = 0)
+            // ja fica correto sem entrar em nenhum branch abaixo.
+            switch (light.Type) {
+                case LightType::Point:
+                    gpuLight.Type = 0; // LIGHT_TYPE_POINT no shader
+                    break;
+                case LightType::Spot:
+                    gpuLight.Type = 1; // LIGHT_TYPE_SPOT no shader
+                    // Pre-calcula os cossenos aqui (CPU, uma vez por
+                    // frame por luz) em vez de no shader (por-fragmento,
+                    // milhares de vezes por frame) - cos() e caro para
+                    // repetir por pixel quando o angulo so muda quando o
+                    // usuario edita a luz.
+                    gpuLight.CosOuterAngle = glm::cos(glm::radians(light.SpotAngle));
+                    gpuLight.CosInnerAngle = glm::cos(glm::radians(glm::min(light.InnerSpotAngle, light.SpotAngle)));
+                    break;
+                case LightType::Directional:
+                    gpuLight.Type = 2; // LIGHT_TYPE_DIRECTIONAL no shader
+                    break;
+                // TODO(Area/IES): quando LightType ganhar esses valores
+                // (ver Components.h), adicionar os cases aqui.
+            }
+
+            result.push_back(gpuLight);
+        }
+
+        return result;
+    }
+
+    void Renderer::UploadLights(const std::vector<GPULight>& lights) {
+        if (!s_BasicShader) return;
+
+        int count = (int)std::min<size_t>(lights.size(), MAX_LIGHTS);
+        s_BasicShader->SetInt("u_LightCount", count);
+
+        for (int i = 0; i < count; i++) {
+            const GPULight& light = lights[i];
+            std::string prefix = "u_Lights[" + std::to_string(i) + "].";
+
+            s_BasicShader->SetInt(prefix + "Type", light.Type);
+            s_BasicShader->SetFloat3(prefix + "Position", light.Position.x, light.Position.y, light.Position.z);
+            s_BasicShader->SetFloat3(prefix + "Direction", light.Direction.x, light.Direction.y, light.Direction.z);
+            s_BasicShader->SetFloat3(prefix + "Color", light.Color.x, light.Color.y, light.Color.z);
+            s_BasicShader->SetFloat(prefix + "Intensity", light.Intensity);
+            s_BasicShader->SetFloat(prefix + "Range", light.Range);
+            s_BasicShader->SetFloat(prefix + "CosOuterAngle", light.CosOuterAngle);
+            s_BasicShader->SetFloat(prefix + "CosInnerAngle", light.CosInnerAngle);
+        }
+    }
+
     void Renderer::DrawScene(Scene& scene, const float* viewProjection, const float* cameraWorldPos) {
         SetCameraPosition(cameraWorldPos);
+
+        // Coleta todas as luzes da cena UMA VEZ por frame (nao por
+        // entidade desenhada) - reusada em todo DrawMesh abaixo, ja que a
+        // lista de luzes ativas nao muda entre um mesh e outro do mesmo
+        // frame. Ver CollectGPULights para a logica de traducao
+        // LightComponent -> GPULight.
+        std::vector<GPULight> lights = CollectGPULights(scene);
 
         // Mesmo loop que EditorLayer::RenderSceneEntities fazia antes desta
         // funcao existir (ver comentario em Renderer.h) - toda entidade com
@@ -242,7 +444,7 @@ namespace Prism {
         for (auto entityHandle : view) {
             auto& meshRenderer = view.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-            DrawMesh(meshRenderer.Mesh, viewProjection, glm::value_ptr(model), &meshRenderer.Color.x);
+            DrawMesh(meshRenderer.Mesh, viewProjection, glm::value_ptr(model), &meshRenderer.Color.x, &lights);
         }
     }
 

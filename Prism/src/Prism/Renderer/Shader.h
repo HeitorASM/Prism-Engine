@@ -33,6 +33,8 @@ namespace Prism {
 
         void SetMat4(const std::string& name, const float* matrix4x4) const;
         void SetFloat3(const std::string& name, float x, float y, float z) const;
+        void SetFloat(const std::string& name, float value) const;
+        void SetInt(const std::string& name, int value) const;
 
         const std::string& GetName() const { return m_Name; }
 

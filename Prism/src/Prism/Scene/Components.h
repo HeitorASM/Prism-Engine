@@ -130,30 +130,89 @@ namespace Prism {
     // Tipos de luz suportados - nomes escolhidos para bater com o
     // vocabulario do guia do prototipo ("spotlight", "omnilight"/point
     // light) em vez de nomes tecnicos de shader.
+    //
+    // EXTENSIBILIDADE: este enum foi projetado para crescer sem quebrar
+    // nada que ja existe. Point/Spot/Directional cobrem o pedido original
+    // do guia; Area e IES ja estao aqui como proximos candidatos naturais
+    // (comuns em engines "grandes" - Unreal, Unity, Godot) para quando
+    // fizerem falta:
+    //   - Area: luz emitida por uma superficie retangular/disco (ex:
+    //     softbox, janela, painel de LED) - mais realista que Point para
+    //     luz "de estudio". Usaria Size (novo campo abaixo) como
+    //     dimensoes da superficie.
+    //   - IES: luz Point/Spot cujo formato do feixe vem de um perfil
+    //     fotometrico real (arquivo .ies, usado por luminarias de
+    //     verdade) em vez de um cone matematico perfeito.
+    // Adicionar um valor aqui NAO EXIGE mudar a assinatura de nenhuma
+    // funcao publica - so exige: 1) um novo case em
+    // Renderer::CollectGPULights (traducao LightComponent -> GPULight,
+    // ver Renderer.cpp) e 2) o shader saber interpretar o novo valor de
+    // u_Lights[i].Type. Nenhum client code (editor, scripts) quebra.
     enum class LightType {
         Point,       // omnilight - brilha em todas as direcoes a partir de um ponto
         Spot,        // cone de luz, como uma lanterna
-        Directional  // luz paralela vindo de uma direcao (ex: sol) - posicao da entidade e ignorada, so a rotacao importa
+        Directional, // luz paralela vindo de uma direcao (ex: sol) - posicao da entidade e ignorada, so a rotacao importa
+
+        // --- Candidatos futuros (ver comentario acima) - ainda NAO
+        // implementados no Renderer/shader. Deixados aqui, comentados,
+        // para documentar o caminho de extensao sem oferecer no editor
+        // algo que ainda nao funciona (ver LightComponent::Type combo no
+        // Properties panel, que so lista os 3 tipos ja suportados):
+        // Area,
+        // IES,
     };
 
-    // Component de luz. Ainda NAO afeta a renderizacao (o Renderer hoje so
-    // tem uma luz direcional fixa hardcoded dentro do shader - ver
-    // Renderer.cpp) - isto e o dado/slot que o editor ja permite criar e
-    // configurar, para quando o Renderer ganhar iluminacao de verdade
-    // (multiplas luzes, sombras) essas entidades ja estarem prontas para
-    // uso, sem precisar de outra rodada de migracao de dados salvos.
+    // Component de luz. Cada entidade com este component + TransformComponent
+    // e uma fonte de luz de verdade na cena - o Renderer coleta todas via
+    // Renderer::CollectGPULights() uma vez por frame e envia como um array
+    // de uniforms para o shader (ver Renderer.cpp - suporte a multiplas
+    // luzes simultaneas, nao so uma).
+    //
+    // O DESIGN AQUI E DELIBERADAMENTE "GORDO": em vez de um struct/union
+    // por LightType (o que forcaria o shader e qualquer codigo C++ a saber
+    // о layout de cada tipo separadamente), todo LightComponent tem TODOS
+    // os campos, e cada tipo so usa o subconjunto que faz sentido pra ele
+    // (documentado em cada campo). O preco e alguns floats "ociosos" por
+    // luz (irrelevante em memoria); o ganho e que Renderer::CollectGPULights
+    // e o shader nunca precisam de um layout diferente por tipo - so
+    // preenchem/ignoram campos. Isso e o que torna adicionar um tipo novo
+    // (Area, IES, ...) uma mudanca pequena e localizada, em vez de uma
+    // migracao de dados.
     struct LightComponent {
         LightType Type = LightType::Point;
         glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
         float Intensity = 1.0f;
 
-        // Relevante so para Point/Spot - alcance da luz antes de se
-        // tornar imperceptivel. Directional ignora isso (luz "infinita").
+        // Relevante para Point/Spot (e Area no futuro) - alcance da luz
+        // antes de se tornar imperceptivel. Directional ignora isso (luz
+        // "infinita", ja que representa algo como o sol).
         float Range = 10.0f;
 
-        // Relevante so para Spot - metade do angulo do cone, em graus
-        // (0-90). Point/Directional ignoram isso.
+        // Relevante so para Spot - metade do angulo EXTERNO do cone, em
+        // graus (0-90): além deste angulo, a luz nao chega. Point/
+        // Directional ignoram isso.
         float SpotAngle = 45.0f;
+
+        // Relevante so para Spot - metade do angulo INTERNO do cone, em
+        // graus. Entre InnerSpotAngle e SpotAngle a intensidade cai
+        // suavemente ate zero (soft edge) em vez de um corte abrupto -
+        // sem isso, todo spotlight teria uma borda serrilhada visivel
+        // (aliasing) onde o cone termina. Deve ser <= SpotAngle; o editor
+        // e responsavel por impor isso (ver Properties panel), o
+        // component em si so guarda o valor.
+        float InnerSpotAngle = 30.0f;
+
+        // Reservado para quando o Renderer ganhar shadow mapping (fora do
+        // escopo desta etapa - ver README). Ja exposto no dado/UI agora
+        // para nao exigir migracao de cenas salvas depois: hoje o
+        // Renderer LE este campo mas ainda nao produz sombra nenhuma
+        // (comportamento identico a CastShadows=false, sempre).
+        bool CastShadows = false;
+
+        // Reservado para o futuro tipo Area (ver comentario em LightType)
+        // - dimensoes (largura, altura) da superficie emissora. Ignorado
+        // por todos os tipos implementados hoje (Point/Spot/Directional).
+        glm::vec2 Size = { 1.0f, 1.0f };
 
         LightComponent() = default;
         LightComponent(const LightComponent&) = default;

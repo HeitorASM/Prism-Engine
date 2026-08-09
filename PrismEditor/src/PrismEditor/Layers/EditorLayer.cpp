@@ -1150,10 +1150,26 @@ namespace PrismEditor {
 
                 if (light.Type != Prism::LightType::Directional)
                     ImGui::DragFloat("Alcance", &light.Range, 0.1f, 0.0f, 1000.0f);
-                if (light.Type == Prism::LightType::Spot)
-                    ImGui::DragFloat("Angulo do Cone", &light.SpotAngle, 0.5f, 1.0f, 90.0f);
 
-                ImGui::TextDisabled("Ainda nao afeta a renderizacao (ver README).");
+                if (light.Type == Prism::LightType::Spot) {
+                    // Angulo externo primeiro: se o usuario reduzir o
+                    // externo abaixo do interno atual, arrasta o interno
+                    // junto (evita um estado "invalido" visualmente
+                    // confuso, mesmo que Renderer::CollectGPULights ja
+                    // clampe isso ao montar o GPULight).
+                    if (ImGui::DragFloat("Angulo do Cone (Externo)", &light.SpotAngle, 0.5f, 1.0f, 90.0f)) {
+                        if (light.InnerSpotAngle > light.SpotAngle)
+                            light.InnerSpotAngle = light.SpotAngle;
+                    }
+                    ImGui::DragFloat("Angulo do Cone (Interno)", &light.InnerSpotAngle, 0.5f, 0.0f, light.SpotAngle);
+                    ImGui::TextDisabled("(?) Entre os dois angulos a luz cai suavemente ate a borda.");
+                }
+
+                ImGui::BeginDisabled();
+                ImGui::Checkbox("Projetar Sombras", &light.CastShadows);
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Ainda nao implementado - shadow mapping fica para uma proxima etapa.");
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::LightComponent>>(m_SelectedEntity, "Light"));

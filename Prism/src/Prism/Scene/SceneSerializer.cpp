@@ -42,7 +42,17 @@ namespace Prism {
     // Scene::SetParent() para cada entidade que tem um Parent valido,
     // depois que TODAS as entidades ja foram criadas (precisa dos handles
     // novos de ambos os lados existirem antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 4;
+    //
+    // v4 -> v5: LightComponent ganhou InnerSpotAngle (soft edge do cone
+    // do Spot) e CastShadows (reservado - ver Components.h/Renderer, o
+    // Renderer ainda nao produz sombra nenhuma). Size (reservado para o
+    // futuro tipo Area) DELIBERADAMENTE nao e salvo ainda - nenhum
+    // LightType usa esse campo hoje, entao gravar seria so ruido no
+    // arquivo; sera adicionado ao formato quando Area for implementado.
+    // Arquivos v4 nao sao lidos por este parser - mapas salvos antes
+    // desta mudanca precisam ser resalvos uma vez (mesmo padrao de todo
+    // bump anterior, ver comentarios acima).
+    static constexpr uint32_t kSceneFormatVersion = 5;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -152,6 +162,8 @@ namespace Prism {
                 WriteRaw(out, light.Intensity);
                 WriteRaw(out, light.Range);
                 WriteRaw(out, light.SpotAngle);
+                WriteRaw(out, light.InnerSpotAngle);
+                WriteRaw(out, light.CastShadows);
             }
 
             bool hasCollider = entity.HasComponent<ColliderComponent>();
@@ -348,7 +360,8 @@ namespace Prism {
             if (hasLight) {
                 auto& light = entity.AddComponent<LightComponent>();
                 bool lightOk = ReadRaw(in, light.Type) && ReadRaw(in, light.Color)
-                            && ReadRaw(in, light.Intensity) && ReadRaw(in, light.Range) && ReadRaw(in, light.SpotAngle);
+                            && ReadRaw(in, light.Intensity) && ReadRaw(in, light.Range) && ReadRaw(in, light.SpotAngle)
+                            && ReadRaw(in, light.InnerSpotAngle) && ReadRaw(in, light.CastShadows);
                 if (!lightOk) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (light da entidade ", i, "): ", filepath.string());
                     return false;
