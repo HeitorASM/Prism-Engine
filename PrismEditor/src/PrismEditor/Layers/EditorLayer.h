@@ -179,6 +179,22 @@ namespace PrismEditor {
         // dentro de RenderScene(), depois de RenderCameraGizmos().
         void RenderSelectedColliderGizmo(const glm::mat4& viewProjection);
 
+        // Desenha um wireframe indicando forma/alcance para toda entidade
+        // com LightComponent na cena (Point: esfera de raio Range; Spot:
+        // cone com angulo SpotAngle e comprimento Range; Directional: uma
+        // seta indicando a direcao, sem alcance nenhum ja que e "infinita"
+        // - ver LightComponent, Components.h). Desenhado para TODA luz da
+        // cena (nao so a selecionada, mesmo padrao de RenderCameraGizmos)
+        // porque, diferente de um Collider, a forma/alcance de uma luz e
+        // informacao util para o layout geral da cena mesmo sem selecao -
+        // sem isso, uma luz seria invisivel na viewport (nao tem
+        // MeshRendererComponent, igual CameraComponent). A entidade
+        // atualmente selecionada (m_SelectedEntity) e desenhada mais forte
+        // (alpha maior via cor) que as demais, para se destacar sem
+        // esconder as outras. Chamado de dentro de RenderScene(), depois
+        // de RenderSelectedColliderGizmo().
+        void RenderLightGizmos(const glm::mat4& viewProjection);
+
         // Garante que no maximo UMA entidade da cena tenha
         // CameraComponent::Primary = true: ao marcar 'newPrimary' como
         // Primary, desmarca qualquer outra que estivesse marcada.
