@@ -53,6 +53,37 @@ namespace PrismEditor {
         // extraido de RenderHierarchyPanel() porque a recursao precisa
         // chamar a si mesma para cada nivel da hierarquia.
         void RenderHierarchyNode(Prism::Entity entity);
+
+        // Chamado pelo botao "Play" da menu bar - NUNCA chama
+        // Scene::OnScriptsStart() diretamente (ver .cpp). Antes de rodar,
+        // oferece salvar a cena (perguntar sempre, ja que a engine ainda
+        // nao rastreia um dirty flag preciso - ver TODO em NewMap()) e
+        // sempre tira um snapshot em disco (arquivo temporario) do estado
+        // ATUAL da cena, para OnStopButtonClicked() poder restaurar
+        // exatamente como estava - necessario porque scripts/fisica movem
+        // TransformComponent de verdade dentro da propria Scene ativa (ja
+        // que ainda nao existe uma janela de Play SEPARADA - ver item do
+        // roadmap "Janela de Play").
+        void OnPlayButtonClicked();
+
+        // Faz o trabalho de fato de OnPlayButtonClicked (tirar snapshot +
+        // Scene::OnScriptsStart()) - separado porque RenderPlayConfirmPopup
+        // chama isto depois que o usuario decide "Salvar e rodar" ou
+        // "Rodar sem salvar" no popup, nao direto do clique do botao Play.
+        void StartPlaySnapshotAndRun();
+
+        // Chamado pelo botao "Parar" - para scripts/fisica (Scene::
+        // OnScriptsStop()) e restaura a Scene para o snapshot tirado por
+        // OnPlayButtonClicked(), desfazendo qualquer posicao/rotacao que
+        // scripts ou fisica tenham alterado durante o Play.
+        void OnStopButtonClicked();
+
+        // So apaga o arquivo temporario de m_PlaySnapshotPath (sem tentar
+        // restaurar nada) - usado quando a Scene que estava rodando vai
+        // ser DESCARTADA de qualquer forma (trocar de mapa/Novo Mapa
+        // enquanto o Play estava ativo - ver LoadScene()/NewMap()), entao
+        // restaurar o snapshot nela seria trabalho inutil.
+        void DiscardPlaySnapshot();
         void RenderPropertiesPanel();
         // ^ RenderPropertiesPanel() desenha uma secao por component que a
         //   entidade selecionada ja tem (com um "X" para remover, exceto
@@ -117,6 +148,11 @@ namespace PrismEditor {
         // chamado a cada frame de RenderDockspace() (ImGui::OpenPopup
         // exige isso mesmo quando o popup esta fechado, ver EditorLayer.cpp).
         void RenderSaveAsPopup();
+        // Popup modal "Salvar antes de rodar?" - ver OnPlayButtonClicked
+        // e m_ShowPlayConfirmPopup. Mesmo padrao de RenderSaveAsPopup
+        // (chamado toda frame por RenderDockspace, so abre visualmente
+        // quando o bool correspondente esta true).
+        void RenderPlayConfirmPopup();
 
         // Tenta carregar Project::GetConfig().StartMap; se nao existir
         // ainda (projeto novo, primeira vez abrindo o editor), cria uma
@@ -214,6 +250,22 @@ namespace PrismEditor {
         // Estado do popup modal de "Salvar Como" (ver RenderSaveAsPopup).
         bool m_ShowSaveAsPopup = false;
         char m_SaveAsNameBuffer[128] = "";
+
+        // Estado do popup modal "Salvar antes de rodar?" (ver
+        // RenderPlayConfirmPopup / OnPlayButtonClicked). Perguntamos
+        // SEMPRE ao apertar Play (nao so quando ha mudancas, ja que a
+        // engine ainda nao rastreia um dirty flag preciso - ver TODO em
+        // NewMap()) - melhor perguntar de mais do que perder trabalho do
+        // usuario sem querer.
+        bool m_ShowPlayConfirmPopup = false;
+
+        // Caminho do snapshot temporario tirado por OnPlayButtonClicked()
+        // (fora da pasta do projeto - fica em std::filesystem::temp_directory_path())
+        // - usado por OnStopButtonClicked() para restaurar a Scene ao
+        // estado de ANTES do Play, desfazendo qualquer posicao/rotacao que
+        // scripts/fisica tenham alterado durante a simulacao. Vazio quando
+        // nao ha um Play em andamento com snapshot pendente.
+        std::filesystem::path m_PlaySnapshotPath;
 
         // Entidade atualmente selecionada na Hierarchy panel. Invalida
         // (Entity{}) quando nada esta selecionado.

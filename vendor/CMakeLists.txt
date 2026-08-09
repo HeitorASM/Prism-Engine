@@ -196,3 +196,33 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(sol2)
+
+# --- Box3D (fisica 3D - erincatto/box3d, o mesmo autor do consagrado Box2D) ---
+#
+# ATENCAO - Box3D esta em v0.1.0, alpha, lancado em 30/jun/2026 (a UNICA
+# release existente no repositorio no momento em que esta integracao foi
+# escrita 09/08/2026). O autor pede explicitamente para NAO enviar pull requests
+# ainda (projeto em estabilizacao ativa) - ver github.com/erincatto/box3d.
+# Isso significa que funcoes/structs podem ser renomeadas ou ter a
+# assinatura mudada em versoes futuras SEM aviso de depreciacao (comum
+# em libs pre-1.0). Decisao consciente de usar mesmo assim (ver
+# discussao no README, secao "Nota sobre Fisica"): a API C e pequena e
+# estavel o suficiente pra documentar bem, e ja tem uso real reportado
+# em producao por outros (s&box da Facepunch Studios substituiu a
+# fisica nativa do Source 2 por ela). GIT_TAG fixado no v0.1.0 exato
+# (nao "main") de proposito - atualizar a versao e uma escolha manual e
+# deliberada, nunca automatica, justamente por causa dessa instabilidade
+# de API esperada.
+FetchContent_Declare(
+    box3d
+    GIT_REPOSITORY https://github.com/erincatto/box3d.git
+    GIT_TAG v0.1.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(box3d)
+# FetchContent_MakeAvailable ja expoe o target box3d::box3d (biblioteca
+# apenas - amostras/testes/benchmarks do proprio Box3D sao pulados
+# automaticamente quando consumido como subprojeto, conforme o README
+# oficial). Nao precisa de nenhum passo extra aqui, diferente do Lua
+# (que nao tem CMakeLists.txt oficial) - Box3D ja vem com suporte
+# nativo a CMake/FetchContent.

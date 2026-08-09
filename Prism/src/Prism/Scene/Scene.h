@@ -66,26 +66,31 @@ namespace Prism {
         bool IsAncestorOf(entt::entity possibleAncestor, entt::entity entity);
 
         // Chamado uma vez por frame pelo dono da Scene (hoje, EditorLayer).
-        // So chama scripts (ver OnScriptsStart/Stop abaixo) enquanto a
-        // Scene esta "rodando" (m_IsRunning) - fora disso (a viewport
-        // normal do editor, fora do modo Play) a Scene fica estatica, como
-        // sempre foi, so exibindo o estado editado. Fisica (Box3D) tambem
-        // vai se plugar aqui quando integrada, seguindo a mesma regra.
+        // So chama scripts e fisica (ver OnScriptsStart/Stop abaixo)
+        // enquanto a Scene esta "rodando" (m_IsRunning) - fora disso (a
+        // viewport normal do editor, fora do modo Play) a Scene fica
+        // estatica, so exibindo o estado editado. Fisica (PhysicsEngine::
+        // Simulate) roda ANTES dos scripts (ver Scene.cpp) para que um
+        // script que leia a posicao da propria entidade em OnUpdate()
+        // sempre veja a posicao ja atualizada pela fisica deste frame.
         void OnUpdate(float deltaTime);
 
-        // Liga o modo "rodando": chama ScriptEngine::LoadScript (que por
-        // sua vez chama OnCreate()) para toda entidade com ScriptComponent
-        // que tenha um caminho de arquivo preenchido. Depois disso,
-        // OnUpdate() passa a chamar ScriptEngine::UpdateScript() por
-        // frame. E o que o futuro modo Play vai chamar ao abrir a janela
-        // separada (ver README "Nota sobre modo Play") - tambem pode ser
-        // chamado isoladamente pelo editor so para testar scripts sem UI
-        // de Play completa ainda existir.
+        // Liga o modo "rodando": cria o mundo fisico (PhysicsEngine::
+        // OnSceneStart) e carrega os scripts (ScriptEngine::LoadScript,
+        // que chama OnCreate()) de toda entidade com ScriptComponent que
+        // tenha um caminho de arquivo preenchido. Depois disso, OnUpdate()
+        // passa a chamar PhysicsEngine::Simulate() e
+        // ScriptEngine::UpdateScript() por frame. E o que o futuro modo
+        // Play vai chamar ao abrir a janela separada (ver README "Nota
+        // sobre modo Play") - tambem pode ser chamado isoladamente pelo
+        // editor so para testar scripts/fisica sem UI de Play completa
+        // ainda existir.
         void OnScriptsStart();
 
-        // Desliga o modo "rodando": chama ScriptEngine::UnloadScript (que
-        // chama OnDestroy()) para toda entidade com script carregado, e
-        // para de atualiza-los em OnUpdate(). Idempotente - chamar sem
+        // Desliga o modo "rodando": destroi o mundo fisico
+        // (PhysicsEngine::OnSceneStop) e chama ScriptEngine::UnloadScript
+        // (que chama OnDestroy()) para toda entidade com script carregado,
+        // e para de atualiza-los em OnUpdate(). Idempotente - chamar sem
         // estar rodando nao faz nada.
         void OnScriptsStop();
 

@@ -181,6 +181,19 @@ namespace Prism {
         // Interpretacao depende de Shape: Box usa Size como half-extents
         // (x,y,z); Sphere usa so Size.x como raio; Capsule usa Size.x como
         // raio e Size.y como altura (Size.z ignorado nesse caso).
+        //
+        // IMPORTANTE: Size e uma medida em UNIDADES ABSOLUTAS DE MUNDO,
+        // totalmente INDEPENDENTE do TransformComponent::Scale da mesma
+        // entidade e do tamanho do mesh visual (MeshRendererComponent) -
+        // ajustar o Scale (ex: esticar um mesh Plane para virar um chao
+        // grande) NAO redimensiona o collider junto. Isso e proposital:
+        // Box3D (PhysicsEngine::CreateBodyForEntity) usa Size diretamente,
+        // sem multiplicar pela Scale da entidade - entao o collider so
+        // fica do tamanho certo quando Size e ajustado manualmente na
+        // Properties panel para bater com o mesh visual. Esquecer disso e
+        // uma fonte comum de bug: o objeto PARECE do tamanho certo (o mesh
+        // escalado), mas a colisao de verdade continua no Size default
+        // (0.5 em cada eixo) ate ser ajustada a mao.
         glm::vec3 Size = { 0.5f, 0.5f, 0.5f };
 
         // Trigger = detecta sobreposicao mas nao gera resposta fisica

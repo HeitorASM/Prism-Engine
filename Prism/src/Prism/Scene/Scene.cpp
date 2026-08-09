@@ -1,6 +1,7 @@
 #include "Scene.h"
 #include "Entity.h"
 #include "../Scripting/ScriptEngine.h"
+#include "../Physics/PhysicsEngine.h"
 #include "../Project/Project.h"
 #include "../Core/Log.h"
 #include <algorithm>
@@ -31,6 +32,15 @@ namespace Prism {
         // nesta ordem.
         if (m_IsRunning && m_Registry.all_of<ScriptComponent>(handle))
             ScriptEngine::UnloadScript(entity);
+
+        // Mesma logica para o corpo fisico: destroi ANTES da entidade
+        // sumir do registry, senao PhysicsEngine::DestroyBodyForEntity
+        // nao teria mais como checar RigidBodyComponent/ColliderComponent
+        // (embora hoje ele nao precise disso para destruir - so consulta o
+        // proprio mapa EntityToBody - mantemos a ordem por consistencia
+        // com o padrao acima e para proteger contra mudancas futuras).
+        if (m_IsRunning && m_Registry.all_of<RigidBodyComponent, ColliderComponent>(handle))
+            PhysicsEngine::DestroyBodyForEntity(*this, entity);
 
         // Se a entidade tem um pai, tira ela da lista de Children dele
         // primeiro - senao o pai ficaria com um entt::entity morto na
@@ -117,13 +127,19 @@ namespace Prism {
     }
 
     void Scene::OnUpdate(float deltaTime) {
-        // Scripts so rodam durante o modo Play (m_IsRunning) - fora disso
-        // a Scene fica estatica, exibindo so o estado editado (mesmo
-        // comportamento de Unity/Unreal/Godot fora do botao Play). Fisica
-        // (Box3D, proximo item do roadmap) vai entrar aqui tambem quando
-        // integrada, seguindo a mesma regra de so simular enquanto roda.
+        // Scripts e fisica so rodam durante o modo Play (m_IsRunning) -
+        // fora disso a Scene fica estatica, exibindo so o estado editado
+        // (mesmo comportamento de Unity/Unreal/Godot fora do botao Play).
         if (!m_IsRunning)
             return;
+
+        // Fisica ANTES dos scripts, de proposito: assim um script que leia
+        // TransformComponent (via entity:GetTransform()) em OnUpdate() ve
+        // a posicao ja atualizada pela simulacao deste MESMO frame, nao a
+        // do frame anterior - importante por exemplo para um script que
+        // decide algo com base em "onde meu personagem esta depois da
+        // fisica mover ele".
+        PhysicsEngine::Simulate(*this, deltaTime);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view) {
@@ -139,6 +155,13 @@ namespace Prism {
         if (m_IsRunning)
             return; // idempotente - ja rodando, nao recarrega tudo de novo
         m_IsRunning = true;
+
+        // Fisica ANTES dos scripts: PhysicsEngine::OnSceneStart cria um
+        // corpo Box3D para toda entidade RigidBody+Collider ja existente -
+        // se um script OnCreate() precisar aplicar uma forca/impulso
+        // imediatamente (ver ScriptEngine::RegisterAPI, ApplyForce), o
+        // corpo fisico ja precisa existir nesse momento.
+        PhysicsEngine::OnSceneStart(*this);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view) {
@@ -168,6 +191,11 @@ namespace Prism {
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view)
             ScriptEngine::UnloadScript(Entity(entityHandle, this));
+
+        // Fisica DEPOIS dos scripts: OnDestroy() de um script ainda pode
+        // querer ler a posicao final do corpo fisico (ex: salvar onde o
+        // personagem parou) antes do mundo Box3D ser destruido.
+        PhysicsEngine::OnSceneStop(*this);
     }
 
 }

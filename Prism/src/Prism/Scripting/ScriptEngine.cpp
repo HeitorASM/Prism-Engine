@@ -2,6 +2,7 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include "../Scene/Components.h"
+#include "../Physics/PhysicsEngine.h"
 #include "../Core/Log.h"
 
 #include <fstream>
@@ -65,15 +66,13 @@ namespace Prism {
             "Scale", &TransformComponent::Scale
         );
 
-        // --- Entity ------------------------------------------------------
-        // API minima deliberada: so a propria Transform da entidade (ver
-        // comentario de escopo no topo do .h). GetTransform()/SetPosition
-        // sao a forma de um script se mover - "entity:GetTransform().
-        // Translation.x = entity:GetTransform().Translation.x + 1" seria
-        // verboso, entao SetPosition/Translate cobrem o caso comum
-        // (mover por um delta, comum em scripts de movimento por frame)
-        // sem obrigar o script a reconstruir um Vec3 inteiro para um
-        // ajuste pequeno.
+        // --- Fisica (Box3D via PhysicsEngine) -----------------------------
+        // Expostas como metodos de Entity, no mesmo padrao de Transform
+        // acima - o script nunca ve um b3BodyId ou qualquer tipo do Box3D
+        // diretamente, so o vocabulario da propria engine. Todas silenciosas
+        // se a entidade nao tiver um corpo fisico ativo (fora do modo Play,
+        // ou sem RigidBodyComponent+ColliderComponent - ver
+        // PhysicsEngine::ApplyForce etc, que ja tratam isso).
         lua.new_usertype<Entity>("Entity",
             "GetTransform", [](Entity& e) -> TransformComponent& { return e.GetComponent<TransformComponent>(); },
             "GetName", [](Entity& e) -> const std::string& { return e.GetComponent<TagComponent>().Tag; },
@@ -82,6 +81,18 @@ namespace Prism {
             },
             "Translate", [](Entity& e, float dx, float dy, float dz) {
                 e.GetComponent<TransformComponent>().Translation += glm::vec3(dx, dy, dz);
+            },
+            "ApplyForce", [](Entity& e, float x, float y, float z) {
+                PhysicsEngine::ApplyForce(*e.GetScene(), e, glm::vec3(x, y, z));
+            },
+            "ApplyImpulse", [](Entity& e, float x, float y, float z) {
+                PhysicsEngine::ApplyLinearImpulse(*e.GetScene(), e, glm::vec3(x, y, z));
+            },
+            "GetVelocity", [](Entity& e) -> glm::vec3 {
+                return PhysicsEngine::GetLinearVelocity(*e.GetScene(), e);
+            },
+            "SetVelocity", [](Entity& e, float x, float y, float z) {
+                PhysicsEngine::SetLinearVelocity(*e.GetScene(), e, glm::vec3(x, y, z));
             }
         );
 
@@ -101,10 +112,11 @@ namespace Prism {
             Log::AppLog(LogLevel::Error, "[Lua] ", message);
         };
 
-        // TODO(fisica): quando Box3D for integrado (proximo item do
-        // roadmap - ver README), expor aqui algo como
-        // entity:ApplyForce(x,y,z) / callbacks OnCollisionEnter, seguindo
-        // o mesmo padrao acima.
+        // TODO(colisao): expor callbacks OnCollisionEnter/OnCollisionExit
+        // chamados pelo PhysicsEngine::Simulate quando eventos de contato
+        // do Box3D ocorrem envolvendo esta entidade - adiado desta
+        // primeira integracao de fisica (ver TODO identico em
+        // PhysicsEngine::Simulate, no bloco de eventos de colisao).
         // TODO(input): expor uma tabela global `Input` (Input.IsKeyDown(...))
         // quando a engine tiver um sistema de Input por polling (ver nota
         // ja existente em EditorLayer::OnEvent sobre isso faltar).

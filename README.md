@@ -43,6 +43,7 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
                    Capsule/Cylinder/Plane), Renderer (API minima de desenho)
     Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
     Scripting/  -> ScriptEngine (VM Lua via sol2, ciclo de vida de scripts)
+    Physics/    -> PhysicsEngine (mundo Box3D, corpos, sincronizacao com Transform)
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
 
@@ -233,6 +234,113 @@ ancestrais (retorna so o `TransformComponent` LOCAL, nao
 ainda nao tem essa funcao exposta); sem suporte a scripts chamarem funcoes
 de OUTRAS entidades ainda (so a propria `entity` e visivel).
 
+## Nota sobre Fisica (Box3D) - estado atual
+
+**Duas funcoes NAO confirmadas contra a documentacao oficial** no momento
+em que esta integracao foi escrita: `b3CreateSphereShape`/
+`b3CreateCapsuleShape` (para `ColliderShape::Sphere`/`Capsule`) e
+`b3Body_SetLinearVelocity`. Foram implementadas seguindo o padrao
+consistente do resto da API C da Box3D, mas a doc publica so mostra
+o exemplo literal de `b3CreateHullShape`
+(usado para `ColliderShape::Box`, esse sim 100% confirmado). Se os nomes
+reais divergirem, o erro aparece como erro de COMPILACAO (funcao nao
+encontrada) - facil de localizar e corrigir em
+`build/_deps/box3d-src/include/box3d/*.h` apos o primeiro build. Ver
+comentarios `ATENCAO` em `PhysicsEngine.cpp` nesses dois pontos.
+
+`Prism::PhysicsEngine` (`Prism/src/Prism/Physics/PhysicsEngine.h/.cpp`)
+cuida de um mundo Box3D (`b3WorldId`) por Scene "rodando" - criado em
+`Scene::OnScriptsStart()` e destruido em `Scene::OnScriptsStop()`: fisica
+e scripting ligam/desligam JUNTOS (o mesmo botao Play da menu bar liga os
+dois - conceitualmente sao "a simulacao esta rodando ou nao").
+
+**Como usar**: adicione `ColliderComponent` (Box/Sphere/Capsule, ver
+Properties panel) E `RigidBodyComponent` (Static/Kinematic/Dynamic) a uma
+entidade - Fisica so cria um corpo Box3D para entidades com AMBOS os
+components. Aperte Play: entidades `Dynamic` caem sob gravidade e colidem
+com `Static`/`Kinematic`, sincronizado de volta para
+`TransformComponent.Translation/Rotation` a cada frame (ver
+`PhysicsEngine::Simulate`).
+
+**API exposta a scripts Lua** (ver `ScriptEngine::RegisterAPI`):
+`entity:ApplyForce(x,y,z)`, `entity:ApplyImpulse(x,y,z)`,
+`entity:GetVelocity()` (retorna um `Vec3`), `entity:SetVelocity(x,y,z)`.
+Todas silenciosas (nao fazem nada) se a entidade nao tiver um corpo fisico
+ativo no momento da chamada.
+
+**Timestep fixo**: `PhysicsEngine::Simulate` usa um acumulador para rodar
+`b3World_Step` em fatias fixas de 1/60s (recomendado pela doc oficial do
+Box3D para estabilidade), independente do deltaTime variavel que a engine
+recebe - protegido contra "espiral da morte" limitando a no maximo 5 steps
+por frame (descarta o resto do acumulador se ultrapassar isso, preferindo
+desacelerar a travar).
+
+**Limitacoes conhecidas, deixadas de proposito**:
+- **Collider::Size nao acompanha Scale automaticamente** (ver nota acima
+  sobre o bug ja corrigido) - nao ha um botao "ajustar collider ao
+  tamanho do mesh" ainda; o usuario precisa calcular/digitar o Size
+  manualmente na Properties panel toda vez que redimensiona um objeto via
+  Scale. Uma melhoria futura natural seria um botao que auto-preenche
+  Size a partir do bounding box do mesh vezes a Scale atual.
+- **Fisica + Parenting nao se combinam ainda**: o corpo Box3D e criado na
+  posicao de MUNDO da entidade (`Scene::GetWorldTransform`, ancestrais
+  inclusos), mas depois de criado e totalmente independente do parenting -
+  a sincronizacao de volta escreve a posicao de mundo direto no
+  `TransformComponent` LOCAL, o que da resultado ERRADO para uma entidade
+  fisica que tambem seja filha de outra entidade na Hierarchy. Correto
+  para o caso comum (entidade fisica sem pai). Corrigir isso exigiria
+  multiplicar pela inversa da transform do pai a cada sincronizacao -
+  adiado para manter o escopo desta primeira integracao controlado.
+- **Sem callbacks de colisao em Lua ainda**: `PhysicsEngine::Simulate` ja
+  le `b3World_GetBodyEvents` (posicao/rotacao) mas ainda NAO le
+  `b3World_GetContactEvents` (begin/end touch) nem os traduz para
+  `OnCollisionEnter`/`OnCollisionExit` no lado do script - o tipo
+  `CollisionEvent` e o TODO ja estao la (ver `PhysicsEngine.h/.cpp`), so
+  falta ligar.
+- Sem UI no editor para visualizar/depurar o mundo fisico rodando
+  (wireframes de collider, contagem de corpos ativos etc) alem do que ja
+  existia antes (gizmo estatico do collider na viewport, ver parenting).
+- Sem joints (revolute/distance/etc) expostos - Box3D suporta, mas nao ha
+  nenhum ColliderComponent-equivalente para configurar um joint no editor
+  ainda.
+- `RigidBodyComponent::Mass` ainda nao e usado (a massa vem da densidade
+  padrao de 1.0 aplicada ao shape, nao do campo `Mass` da propria
+  entidade) - `b3Body_SetMassData`/`ApplyMassFromShapes` existem na API
+  para isso, mas conectar o campo `Mass` da UI a eles ficou de fora do
+  escopo desta etapa.
+
+## Nota sobre Play dentro da viewport do editor (estado atual)
+
+Enquanto a "Janela de Play separada" (item do roadmap abaixo) nao existe,
+o botao Play roda scripts/fisica DENTRO da propria Scene de edicao - ela
+e a mesma instancia, nao uma copia. Duas consequencias tratadas:
+
+- **Salvar antes de rodar**: apertar Play abre um popup perguntando se
+  quer salvar antes (ou rodar sem salvar, ou cancelar) - perguntamos
+  SEMPRE, nao so quando ha mudancas, porque a engine ainda nao rastreia um
+  dirty flag preciso (ver TODO em `EditorLayer::NewMap()`). E um pequeno
+  atrito extra ate um rastreamento de mudancas de verdade existir, mas e
+  mais seguro que perder trabalho do usuario sem querer.
+- **Restaurar a cena ao Parar**: independente da escolha acima,
+  `EditorLayer::StartPlaySnapshotAndRun()` serializa a Scene inteira para
+  um arquivo TEMPORARIO (`std::filesystem::temp_directory_path()`, fora da
+  pasta do projeto - nunca aparece no Content Browser) ANTES de chamar
+  `Scene::OnScriptsStart()`. Ao apertar Parar,
+  `EditorLayer::OnStopButtonClicked()` para scripts/fisica e desserializa
+  esse snapshot de volta, restaurando exatamente a posicao/rotacao que
+  cada entidade tinha antes do Play - reaproveitando 100% o
+  `SceneSerializer` ja existente e testado (mesmo formato `.prismmap`), em
+  vez de inventar um sistema de snapshot separado. Trocar de mapa (Novo
+  Mapa / abrir outro `.prismmap`) enquanto o Play esta ativo para a
+  simulacao e descarta o snapshot orfao sem tentar restaurar nele (a Scene
+  antiga esta sendo substituida de qualquer forma) - ver
+  `EditorLayer::DiscardPlaySnapshot()`.
+
+Isto e uma solucao correta e testada para o meio-tempo, nao uma
+alternativa definitiva ao item "Janela de Play separada" abaixo - uma
+Scene PROPRIA, clonada, so para o Play (nunca a mesma instancia da Scene
+de edicao) resolve isso de forma mais robusta e permanente.
+
 ## Próximos passos sugeridos (nesta ordem)
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
@@ -273,8 +381,18 @@ de OUTRAS entidades ainda (so a propria `entity` e visivel).
 12. ~~Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.~~ ✅ feito
     (`Prism::ScriptEngine`, botao Play/Parar na menu bar, API minima de
     Transform + log - ver nota "Scripting Lua" acima).
-13. Integrar Box3D, corpos rígidos básicos.
-14. BSP/CSG (brushes como um tipo de Entity no editor).
+13. ~~Integrar Box3D, corpos rígidos básicos.~~ ✅ feito (fixado em v0.1.0
+    alpha - `Prism::PhysicsEngine`, corpos Dynamic/Static/Kinematic com
+    Box/Sphere/Capsule, ApplyForce/Impulse expostos ao Lua - ver nota
+    "Fisica (Box3D)" acima).
+14. Janela de Play separada (própria janela/viewport, câmera Primary do
+    jogo, distinta da viewport de edição - hoje o botão Play só liga
+    scripts/física *dentro* da viewport do editor).
+15. Sistema de iluminação de verdade (hoje só um ponto de luz fixo,
+    hardcoded - sem suporte a spotlight/omnilight configuráveis por
+    cena/jogo, como o guia do protótipo pede).
+16. IDE/editor de código embutido (scripting sem sair do editor).
+17. BSP/CSG (brushes como um tipo de Entity no editor).
 
 ## Nota sobre `CameraComponent` funcional (estado atual)
 

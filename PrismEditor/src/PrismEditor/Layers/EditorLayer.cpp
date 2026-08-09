@@ -16,6 +16,7 @@ namespace PrismEditor {
     // em RenderDockspace() (que precisa saber se ja esta aberto, para nao
     // tentar abrir de novo por cima de si mesmo).
     static constexpr const char* kSaveAsPopupId = "Salvar Mapa Como";
+    static constexpr const char* kPlayConfirmPopupId = "Rodar Cena";
 
     EditorLayer::EditorLayer() : Layer("EditorLayer") {}
 
@@ -37,13 +38,18 @@ namespace PrismEditor {
     }
 
     bool EditorLayer::LoadScene(const std::filesystem::path& mapPath) {
-        // Se a cena atual estiver rodando (Play), desliga os scripts dela
-        // ANTES de trocar - senao ScriptEngine ficaria com instancias
-        // "orfas" carregadas para uma Scene que nao existe mais (a chave
-        // usa o ponteiro da Scene antiga, que nunca mais vai bater com
-        // nada depois de trocar m_ActiveScene abaixo).
-        if (m_ActiveScene && m_ActiveScene->IsRunning())
+        // Se a cena atual estiver rodando (Play), desliga os scripts/fisica
+        // dela ANTES de trocar - senao ScriptEngine/PhysicsEngine ficariam
+        // com instancias "orfas" apontando para uma Scene que nao existe
+        // mais (a chave usa o ponteiro da Scene antiga, que nunca mais vai
+        // bater com nada depois de trocar m_ActiveScene abaixo). NAO
+        // restauramos o snapshot aqui (ver OnStopButtonClicked) porque a
+        // Scene antiga esta prestes a ser descartada de qualquer forma -
+        // so paramos a simulacao e limpamos o arquivo temporario orfao.
+        if (m_ActiveScene && m_ActiveScene->IsRunning()) {
             m_ActiveScene->OnScriptsStop();
+            DiscardPlaySnapshot();
+        }
 
         Prism::SceneSerializer serializer(Prism::Scene::Create());
         if (!serializer.Deserialize(mapPath)) {
@@ -63,8 +69,10 @@ namespace PrismEditor {
         // (dirty flag), perguntar aqui antes de descartar a cena atual -
         // por ora, Novo Mapa descarta sem aviso, igual acontecia ao
         // carregar outro mapa pelo Content Browser (ver nota no README).
-        if (m_ActiveScene && m_ActiveScene->IsRunning())
+        if (m_ActiveScene && m_ActiveScene->IsRunning()) {
             m_ActiveScene->OnScriptsStop(); // ver comentario identico em LoadScene()
+            DiscardPlaySnapshot();
+        }
 
         m_ActiveScene = Prism::Scene::Create("Nova Cena");
         m_CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
@@ -229,6 +237,123 @@ namespace PrismEditor {
 
             ImGui::EndPopup();
         }
+    }
+
+    void EditorLayer::RenderPlayConfirmPopup() {
+        if (m_ShowPlayConfirmPopup) {
+            ImGui::OpenPopup(kPlayConfirmPopupId);
+            m_ShowPlayConfirmPopup = false;
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kPlayConfirmPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped(
+                "Scripts e fisica vao alterar a posicao/rotacao das entidades "
+                "diretamente nesta cena (o modo Play ainda roda dentro da propria "
+                "viewport do editor - ver README, item 'Janela de Play'). "
+                "Salvar antes de rodar?");
+            ImGui::Dummy(ImVec2(0, 8));
+
+            bool wantsSave = m_CurrentMapPath.empty()
+                ? ImGui::Button("Salvar Como e rodar", ImVec2(180, 0))
+                : ImGui::Button("Salvar e rodar", ImVec2(140, 0));
+            ImGui::SameLine();
+            bool wantsRunWithoutSaving = ImGui::Button("Rodar sem salvar", ImVec2(160, 0));
+            ImGui::SameLine();
+            bool cancelled = ImGui::Button("Cancelar", ImVec2(100, 0));
+
+            if (wantsSave) {
+                if (m_CurrentMapPath.empty()) {
+                    // Sem arquivo associado ainda - abre o fluxo normal de
+                    // Salvar Como; o Play em si NAO acontece automaticamente
+                    // apos salvar (o usuario aperta Play de novo) - mais
+                    // simples e previsivel do que encadear os dois popups.
+                    ImGui::CloseCurrentPopup();
+                    SaveActiveSceneAs();
+                } else {
+                    SaveActiveScene();
+                    ImGui::CloseCurrentPopup();
+                    StartPlaySnapshotAndRun();
+                }
+            } else if (wantsRunWithoutSaving) {
+                ImGui::CloseCurrentPopup();
+                StartPlaySnapshotAndRun();
+            } else if (cancelled) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void EditorLayer::OnPlayButtonClicked() {
+        m_ShowPlayConfirmPopup = true; // RenderPlayConfirmPopup() abre o popup no proximo frame (ver comentario em OnAttach/RenderDockspace)
+    }
+
+    // Tira o snapshot em disco (arquivo temporario, FORA da pasta do
+    // projeto - nunca aparece no Content Browser) e so entao chama
+    // Scene::OnScriptsStart(). Extraido de OnPlayButtonClicked/
+    // RenderPlayConfirmPopup como uma funcao propria porque os DOIS
+    // caminhos do popup ("Salvar e rodar" / "Rodar sem salvar") precisam
+    // fazer exatamente isso depois de decidir sobre salvar ou nao.
+    void EditorLayer::StartPlaySnapshotAndRun() {
+        std::error_code ec;
+        std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
+        if (ec) {
+            PRISM_ERROR("Nao foi possivel acessar a pasta temporaria do sistema - Play vai rodar SEM conseguir restaurar o estado original ao Parar: ", ec.message());
+            m_PlaySnapshotPath.clear();
+            m_ActiveScene->OnScriptsStart();
+            return;
+        }
+
+        // Nome unico o bastante (endereco do Scene* + "prism_play_snapshot")
+        // para nao colidir se, por algum motivo, mais de uma instancia do
+        // editor estiver rodando ao mesmo tempo na mesma maquina.
+        m_PlaySnapshotPath = tempDir / ("prism_play_snapshot_" + std::to_string(reinterpret_cast<uintptr_t>(m_ActiveScene.get())) + ".prismmap");
+
+        Prism::SceneSerializer serializer(m_ActiveScene);
+        if (!serializer.Serialize(m_PlaySnapshotPath)) {
+            PRISM_ERROR("Falha ao tirar snapshot da cena antes de rodar - Play vai rodar SEM conseguir restaurar o estado original ao Parar: ", m_PlaySnapshotPath.string());
+            m_PlaySnapshotPath.clear();
+        }
+
+        m_ActiveScene->OnScriptsStart();
+    }
+
+    void EditorLayer::OnStopButtonClicked() {
+        m_ActiveScene->OnScriptsStop();
+
+        if (m_PlaySnapshotPath.empty()) {
+            // Snapshot nao existe (falhou ao tirar, ou Play foi iniciado
+            // antes desta funcionalidade existir num build antigo) - nao
+            // ha como restaurar, a cena fica como scripts/fisica deixaram.
+            return;
+        }
+
+        Prism::SceneSerializer restoreSerializer(Prism::Scene::Create());
+        if (!restoreSerializer.Deserialize(m_PlaySnapshotPath)) {
+            PRISM_ERROR("Falha ao restaurar o snapshot da cena apos parar - a cena permanece no estado alterado pelo Play: ", m_PlaySnapshotPath.string());
+        } else {
+            // Deserialize() sempre RECONSTROI a Scene do zero (nao edita a
+            // instancia passada no construtor - ver comentario em
+            // SceneSerializer::GetScene()) - por isso precisamos substituir
+            // m_ActiveScene pelo resultado, mesmo padrao ja usado em
+            // LoadScene().
+            m_ActiveScene = restoreSerializer.GetScene();
+            m_SelectedEntity = {}; // handles antigos de entt::entity nao sao validos na Scene reconstruida - ver LoadScene()
+        }
+
+        std::error_code ec;
+        std::filesystem::remove(m_PlaySnapshotPath, ec); // limpeza - nao critico se falhar (arquivo temporario, SO limpa eventualmente)
+        m_PlaySnapshotPath.clear();
+    }
+
+    void EditorLayer::DiscardPlaySnapshot() {
+        if (m_PlaySnapshotPath.empty())
+            return;
+        std::error_code ec;
+        std::filesystem::remove(m_PlaySnapshotPath, ec); // nao critico se falhar - ver comentario em OnStopButtonClicked
+        m_PlaySnapshotPath.clear();
     }
 
     void EditorLayer::OnDetach() {}
@@ -473,17 +598,34 @@ namespace PrismEditor {
 
         auto& collider = m_SelectedEntity.GetComponent<Prism::ColliderComponent>();
 
-        // Gizmo do collider usa a matriz de MUNDO completa da entidade
+        // Gizmo do collider usa a posicao/rotacao de MUNDO da entidade
         // (ancestrais inclusos, via GetWorldTransform - ver parenting em
-        // Scene.h) - mesmo approach usado por RenderCameraGizmos acima. O
-        // TAMANHO "base" da forma de colisao vem de collider.Size; se a
-        // entidade (ou algum ancestral) tiver Scale != 1, o gizmo escala
-        // junto (reflete o que a fisica de verdade faria depois, quando
-        // Box3D estiver integrado - Box3D tambem aplica a escala do corpo
-        // aos shapes).
-        glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(m_SelectedEntity);
+        // Scene.h), mas DELIBERADAMENTE SEM a Scale de mundo - Collider::Size
+        // (half-extents/raio) e uma medida em unidades ABSOLUTAS que o
+        // usuario ajusta manualmente na Properties panel, independente do
+        // tamanho do mesh visual (ver comentario em ColliderComponent,
+        // Components.h) - e assim que PhysicsEngine::CreateBodyForEntity
+        // tambem trata (usa Size diretamente, nunca multiplica pela Scale
+        // da entidade). Usar GetWorldTransform() completo aqui (incluindo
+        // Scale) aplicava a escala DUAS vezes de fato (uma no proprio
+        // Size, que o usuario ja pensa em unidades finais, e outra via
+        // matriz) sempre que a entidade tinha Scale != {1,1,1} - por
+        // exemplo, um "chao" com mesh Plane escalado para {10,1,10}
+        // deixava o gizmo do collider gigantesco e desalinhado do que a
+        // fisica de fato usava (que ignorava a Scale). Corrigido extraindo
+        // so posicao+rotacao da matriz de mundo, sem escala.
+        glm::mat4 worldMatrixWithScale = m_ActiveScene->GetWorldTransform(m_SelectedEntity);
+        glm::vec3 worldPosition = glm::vec3(worldMatrixWithScale[3]);
+        glm::vec3 col0 = glm::vec3(worldMatrixWithScale[0]);
+        glm::vec3 col1 = glm::vec3(worldMatrixWithScale[1]);
+        glm::vec3 col2 = glm::vec3(worldMatrixWithScale[2]);
+        glm::mat3 worldRotationOnly(
+            glm::length(col0) > 0.00001f ? col0 / glm::length(col0) : glm::vec3(1, 0, 0),
+            glm::length(col1) > 0.00001f ? col1 / glm::length(col1) : glm::vec3(0, 1, 0),
+            glm::length(col2) > 0.00001f ? col2 / glm::length(col2) : glm::vec3(0, 0, 1)
+        );
         auto toWorld = [&](const glm::vec3& local) {
-            return glm::vec3(worldTransform * glm::vec4(local, 1.0f));
+            return worldPosition + worldRotationOnly * local;
         };
 
         // Amarelo: convencao comum de "gizmo de colisao selecionado" (Unity
@@ -685,6 +827,7 @@ namespace PrismEditor {
 
         RenderMenuBar();
         RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
+        RenderPlayConfirmPopup(); // idem, para o popup de "Salvar antes de rodar?"
 
         ImGui::End();
 
@@ -818,12 +961,12 @@ namespace PrismEditor {
             if (isRunning) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
                 if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
-                    m_ActiveScene->OnScriptsStop();
+                    OnStopButtonClicked();
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
                 if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
-                    m_ActiveScene->OnScriptsStart();
+                    OnPlayButtonClicked();
                 ImGui::PopStyleColor();
             }
 
