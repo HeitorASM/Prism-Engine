@@ -201,7 +201,7 @@ FetchContent_MakeAvailable(sol2)
 #
 # ATENCAO - Box3D esta em v0.1.0, alpha, lancado em 30/jun/2026 (a UNICA
 # release existente no repositorio no momento em que esta integracao foi
-# escrita 09/08/2026). O autor pede explicitamente para NAO enviar pull requests
+# escrita). O autor pede explicitamente para NAO enviar pull requests
 # ainda (projeto em estabilizacao ativa) - ver github.com/erincatto/box3d.
 # Isso significa que funcoes/structs podem ser renomeadas ou ter a
 # assinatura mudada em versoes futuras SEM aviso de depreciacao (comum

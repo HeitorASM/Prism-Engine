@@ -2,6 +2,9 @@
 #include "Renderer.h"
 #include "PrimitiveMeshFactory.h"
 #include "../Core/Log.h"
+#include "../Scene/Scene.h"
+#include "../Scene/Entity.h"
+#include <glm/gtc/type_ptr.hpp>
 
 namespace Prism {
 
@@ -189,7 +192,7 @@ namespace Prism {
         else
             s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
 
-        mesh->Bind();
+        mesh->BindForCurrentContext();
         glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
         glBindVertexArray(0);
 
@@ -205,6 +208,15 @@ namespace Prism {
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
         if (!s_LineShader || pointCount == 0) return;
 
+        // ATENCAO: s_LineVAO e criado uma unica vez em Init() (contexto do
+        // editor) e, como qualquer VAO, NAO e valido em outro contexto
+        // OpenGL mesmo com share list (ver comentario grande em Mesh.h/
+        // Mesh::BindForCurrentContext - mesmo problema que DrawMesh() tinha
+        // e foi corrigido para meshes de entidade). DrawLines() so e
+        // chamado hoje pelo EditorLayer (gizmos de selecao/camera preview),
+        // nunca pela PlayWindow - se um dia gizmos de debug forem
+        // desenhados tambem dentro da PlayWindow, esta funcao vai precisar
+        // do mesmo tratamento de "VAO por contexto" que Mesh:: ja tem.
         glBindVertexArray(s_LineVAO);
         glBindBuffer(GL_ARRAY_BUFFER, s_LineVBO);
         glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(pointCount * 3 * sizeof(float)), points, GL_DYNAMIC_DRAW);
@@ -217,6 +229,21 @@ namespace Prism {
 
         glBindVertexArray(0);
         s_LineShader->Unbind();
+    }
+
+    void Renderer::DrawScene(Scene& scene, const float* viewProjection, const float* cameraWorldPos) {
+        SetCameraPosition(cameraWorldPos);
+
+        // Mesmo loop que EditorLayer::RenderSceneEntities fazia antes desta
+        // funcao existir (ver comentario em Renderer.h) - toda entidade com
+        // TransformComponent + MeshRendererComponent, usando a transform de
+        // MUNDO (Scene::GetWorldTransform, ancestrais/parenting inclusos).
+        auto view = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+        for (auto entityHandle : view) {
+            auto& meshRenderer = view.get<MeshRendererComponent>(entityHandle);
+            glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
+            DrawMesh(meshRenderer.Mesh, viewProjection, glm::value_ptr(model), &meshRenderer.Color.x);
+        }
     }
 
 }

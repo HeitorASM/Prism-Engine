@@ -31,6 +31,7 @@
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
+#include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
 
@@ -54,36 +55,21 @@ namespace PrismEditor {
         // chamar a si mesma para cada nivel da hierarquia.
         void RenderHierarchyNode(Prism::Entity entity);
 
-        // Chamado pelo botao "Play" da menu bar - NUNCA chama
-        // Scene::OnScriptsStart() diretamente (ver .cpp). Antes de rodar,
-        // oferece salvar a cena (perguntar sempre, ja que a engine ainda
-        // nao rastreia um dirty flag preciso - ver TODO em NewMap()) e
-        // sempre tira um snapshot em disco (arquivo temporario) do estado
-        // ATUAL da cena, para OnStopButtonClicked() poder restaurar
-        // exatamente como estava - necessario porque scripts/fisica movem
-        // TransformComponent de verdade dentro da propria Scene ativa (ja
-        // que ainda nao existe uma janela de Play SEPARADA - ver item do
-        // roadmap "Janela de Play").
+        // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
+        // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
+        // Scene ativa. A Scene de edicao nunca e tocada por scripts/fisica
+        // - diferente da abordagem antiga (Play dentro da propria viewport,
+        // com snapshot/restore e popup de "salvar antes de rodar?"), que
+        // foi removida quando esta janela separada passou a existir (ver
+        // README "Nota sobre Play").
         void OnPlayButtonClicked();
 
-        // Faz o trabalho de fato de OnPlayButtonClicked (tirar snapshot +
-        // Scene::OnScriptsStart()) - separado porque RenderPlayConfirmPopup
-        // chama isto depois que o usuario decide "Salvar e rodar" ou
-        // "Rodar sem salvar" no popup, nao direto do clique do botao Play.
-        void StartPlaySnapshotAndRun();
-
-        // Chamado pelo botao "Parar" - para scripts/fisica (Scene::
-        // OnScriptsStop()) e restaura a Scene para o snapshot tirado por
-        // OnPlayButtonClicked(), desfazendo qualquer posicao/rotacao que
-        // scripts ou fisica tenham alterado durante o Play.
+        // Chamado pelo botao "Parar" (so aparece quando a PlayWindow esta
+        // aberta) - fecha a PlayWindow (para scripts/fisica da copia e
+        // destroi a janela). A Scene de edicao, que nunca foi tocada, nao
+        // precisa de nenhuma restauracao.
         void OnStopButtonClicked();
 
-        // So apaga o arquivo temporario de m_PlaySnapshotPath (sem tentar
-        // restaurar nada) - usado quando a Scene que estava rodando vai
-        // ser DESCARTADA de qualquer forma (trocar de mapa/Novo Mapa
-        // enquanto o Play estava ativo - ver LoadScene()/NewMap()), entao
-        // restaurar o snapshot nela seria trabalho inutil.
-        void DiscardPlaySnapshot();
         void RenderPropertiesPanel();
         // ^ RenderPropertiesPanel() desenha uma secao por component que a
         //   entidade selecionada ja tem (com um "X" para remover, exceto
@@ -148,11 +134,6 @@ namespace PrismEditor {
         // chamado a cada frame de RenderDockspace() (ImGui::OpenPopup
         // exige isso mesmo quando o popup esta fechado, ver EditorLayer.cpp).
         void RenderSaveAsPopup();
-        // Popup modal "Salvar antes de rodar?" - ver OnPlayButtonClicked
-        // e m_ShowPlayConfirmPopup. Mesmo padrao de RenderSaveAsPopup
-        // (chamado toda frame por RenderDockspace, so abre visualmente
-        // quando o bool correspondente esta true).
-        void RenderPlayConfirmPopup();
 
         // Tenta carregar Project::GetConfig().StartMap; se nao existir
         // ainda (projeto novo, primeira vez abrindo o editor), cria uma
@@ -177,14 +158,6 @@ namespace PrismEditor {
         // framebuffer (ver EditorLayer.cpp) - RenderCameraPreviewPanel()
         // mostra uma mensagem nesse caso em vez da imagem.
         void RenderCameraPreview(float deltaTime);
-
-        // Desenha as entidades com Transform+MeshRenderer da Scene ativa no
-        // framebuffer atualmente bindado, usando a view/projection dadas -
-        // extraido de RenderScene()/RenderCameraPreview() para as duas
-        // compartilharem a mesma logica de desenho sem duplicar o loop.
-        // NAO faz Bind/Unbind/Clear do framebuffer - isso e responsabilidade
-        // de quem chama.
-        void RenderSceneEntities(const glm::mat4& viewProjection);
 
         // Desenha um wireframe de frustum (Renderer::DrawLines) para toda
         // entidade com CameraComponent na cena - a Primary usa uma cor
@@ -251,21 +224,12 @@ namespace PrismEditor {
         bool m_ShowSaveAsPopup = false;
         char m_SaveAsNameBuffer[128] = "";
 
-        // Estado do popup modal "Salvar antes de rodar?" (ver
-        // RenderPlayConfirmPopup / OnPlayButtonClicked). Perguntamos
-        // SEMPRE ao apertar Play (nao so quando ha mudancas, ja que a
-        // engine ainda nao rastreia um dirty flag preciso - ver TODO em
-        // NewMap()) - melhor perguntar de mais do que perder trabalho do
-        // usuario sem querer.
-        bool m_ShowPlayConfirmPopup = false;
-
-        // Caminho do snapshot temporario tirado por OnPlayButtonClicked()
-        // (fora da pasta do projeto - fica em std::filesystem::temp_directory_path())
-        // - usado por OnStopButtonClicked() para restaurar a Scene ao
-        // estado de ANTES do Play, desfazendo qualquer posicao/rotacao que
-        // scripts/fisica tenham alterado durante a simulacao. Vazio quando
-        // nao ha um Play em andamento com snapshot pendente.
-        std::filesystem::path m_PlaySnapshotPath;
+        // Janela de Play (janela separada do SO, ver Play/PlayWindow.h) -
+        // dona de uma Scene CLONADA, nunca a mesma instancia de
+        // m_ActiveScene. OnPlayButtonClicked()/OnStopButtonClicked() abrem/
+        // fecham; OnUpdate() e chamado uma vez por frame (ver
+        // EditorLayer::OnUpdate) enquanto m_PlayWindow.IsOpen().
+        PrismEditor::PlayWindow m_PlayWindow;
 
         // Entidade atualmente selecionada na Hierarchy panel. Invalida
         // (Entity{}) quando nada esta selecionado.

@@ -69,6 +69,19 @@ namespace Prism {
         // "de jogo" desenhada por DrawMesh. pointCount deve ser par.
         static void DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color);
 
+        // Desenha TODA entidade de 'scene' que tenha TransformComponent +
+        // MeshRendererComponent, usando a mesma matriz view*projection para
+        // todas (nao ha culling/batching ainda - ver comentario no topo do
+        // arquivo). Extraido de EditorLayer::RenderSceneEntities para
+        // dentro do Renderer (fora do editor) porque tanto a viewport do
+        // editor quanto a futura Play Window (janela separada do SO
+        // rodando o jogo de verdade - ver README) precisam do MESMO loop
+        // de desenho, sem duplicar a logica em dois lugares. Chama
+        // SetCameraPosition(cameraWorldPos) internamente antes de
+        // qualquer DrawMesh() (ver comentario em SetCameraPosition acima)
+        // - o chamador nao precisa fazer isso separadamente.
+        static void DrawScene(class Scene& scene, const float* viewProjection, const float* cameraWorldPos);
+
     private:
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;

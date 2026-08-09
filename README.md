@@ -236,12 +236,62 @@ de OUTRAS entidades ainda (so a propria `entity` e visivel).
 
 ## Nota sobre Fisica (Box3D) - estado atual
 
+**Correcao de bug "objetos se atravessam sem colidir" + gizmo gigantesco**
+(investigado com logs de diagnostico temporarios - ver historico de commits
+se precisar do processo completo): a fisica em si estava correta desde o
+inicio - o problema real era `ColliderComponent::Size` ser uma medida em
+UNIDADES ABSOLUTAS DE MUNDO, independente do `TransformComponent::Scale`
+da entidade (ver comentario detalhado em `ColliderComponent::Size`,
+`Components.h`). Se voce escala um mesh (ex: um Plane esticado para virar
+um chao grande) sem tambem ajustar manualmente o `Size` do Collider na
+Properties panel, o collider real usado pela fisica continua no default
+(0.5 em cada eixo) - o objeto PARECE do tamanho certo visualmente, mas a
+colisao de verdade e minuscula (ou grande demais) perto do mesh. Isso
+sozinho ja explica "cai, quica de leve ao tocar uma esquina do collider
+errado, depois atravessa".
+
+Havia tambem um bug real separado, no GIZMO do collider (nao na fisica):
+`EditorLayer::RenderSelectedColliderGizmo` desenhava o wireframe aplicando
+a matriz de mundo COMPLETA da entidade (`Scene::GetWorldTransform`,
+incluindo Scale) a pontos que ja sao calculados em unidades absolutas a
+partir de `Collider::Size` - isso aplicava a escala da entidade DUAS
+vezes sempre que `Scale != {1,1,1}`, fazendo o wireframe ficar gigantesco
+e desalinhado do tamanho real usado pela fisica (que corretamente ignora
+Scale). Corrigido extraindo so posicao+rotacao da matriz de mundo (sem
+escala) antes de posicionar o gizmo - agora o wireframe reflete fielmente
+o volume que `PhysicsEngine::CreateBodyForEntity` de fato cria no Box3D.
+
+**Correcao de crash aplicada apos a primeira integracao** (se voce ja
+tinha testado antes, este fix resolve um `__debugbreak()`/assert do
+proprio Box3D ao apertar Play): `PhysicsEngine::CreateBodyForEntity`
+extraia a rotacao inicial do corpo com `glm::quat_cast(worldMatrix)`
+DIRETO da matriz de mundo, que ainda tinha a ESCALA da entidade embutida
+nas colunas (`Translation * Rotation * Scale`, ver
+`TransformComponent::GetTransform()`) - a menos que `Scale` fosse
+exatamente `{1,1,1}`, isso produzia um quaternion nao normalizado/
+distorcido, que o Box3D valida internamente e rejeita com um assert (o
+crash reportado, `Core.c`: "instrucao de ponto de interrupcao"). Corrigido
+normalizando as 3 colunas de rotacao da matriz (removendo a escala) ANTES
+de extrair o quaternion, em vez de normalizar o quaternion depois (que
+corrige a magnitude mas nao o eixo de rotacao distorcido por uma escala
+nao-uniforme). Ver comentario `ATENCAO - bug corrigido` em
+`PhysicsEngine::CreateBodyForEntity`.
+
+**ATENCAO - Box3D esta em v0.1.0, alpha** (unica release existente,
+30/jun/2026 - ver github.com/erincatto/box3d/releases). O autor
+(erincatto, tambem autor do consagrado Box2D) pede para nao enviar pull
+requests ainda; a API pode ganhar mudancas incompativeis em versoes
+futuras sem aviso de depreciacao, como e comum em libs pre-1.0. Decisao
+consciente de usar mesmo assim - ver `vendor/CMakeLists.txt` para o
+raciocinio completo. `GIT_TAG` fixado em `v0.1.0` exato (nao `main`) de
+proposito - atualizar e uma escolha manual, nunca automatica.
+
 **Duas funcoes NAO confirmadas contra a documentacao oficial** no momento
 em que esta integracao foi escrita: `b3CreateSphereShape`/
 `b3CreateCapsuleShape` (para `ColliderShape::Sphere`/`Capsule`) e
 `b3Body_SetLinearVelocity`. Foram implementadas seguindo o padrao
-consistente do resto da API C da Box3D, mas a doc publica so mostra
-o exemplo literal de `b3CreateHullShape`
+consistente do resto da API C do Box3D (e o padrao identico do Box2D
+3.x), mas a doc publica so mostra o exemplo literal de `b3CreateHullShape`
 (usado para `ColliderShape::Box`, esse sim 100% confirmado). Se os nomes
 reais divergirem, o erro aparece como erro de COMPILACAO (funcao nao
 encontrada) - facil de localizar e corrigir em
@@ -309,37 +359,65 @@ desacelerar a travar).
   para isso, mas conectar o campo `Mass` da UI a eles ficou de fora do
   escopo desta etapa.
 
-## Nota sobre Play dentro da viewport do editor (estado atual)
+## Nota sobre a Janela de Play (estado atual)
 
-Enquanto a "Janela de Play separada" (item do roadmap abaixo) nao existe,
-o botao Play roda scripts/fisica DENTRO da propria Scene de edicao - ela
-e a mesma instancia, nao uma copia. Duas consequencias tratadas:
+O botao Play abre uma **janela separada do sistema operacional** (nao um
+painel dockable dentro do editor - `PrismEditor::PlayWindow`, ver
+`PrismEditor/src/PrismEditor/Play/PlayWindow.h/.cpp`), no mesmo estilo de
+Godot/Unity/Source. Isto substitui a abordagem anterior (Play dentro da
+propria viewport do editor, com popup de "salvar antes de rodar?" e
+snapshot/restore via arquivo temporario) - a Scene de edicao (`m_ActiveScene`)
+**nunca** e tocada por scripts/fisica agora, entao nao ha mais nada para
+restaurar nem por que perguntar sobre salvar antes de rodar.
 
-- **Salvar antes de rodar**: apertar Play abre um popup perguntando se
-  quer salvar antes (ou rodar sem salvar, ou cancelar) - perguntamos
-  SEMPRE, nao so quando ha mudancas, porque a engine ainda nao rastreia um
-  dirty flag preciso (ver TODO em `EditorLayer::NewMap()`). E um pequeno
-  atrito extra ate um rastreamento de mudancas de verdade existir, mas e
-  mais seguro que perder trabalho do usuario sem querer.
-- **Restaurar a cena ao Parar**: independente da escolha acima,
-  `EditorLayer::StartPlaySnapshotAndRun()` serializa a Scene inteira para
-  um arquivo TEMPORARIO (`std::filesystem::temp_directory_path()`, fora da
-  pasta do projeto - nunca aparece no Content Browser) ANTES de chamar
-  `Scene::OnScriptsStart()`. Ao apertar Parar,
-  `EditorLayer::OnStopButtonClicked()` para scripts/fisica e desserializa
-  esse snapshot de volta, restaurando exatamente a posicao/rotacao que
-  cada entidade tinha antes do Play - reaproveitando 100% o
-  `SceneSerializer` ja existente e testado (mesmo formato `.prismmap`), em
-  vez de inventar um sistema de snapshot separado. Trocar de mapa (Novo
-  Mapa / abrir outro `.prismmap`) enquanto o Play esta ativo para a
-  simulacao e descarta o snapshot orfao sem tentar restaurar nele (a Scene
-  antiga esta sendo substituida de qualquer forma) - ver
-  `EditorLayer::DiscardPlaySnapshot()`.
+**Como funciona**: apertar Play clona `m_ActiveScene` (serializa para um
+arquivo `.prismmap` temporario e desserializa de volta numa `Scene` nova -
+reaproveitando o `SceneSerializer` ja existente, mesmo mecanismo que o
+snapshot antigo usava, agora para "clonar" em vez de "salvar e restaurar")
+e abre a janela do SO rodando essa copia com `Scene::OnScriptsStart()` ja
+chamado. Apertar Parar (ou fechar a janela pelo X, ou apertar Esc dentro
+dela) chama `Scene::OnScriptsStop()` na copia e destroi a janela - a copia
+inteira e descartada, a Scene de edicao nunca foi tocada.
 
-Isto e uma solucao correta e testada para o meio-tempo, nao uma
-alternativa definitiva ao item "Janela de Play separada" abaixo - uma
-Scene PROPRIA, clonada, so para o Play (nunca a mesma instancia da Scene
-de edicao) resolve isso de forma mais robusta e permanente.
+**Contexto OpenGL compartilhado**: a `PlayWindow` cria sua `GLFWwindow`
+com o ultimo parametro de `glfwCreateWindow` (contexto a compartilhar)
+apontando para a janela do editor - isso significa que toda a
+geometria/shaders ja carregados pelo `Renderer` (VAOs/VBOs criados no
+contexto do editor, ver `Renderer::Init()`) sao validos tambem na janela
+de Play, sem precisar recarregar nada. `PlayWindow::OnUpdate` troca o
+contexto ativo (`glfwMakeContextCurrent`) antes de desenhar nesta janela e
+troca de volta para o editor ao final do frame - "object sharing" no GLFW
+NAO inclui estado global de contexto (bind atual, viewport, depth test),
+entao esse estado e reconfigurado a cada troca (ver comentario extenso em
+`PlayWindow.h`).
+
+**`Renderer::DrawScene`** e uma funcao nova, extraida do antigo
+`EditorLayer::RenderSceneEntities` para dentro do `Renderer` - o mesmo
+loop de desenho (toda entidade com Transform+MeshRenderer, usando a
+transform de MUNDO) agora e compartilhado entre a viewport do editor, a
+preview de camera, e a `PlayWindow`, sem duplicar a logica em varios
+lugares.
+
+**Limitacoes conhecidas, deixadas de proposito**:
+- **Sem hot-reload de script durante o Play**: como a `PlayWindow` roda
+  uma Scene CLONADA (entidades com handles `entt::entity` diferentes da
+  Scene de edicao, ainda que correspondentes), nao ha como "recarregar"
+  remotamente um script individual a partir da Properties panel do editor
+  enquanto o Play esta rodando - editar o `.lua` e ver o efeito exige
+  Parar e apertar Play de novo (a proxima clonagem ja pega o arquivo
+  atualizado do disco).
+- **Sem redimensionamento configuravel pela UI** ainda - a `PlayWindow`
+  abre num tamanho fixo (1280x720); o usuario pode redimensionar a janela
+  do SO manualmente como qualquer outra janela, mas nao ha um campo na UI
+  do editor para escolher a resolucao inicial.
+- **Uma unica `PlayWindow` por vez** - apertar Play de novo enquanto ja
+  esta aberta nao faz nada (`PlayWindow::Open` recusa se `IsOpen()` ja for
+  true); nao ha suporte a multiplas janelas de Play simultaneas (util para
+  testar multiplayer local, por exemplo) ainda.
+- Sem camera Primary na Scene clonada: a `PlayWindow` mostra so a cor de
+  fundo (`Renderer::Clear`), sem nenhum erro - mesma limitacao que a
+  preview de camera do editor ja tinha.
+
 
 ## Próximos passos sugeridos (nesta ordem)
 
@@ -385,9 +463,10 @@ de edicao) resolve isso de forma mais robusta e permanente.
     alpha - `Prism::PhysicsEngine`, corpos Dynamic/Static/Kinematic com
     Box/Sphere/Capsule, ApplyForce/Impulse expostos ao Lua - ver nota
     "Fisica (Box3D)" acima).
-14. Janela de Play separada (própria janela/viewport, câmera Primary do
-    jogo, distinta da viewport de edição - hoje o botão Play só liga
-    scripts/física *dentro* da viewport do editor).
+14. ~~Janela de Play separada (própria janela/viewport, câmera Primary do
+    jogo, distinta da viewport de edição).~~ ✅ feito (janela real do SO
+    com contexto OpenGL compartilhado, Scene clonada - ver nota "Janela de
+    Play" acima).
 15. Sistema de iluminação de verdade (hoje só um ponto de luz fixo,
     hardcoded - sem suporte a spotlight/omnilight configuráveis por
     cena/jogo, como o guia do protótipo pede).
