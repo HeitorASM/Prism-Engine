@@ -144,6 +144,23 @@ namespace PrismEditor {
         m_CloseRequested = false;
         m_LoggedNoCameraWarning = false;
 
+        // Input::SetContext ANTES de OnScriptsStart() - CRITICO. Scripts
+        // que chamam Input.SetCursorMode/IsKeyDown/etc dentro do proprio
+        // OnCreate() (ver ScriptEngine::LoadScript, chamado por dentro de
+        // OnScriptsStart logo abaixo) precisam que Input ja esteja
+        // apontando para ESTA janela ANTES desse OnCreate() rodar - se a
+        // ordem fosse invertida (Input::SetContext DEPOIS de
+        // OnScriptsStart), todo OnCreate() rodaria com s_Window ainda
+        // nulo (ou apontando para a janela de uma sessao de Play
+        // ANTERIOR), fazendo Input::SetCursorMode(...)/IsKeyDown(...)
+        // silenciosamente nao fazer nada (ver os early-returns "if
+        // (!s_Window) return" em Input.cpp) - o sintoma pratico disso e
+        // exatamente "SetCursorMode(Locked) parece nao fazer nada, cursor
+        // continua visivel e livre" quando chamado de dentro de
+        // OnCreate() (o caso de uso mais comum, ver script de exemplo
+        // example_player_input_raycast.lua).
+        Prism::Input::SetContext(m_Window);
+
         // Fisica/scripts comecam a rodar imediatamente - Play "de verdade"
         // comeca no instante em que a janela abre, sem um segundo botao
         // separado dentro dela.
@@ -159,6 +176,14 @@ namespace PrismEditor {
 
         if (m_PlayScene)
             m_PlayScene->OnScriptsStop();
+
+        // Zera o contexto de Input ANTES de destruir a janela - depois
+        // deste ponto, qualquer consulta de Input (ex: um ultimo
+        // OnDestroy() de script que por algum motivo checasse teclado -
+        // incomum, mas nao impossivel) ve "nada apertado" em vez de ler
+        // de um GLFWwindow* que esta prestes a virar um ponteiro
+        // pendurado (dangling) apos glfwDestroyWindow abaixo.
+        Prism::Input::SetContext(nullptr);
 
         glfwDestroyWindow(m_Window);
         m_Window = nullptr;
@@ -207,6 +232,13 @@ namespace PrismEditor {
 
         // --- Simulacao (scripts + fisica) da Scene CLONADA -----------------
         m_PlayScene->OnUpdate(deltaTime);
+
+        // Avanca o estado "frame anterior" do Input DEPOIS que toda a
+        // logica de gameplay deste frame ja rodou (scripts, dentro de
+        // OnUpdate acima, ja consultaram Input::IsKeyDown/IsKeyPressed com
+        // o estado deste frame) - ver comentario grande em Input::EndFrame
+        // sobre por que a ordem importa aqui.
+        Prism::Input::EndFrame();
 
         // --- Desenho ---------------------------------------------------
         // Troca o contexto ativo para o desta janela antes de qualquer

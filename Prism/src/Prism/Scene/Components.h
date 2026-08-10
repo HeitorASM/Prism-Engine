@@ -289,6 +289,22 @@ namespace Prism {
         bool UseGravity = true;         // so relevante para Dynamic
         bool ContinuousCollisionDetection = false; // CCD - para objetos rapidos nao atravessarem paredes (ver guia do prototipo)
 
+        // Trava as 3 rotacoes fisicas do corpo (b3BodyDef::fixedRotation) -
+        // o corpo ainda translada normalmente (cai, e empurrado, colide),
+        // mas NUNCA tomba/gira sozinho por torque/atrito/colisao. Esencial
+        // para qualquer entidade Dynamic cuja rotacao e controlada por
+        // script em vez de fisica (o caso mais comum: uma camera FPS/TPS
+        // ou o corpo do player, que giram conforme o mouse, nunca conforme
+        // uma caixa tombando bateria neles) - sem isto, QUALQUER contato
+        // fisico (esbarrar numa parede, cair de uma pequena altura) aplica
+        // torque ao corpo e o Simulate() sincroniza essa rotacao de volta
+        // para TransformComponent (ver PhysicsEngine::Simulate), brigando
+        // visualmente com a rotacao que o script esta tentando manter (o
+        // classico "camera girando sozinha/descontrolada ao esbarrar em
+        // algo"). Objetos que DEVEM tombar naturalmente (caixas, destroços,
+        // qualquer prop fisico comum) devem deixar isto desligado.
+        bool FixedRotation = false;
+
         RigidBodyComponent() = default;
         RigidBodyComponent(const RigidBodyComponent&) = default;
     };

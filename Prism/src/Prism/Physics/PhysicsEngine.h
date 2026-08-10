@@ -44,6 +44,29 @@ namespace Prism {
         entt::entity OtherEntity = entt::null; // a OUTRA entidade envolvida na colisao (nao a dona do callback)
     };
 
+    // Resultado de um Raycast - mesmo espirito de CollisionEvent acima:
+    // vocabulario da engine (glm::vec3, entt::entity), nunca tipos crus do
+    // Box3D (b3RayResult/b3ShapeId/b3Pos), para a escolha de lib de fisica
+    // nunca vazar para quem consome isto (ScriptEngine, editor).
+    struct RaycastHit {
+        // false = o raio nao acertou nada dentro de MaxDistance (todo o
+        // resto dos campos abaixo fica em seus valores default/invalidos -
+        // nao deve ser lido se Hit == false, mesmo padrao de
+        // b3RayResult::hit na lib original).
+        bool Hit = false;
+
+        // A entidade dona do Collider atingido - entt::null se, por
+        // algum motivo, o shape atingido nao tiver uma entidade associada
+        // (nao deveria acontecer na pratica, ja que todo corpo criado por
+        // CreateBodyForEntity grava a entidade dona em userData - ver
+        // comentario la - mas verificado por seguranca em vez de assumido).
+        entt::entity Entity = entt::null;
+
+        glm::vec3 Point = { 0.0f, 0.0f, 0.0f };   // ponto de mundo onde o raio acertou a superficie
+        glm::vec3 Normal = { 0.0f, 0.0f, 0.0f };  // normal da superficie no ponto de impacto (aponta para fora do shape)
+        float Distance = 0.0f;                     // distancia do Origin ate Point (unidades de mundo/metros)
+    };
+
     class PhysicsEngine {
     public:
         // Cria o mundo Box3D para esta Scene e um corpo fisico para toda
@@ -89,6 +112,25 @@ namespace Prism {
         static void ApplyLinearImpulse(Scene& scene, Entity entity, const glm::vec3& impulse);
         static glm::vec3 GetLinearVelocity(Scene& scene, Entity entity);
         static void SetLinearVelocity(Scene& scene, Entity entity, const glm::vec3& velocity);
+
+        // Lanca um raio a partir de 'origin' na direcao 'direction'
+        // (NAO precisa vir normalizada - normalizada internamente, ver
+        // .cpp) ate 'maxDistance' unidades de mundo, e retorna o hit MAIS
+        // PROXIMO (ver b3World_CastRayClosest na doc do Box3D - convem
+        // para o uso mais comum: "o que esta na minha frente?", "aponte a
+        // arma para X", "o personagem esta tocando o chao?"). Nao ha
+        // suporte a filtro de camada/mascara ainda (b3World_CastRayClosest
+        // nao aceita customizacao fina, apenas um filtro default - ver
+        // comentario no .cpp) - se um dia for necessario ignorar
+        // seletivamente certas entidades/camadas, use b3World_CastRay (com
+        // callback) em vez de b3World_CastRayClosest, o que exigiria uma
+        // nova sobrecarga aqui.
+        //
+        // Retorna um RaycastHit com Hit=false (sem crash/excecao) se: a
+        // Scene nao estiver rodando fisica (fora do modo Play), ou o raio
+        // simplesmente nao acertar nada dentro de maxDistance - chamador
+        // sempre deve checar .Hit antes de usar os outros campos.
+        static RaycastHit Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 1000.0f);
 
     private:
         // Estado de fisica de UMA Scene "rodando" - guardado fora da Scene

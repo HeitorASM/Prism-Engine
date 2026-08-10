@@ -14,6 +14,7 @@
 #include "Prism/Core/Window.h"
 #include "Prism/Core/Command.h"
 #include "Prism/Core/CommandHistory.h"
+#include "Prism/Core/Input.h"
 #include "Prism/Layer/Layer.h"
 #include "Prism/Project/Project.h"
 #include "Prism/Renderer/Framebuffer.h"

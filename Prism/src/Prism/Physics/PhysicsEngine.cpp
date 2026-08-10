@@ -19,6 +19,20 @@ namespace Prism {
     static b3Vec3 ToB3(const glm::vec3& v) { return b3Vec3{ v.x, v.y, v.z }; }
     static glm::vec3 FromB3(const b3Vec3& v) { return glm::vec3(v.x, v.y, v.z); }
 
+    // b3Pos e a posicao de mundo com precisao DUPLA usada por queries
+    // (raycasts/overlaps - ver b3World_CastRayClosest na doc do Box3D),
+    // diferente de b3Vec3 (float, usado em velocidades/forcas/vetores
+    // relativos). Conversao explicita igual as de cima, so com o cast
+    // extra double<->float.
+    static b3Pos ToB3Pos(const glm::vec3& v) {
+        b3Pos result;
+        result.x = (double)v.x;
+        result.y = (double)v.y;
+        result.z = (double)v.z;
+        return result;
+    }
+    static glm::vec3 FromB3Pos(const b3Pos& p) { return glm::vec3((float)p.x, (float)p.y, (float)p.z); }
+
     // glm::quat guarda (w,x,y,z) na ordem de CONSTRUCAO glm::quat(w,x,y,z),
     // mas armazena internamente como .x/.y/.z/.w - b3Quat guarda a parte
     // vetorial em .v (b3Vec3) e a escalar em .s. Mapeamento direto:
@@ -170,6 +184,32 @@ namespace Prism {
         bodyDef.rotation = ToB3(worldRotation);
         bodyDef.gravityScale = rigidBody.UseGravity ? 1.0f : 0.0f;
         bodyDef.isBullet = rigidBody.ContinuousCollisionDetection;
+
+        // Trava as 3 rotacoes fisicas do corpo via b3MotionLocks
+        // (RigidBodyComponent::FixedRotation, ver Components.h) - essencial
+        // para qualquer entidade cuja rotacao e controlada por script em
+        // vez de fisica (camera FPS/TPS, corpo do player): sem isto,
+        // esbarrar em algo ou cair de uma pequena altura aplica torque ao
+        // corpo, e Simulate() sincroniza essa rotacao "acidental" de volta
+        // para TransformComponent, brigando visualmente com o script.
+        //
+        // ATENCAO: Box3D NAO tem um bool simples "fixedRotation" (diferente
+        // do Box2D original, de onde vem o resto do vocabulario desta
+        // engine) - usa b3MotionLocks, uma struct com um bool por eixo
+        // (linearX/Y/Z, angularX/Y/Z), setada via BodyDef::motionLocks (na
+        // criacao) ou b3Body_SetMotionLocks (depois) - ver docs/
+        // simulation.md: "Locking all three angular axes is equivalent to
+        // fixing the rotation entirely." So travamos os 3 eixos ANGULARES
+        // aqui - os 3 LINEARES ficam livres (false, o default de b3MotionLocks
+        // zerada), a translacao (cair, ser empurrado, colidir) continua
+        // 100% normal, so a rotacao fisica fica congelada.
+        if (rigidBody.FixedRotation) {
+            b3MotionLocks locks = {};
+            locks.angularX = true;
+            locks.angularY = true;
+            locks.angularZ = true;
+            bodyDef.motionLocks = locks;
+        }
         // userData aponta para o proprio entt::entity (armazenado por
         // valor dentro de um uintptr_t via reinterpret - ver comentario
         // abaixo) para que eventos do Box3D (b3BodyEvents, contact events)
@@ -304,7 +344,23 @@ namespace Prism {
             // adicionar isso agora aumentaria bastante o escopo desta
             // primeira integracao).
             transform->Translation = FromB3(event->transform.p);
-            transform->Rotation = QuatToEulerDegrees(glm::normalize(FromB3(event->transform.q)));
+
+            // Rotacao so e sincronizada de volta se o corpo NAO tiver
+            // FixedRotation (ver RigidBodyComponent::FixedRotation,
+            // Components.h) - com rotacao travada, o quat do corpo nunca
+            // muda de verdade, entao reconverter Euler->quat->Euler aqui
+            // toda vez so arriscaria introduzir deriva/ambiguidade de
+            // representacao (Euler nao e uma conversao bijetiva - ver
+            // comentario em QuatToEulerDegrees acima) SEM nenhum ganho,
+            // competindo a toa com um script que esta escrevendo
+            // transform->Rotation diretamente no mesmo frame (o cenario
+            // tipico de entidade com FixedRotation: camera FPS/TPS ou
+            // player cuja rotacao e 100% controlada por script, nunca por
+            // fisica). Sem FixedRotation (objetos que devem tombar/girar
+            // naturalmente, ex: caixas), o comportamento e o de sempre.
+            auto* rigidBody = scene.GetRegistry().try_get<RigidBodyComponent>(handle);
+            if (!rigidBody || !rigidBody->FixedRotation)
+                transform->Rotation = QuatToEulerDegrees(glm::normalize(FromB3(event->transform.q)));
 
             if (event->fellAsleep) {
                 // Corpo parou de se mover e foi dormir - nao ha nada a
@@ -371,6 +427,52 @@ namespace Prism {
         // escrito - mesma ressalva de Sphere/Capsule acima (erro de nome
         // aparece como erro de compilacao, facil de corrigir).
         b3Body_SetLinearVelocity(it->second, ToB3(velocity));
+    }
+
+    RaycastHit PhysicsEngine::Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance) {
+        RaycastHit result; // Hit=false por padrao (ver RaycastHit, PhysicsEngine.h)
+
+        SceneState* state = GetState(scene);
+        if (!state)
+            return result; // Scene nao esta rodando fisica (fora do modo Play) - ver GetState
+
+        // direction pode chegar nao-normalizada (ver comentario no .h) -
+        // b3World_CastRayClosest espera 'translation' = vetor deslocamento
+        // completo do raio (origin -> origin + translation), nao uma
+        // direcao unitaria separada de um comprimento - por isso
+        // normalizamos e multiplicamos por maxDistance aqui, em vez de
+        // passar direction crua.
+        float lengthSq = glm::dot(direction, direction);
+        if (lengthSq < 0.0000001f) // direcao (quase) zero - nao ha raio nenhum para lancar
+            return result;
+        glm::vec3 normalizedDirection = direction / sqrtf(lengthSq);
+        glm::vec3 translation = normalizedDirection * maxDistance;
+
+        // b3DefaultQueryFilter() aceita colisao com QUALQUER categoria -
+        // suficiente para esta primeira integracao (sem filtro fino por
+        // camada ainda, ver comentario no .h sobre a limitacao de
+        // b3World_CastRayClosest não aceitar filtro customizado).
+        b3QueryFilter filter = b3DefaultQueryFilter();
+        b3RayResult rayResult = b3World_CastRayClosest(state->WorldId, ToB3Pos(origin), ToB3(translation), filter);
+
+        if (!rayResult.hit)
+            return result; // Hit=false - nao acertou nada dentro de maxDistance
+
+        result.Hit = true;
+        result.Point = FromB3Pos(rayResult.point);
+        result.Normal = FromB3(rayResult.normal);
+        result.Distance = rayResult.fraction * maxDistance; // fraction e 0..1 do comprimento total do raio (translation)
+
+        // Traduz o b3ShapeId atingido de volta para a entt::entity dona -
+        // mesmo mecanismo de userData que CreateBodyForEntity grava no
+        // b3BodyId (ver comentario la e em SceneState::EntityToBody) -
+        // b3Shape_GetBody sobe de shape para body, b3Body_GetUserData le o
+        // handle gravado na criacao.
+        b3BodyId hitBody = b3Shape_GetBody(rayResult.shapeId);
+        void* userData = b3Body_GetUserData(hitBody);
+        result.Entity = (entt::entity)(uint32_t)reinterpret_cast<uintptr_t>(userData);
+
+        return result;
     }
 
 }

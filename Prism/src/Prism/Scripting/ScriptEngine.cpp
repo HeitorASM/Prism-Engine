@@ -3,6 +3,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Components.h"
 #include "../Physics/PhysicsEngine.h"
+#include "../Core/Input.h"
 #include "../Core/Log.h"
 
 #include <fstream>
@@ -66,6 +67,22 @@ namespace Prism {
             "Scale", &TransformComponent::Scale
         );
 
+        // --- RaycastHit ------------------------------------------------
+        // Retorno de Physics.Raycast (ver abaixo) - exposto como usertype
+        // simples (so leitura de campos, sem metodos) para o script poder
+        // fazer "local hit = Physics.Raycast(...); if hit.Hit then ...".
+        // Entity aqui e o entt::entity CRU (ver RaycastHit::Entity,
+        // PhysicsEngine.h) - convertido para um Prism::Entity de verdade
+        // (utilizavel com :GetTransform() etc) via RaycastHit:GetEntity(),
+        // que precisa da Scene para reconstruir o wrapper (ver comentario
+        // no lambda abaixo) - por isso nao e um campo direto, e um metodo.
+        lua.new_usertype<RaycastHit>("RaycastHit",
+            "Hit", &RaycastHit::Hit,
+            "Point", &RaycastHit::Point,
+            "Normal", &RaycastHit::Normal,
+            "Distance", &RaycastHit::Distance
+        );
+
         // --- Fisica (Box3D via PhysicsEngine) -----------------------------
         // Expostas como metodos de Entity, no mesmo padrao de Transform
         // acima - o script nunca ve um b3BodyId ou qualquer tipo do Box3D
@@ -76,6 +93,30 @@ namespace Prism {
         lua.new_usertype<Entity>("Entity",
             "GetTransform", [](Entity& e) -> TransformComponent& { return e.GetComponent<TransformComponent>(); },
             "GetName", [](Entity& e) -> const std::string& { return e.GetComponent<TagComponent>().Tag; },
+            // --- Direcoes de mundo derivadas da rotacao ---------------------
+            // Mesma tecnica ja usada pelo Renderer para a direcao de luzes
+            // Spot/Directional (ver Renderer::CollectGPULights,
+            // Renderer.cpp: "rotaciona o eixo -Z/+X local pela matriz de
+            // rotacao") - rotaciona o eixo local convencionado pela matriz
+            // 3x3 (so rotacao+escala, sem translacao) de
+            // TransformComponent::GetTransform(). Existe para scripts NAO
+            // precisarem reimplementar a trigonometria de yaw manualmente
+            // (facil de errar o sinal) sempre que precisarem mover/mirar
+            // "na direcao que a entidade esta olhando" - o uso mais comum
+            // sendo um controller de camera/player que rotaciona o vetor
+            // de movimento de WASD (espaco local) para espaco de mundo
+            // antes de chamar SetVelocity (ver
+            // example_player_input_raycast.lua). GetTransform() (local, SEM
+            // hierarquia de pai) e suficiente aqui - mesma limitacao ja
+            // documentada em PhysicsEngine::Simulate para parenting+fisica.
+            "GetForward", [](Entity& e) -> glm::vec3 {
+                glm::mat3 rotation = glm::mat3(e.GetComponent<TransformComponent>().GetTransform());
+                return glm::normalize(rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+            },
+            "GetRight", [](Entity& e) -> glm::vec3 {
+                glm::mat3 rotation = glm::mat3(e.GetComponent<TransformComponent>().GetTransform());
+                return glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f));
+            },
             "SetPosition", [](Entity& e, float x, float y, float z) {
                 e.GetComponent<TransformComponent>().Translation = { x, y, z };
             },
@@ -93,8 +134,78 @@ namespace Prism {
             },
             "SetVelocity", [](Entity& e, float x, float y, float z) {
                 PhysicsEngine::SetLinearVelocity(*e.GetScene(), e, glm::vec3(x, y, z));
-            }
+            },
+            // Compara pelo handle+Scene (ver Entity::operator==,
+            // Entity.h) - necessario para um script poder checar
+            // "hit:GetEntity() == entity" (ver RaycastHit:GetEntity()
+            // abaixo) sem precisar comparar campo a campo manualmente.
+            sol::meta_function::equal_to, [](const Entity& a, const Entity& b) { return a == b; }
         );
+
+        // GetEntity() de RaycastHit precisa da Scene "atual" para
+        // reconstruir um Prism::Entity de verdade a partir do
+        // entt::entity cru guardado em RaycastHit::Entity (ver
+        // PhysicsEngine.h) - Entity nao existe sozinha, sempre precisa de
+        // um Scene* dono (ver Entity.h). Como todo script ja tem a
+        // variavel global `entity` (ver LoadScript - "self" implicito),
+        // usamos GetScene() dela mesma: um raycast disparado de dentro de
+        // um script sempre quer entidades da MESMA Scene que esta rodando,
+        // nunca de outra. Adicionado como um metodo separado (nao um
+        // campo) do proprio usertype RaycastHit, com a Scene amarrada por
+        // closure no momento em que Physics.Raycast e chamado (ver
+        // Physics.Raycast abaixo) - user nunca passa a Scene manualmente.
+        // Implementado dentro de Physics.Raycast em vez de aqui.
+
+        // --- Physics.Raycast --------------------------------------------
+        // Tabela global `Physics` (nao Entity:Raycast(), de proposito - um
+        // raycast nao pertence logicamente a uma entidade especifica, e
+        // uma query livre no mundo, igual b3World_CastRayClosest no lado
+        // C++ - ver PhysicsEngine::Raycast). Assinatura em Lua:
+        //   local hit = Physics.Raycast(originVec3, directionVec3, maxDistance)
+        //   if hit.Hit then log(hit:GetEntity():GetName()) end
+        // maxDistance e opcional (default 1000, mesmo default de
+        // PhysicsEngine::Raycast no C++) - sol2 resolve isso via
+        // sol::optional aqui.
+        sol::table physicsTable = lua.create_table();
+        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance) -> sol::table {
+            // sol::this_environment injeta o sol::environment de QUEM
+            // CHAMOU esta funcao (o environment isolado do script, ver
+            // LoadScript - "entity" e uma variavel local a ELE, nunca uma
+            // global de _G) - e o jeito certo de recuperar "a entidade
+            // deste script" de dentro de uma funcao registrada
+            // globalmente, sem precisar que o script passe `entity` como
+            // parametro manualmente toda vez que chama Physics.Raycast.
+            // ATENCAO: lua["entity"] (a globals table) NAO funcionaria
+            // aqui - "entity" so existe dentro do environment do script
+            // (ver env["entity"] em LoadScript), nao em _G.
+            sol::environment& env = thisEnv;
+            sol::state_view luaView(env.lua_state());
+            sol::table result = luaView.create_table();
+
+            Entity callerEntity = env["entity"];
+            Scene* scene = callerEntity ? callerEntity.GetScene() : nullptr;
+            if (!scene) {
+                result["Hit"] = false;
+                return result;
+            }
+
+            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f));
+            result["Hit"] = hit.Hit;
+            result["Point"] = hit.Point;
+            result["Normal"] = hit.Normal;
+            result["Distance"] = hit.Distance;
+            // GetEntity() como funcao dentro da table de resultado (nao
+            // um campo Entity direto) - permite retornar um
+            // Prism::Entity valido (precisa de 'scene', capturado aqui
+            // por closure) so quando/se o script realmente pedir por ele,
+            // em vez de reconstruir sempre, mesmo quando Hit == false
+            // (onde OtherEntity nao faz sentido nenhum).
+            result["GetEntity"] = [scene, hit]() -> Entity {
+                return hit.Hit ? Entity(hit.Entity, scene) : Entity();
+            };
+            return result;
+        };
+        lua["Physics"] = physicsTable;
 
         // --- log() ---------------------------------------------------------
         // Funcao global (nao Entity:Log(), de proposito - um script deve
@@ -112,14 +223,85 @@ namespace Prism {
             Log::AppLog(LogLevel::Error, "[Lua] ", message);
         };
 
+        // --- Input -----------------------------------------------------
+        // Tabela global `Input` (polling - ver Core/Input.h para o porque
+        // deste modelo em vez de callbacks/eventos) + tabela `Key` com
+        // nomes legiveis para os codigos de tecla mais comuns (WASD,
+        // Espaco, setas, etc - ver Prism::Key). Um script tipico:
+        //   if Input.IsKeyDown(Key.W) then entity:Translate(0, 0, -1 * dt) end
+        //   if Input.IsKeyPressed(Key.Space) then entity:ApplyImpulse(0, 5, 0) end
+        //   local dx = Input.GetMouseDeltaX() -- para camera FPS/TPS, ver CursorMode abaixo
+        // So funciona (retorna sempre false/0) durante o modo Play, ja que
+        // Input::SetContext so aponta para uma janela de verdade quando a
+        // PlayWindow esta aberta (ver PlayWindow.cpp) - chamar isto fora
+        // do Play (o que normalmente nao deveria acontecer, scripts so
+        // rodam durante Play) e seguro, so nao retorna nada util.
+        sol::table inputTable = lua.create_table();
+        inputTable["IsKeyDown"] = [](int keyCode) { return Input::IsKeyDown(keyCode); };
+        inputTable["IsKeyPressed"] = [](int keyCode) { return Input::IsKeyPressed(keyCode); };
+        inputTable["IsMouseButtonDown"] = [](int buttonCode) { return Input::IsMouseButtonDown(buttonCode); };
+        inputTable["GetMouseX"] = []() { return Input::GetMouseX(); };
+        inputTable["GetMouseY"] = []() { return Input::GetMouseY(); };
+        // Delta de mouse (ver Input::GetMouseDeltaX/Y, Core/Input.h) - o
+        // que uma camera FPS/TPS de "olhar ao redor" realmente consome,
+        // ao inves de GetMouseX/Y (posicao absoluta, que fica presa/
+        // inutil quando o cursor esta travado - ver CursorMode.Locked
+        // abaixo).
+        inputTable["GetMouseDeltaX"] = []() { return Input::GetMouseDeltaX(); };
+        inputTable["GetMouseDeltaY"] = []() { return Input::GetMouseDeltaY(); };
+        // Captura/libera o cursor do SO (ver Input::SetCursorMode,
+        // Core/Input.h) - uso tipico: Input.SetCursorMode(CursorMode.Locked)
+        // uma vez em OnCreate() de um controller de camera FPS/TPS, e
+        // Input.SetCursorMode(CursorMode.Normal) ao abrir um menu de
+        // pausa (ou em OnDestroy()).
+        inputTable["SetCursorMode"] = [](int mode) { Input::SetCursorMode((CursorMode)mode); };
+        inputTable["GetCursorMode"] = []() { return (int)Input::GetCursorMode(); };
+        lua["Input"] = inputTable;
+
+        // Tabela CursorMode: os tres valores de Prism::CursorMode (ver
+        // Core/Input.h) - script usa CursorMode.Locked em vez do inteiro
+        // cru, mesmo espirito da tabela Key abaixo.
+        sol::table cursorModeTable = lua.create_table();
+        cursorModeTable["Normal"] = (int)CursorMode::Normal;
+        cursorModeTable["Hidden"] = (int)CursorMode::Hidden;
+        cursorModeTable["Locked"] = (int)CursorMode::Locked;
+        lua["CursorMode"] = cursorModeTable;
+
+        // Tabela Key: so os nomes mais usados em gameplay (ver enum Key,
+        // Core/Input.h) - qualquer outro codigo GLFW_KEY_* nao listado
+        // aqui ainda funciona passando o numero cru para Input.IsKeyDown
+        // (ex: Input.IsKeyDown(65) equivale a Input.IsKeyDown(Key.A)) -
+        // esta tabela e so conveniencia de leitura, nao uma whitelist.
+        sol::table keyTable = lua.create_table();
+        keyTable["Space"] = (int)Key::Space;
+        keyTable["Enter"] = (int)Key::Enter;
+        keyTable["Escape"] = (int)Key::Escape;
+        keyTable["Tab"] = (int)Key::Tab;
+        keyTable["LeftShift"] = (int)Key::LeftShift;
+        keyTable["LeftControl"] = (int)Key::LeftControl;
+        keyTable["Up"] = (int)Key::Up;
+        keyTable["Down"] = (int)Key::Down;
+        keyTable["Left"] = (int)Key::Left;
+        keyTable["Right"] = (int)Key::Right;
+        // A-Z geradas em loop (evita 26 linhas repetitivas) - Key::A ate
+        // Key::Z sao contiguas no enum (ver Core/Input.h), mesma ordem do
+        // alfabeto/ASCII.
+        for (char c = 'A'; c <= 'Z'; c++) {
+            std::string name(1, c);
+            keyTable[name] = (int)Key::A + (c - 'A');
+        }
+        // 0-9 tambem contiguas (Key::D0 .. Key::D9).
+        for (char c = '0'; c <= '9'; c++) {
+            std::string name(1, c);
+            keyTable[name] = (int)Key::D0 + (c - '0');
+        }
+        lua["Key"] = keyTable;
+
         // TODO(colisao): expor callbacks OnCollisionEnter/OnCollisionExit
         // chamados pelo PhysicsEngine::Simulate quando eventos de contato
         // do Box3D ocorrem envolvendo esta entidade - adiado desta
         // primeira integracao de fisica (ver TODO identico em
         // PhysicsEngine::Simulate, no bloco de eventos de colisao).
-        // TODO(input): expor uma tabela global `Input` (Input.IsKeyDown(...))
-        // quando a engine tiver um sistema de Input por polling (ver nota
-        // ja existente em EditorLayer::OnEvent sobre isso faltar).
     }
 
     bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {

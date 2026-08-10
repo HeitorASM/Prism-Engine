@@ -28,6 +28,16 @@ end
 function OnUpdate(deltaTime)
     local transform = entity:GetTransform()
     transform.Rotation.y = transform.Rotation.y + rotationSpeed * deltaTime
+
+    -- NOTA: se esta entidade tiver RigidBodyComponent+ColliderComponent
+    -- (fisica ativa) e voce quer que ela SEMPRE gire nesta velocidade
+    -- exata (nunca varie por colisao/torque), marque
+    -- RigidBodyComponent::FixedRotation = true na Properties panel - senao
+    -- o passo de fisica do PROXIMO frame pode sincronizar de volta uma
+    -- rotacao diferente (se o corpo colidir com algo, por exemplo). A
+    -- maioria dos objetos "so girando" (decorativos, sem fisica) nao
+    -- precisa disto - sem corpo fisico associado, nao ha nada competindo
+    -- com o valor que este script escreve.
 end
 
 function OnDestroy()

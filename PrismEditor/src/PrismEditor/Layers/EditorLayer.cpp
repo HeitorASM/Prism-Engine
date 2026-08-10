@@ -1372,6 +1372,17 @@ namespace PrismEditor {
                 ImGui::EndDisabled();
 
                 ImGui::Checkbox("Colisao Continua (CCD)", &rigidBody.ContinuousCollisionDetection);
+
+                // So faz sentido fisicamente para Kinematic/Dynamic (Static
+                // nunca gira de qualquer jeito, ja que nunca se move - ver
+                // BodyType, Components.h) - mas nao ha necessidade de
+                // desabilitar o checkbox para Static: um valor "true" nele
+                // e simplesmente ignorado nesse caso (CreateBodyForEntity
+                // ainda passa fixedRotation para o Box3D independente do
+                // tipo, e um corpo Static ja tem rotacao fixa por natureza).
+                ImGui::Checkbox("Rotacao Fixa (nao tomba/gira por fisica)", &rigidBody.FixedRotation);
+                if (rigidBody.FixedRotation)
+                    ImGui::TextDisabled("Corpo ainda translada normalmente - so a ROTACAO fica travada. Use para camera/player controlado por script.");
                 ImGui::TextDisabled("Ainda nao alimenta simulacao de fisica (ver README).");
             }
             if (!keepOpen)

@@ -52,7 +52,14 @@ namespace Prism {
     // Arquivos v4 nao sao lidos por este parser - mapas salvos antes
     // desta mudanca precisam ser resalvos uma vez (mesmo padrao de todo
     // bump anterior, ver comentarios acima).
-    static constexpr uint32_t kSceneFormatVersion = 5;
+    //
+    // v5 -> v6: RigidBodyComponent ganhou FixedRotation (trava as 3
+    // rotacoes fisicas do corpo - ver Components.h e o comentario de
+    // PhysicsEngine::Simulate sobre por que isto e necessario para
+    // camera/player controlados por script). Arquivos v5 nao sao lidos
+    // por este parser - mapas salvos antes desta mudanca precisam ser
+    // resalvos uma vez (mesmo padrao de todo bump anterior).
+    static constexpr uint32_t kSceneFormatVersion = 6;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -183,6 +190,7 @@ namespace Prism {
                 WriteRaw(out, rigidBody.Mass);
                 WriteRaw(out, rigidBody.UseGravity);
                 WriteRaw(out, rigidBody.ContinuousCollisionDetection);
+                WriteRaw(out, rigidBody.FixedRotation); // v6+ (ver kSceneFormatVersion)
             }
 
             bool hasScript = entity.HasComponent<ScriptComponent>();
@@ -398,7 +406,8 @@ namespace Prism {
             if (hasRigidBody) {
                 auto& rigidBody = entity.AddComponent<RigidBodyComponent>();
                 bool rigidBodyOk = ReadRaw(in, rigidBody.Type) && ReadRaw(in, rigidBody.Mass)
-                                && ReadRaw(in, rigidBody.UseGravity) && ReadRaw(in, rigidBody.ContinuousCollisionDetection);
+                                && ReadRaw(in, rigidBody.UseGravity) && ReadRaw(in, rigidBody.ContinuousCollisionDetection)
+                                && ReadRaw(in, rigidBody.FixedRotation); // v6+ (ver kSceneFormatVersion)
                 if (!rigidBodyOk) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (rigidbody da entidade ", i, "): ", filepath.string());
                     return false;
