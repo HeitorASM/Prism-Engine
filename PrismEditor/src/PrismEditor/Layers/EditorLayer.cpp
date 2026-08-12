@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <vector>
+#include <fstream>
 
 namespace PrismEditor {
 
@@ -16,6 +17,7 @@ namespace PrismEditor {
     // em RenderDockspace() (que precisa saber se ja esta aberto, para nao
     // tentar abrir de novo por cima de si mesmo).
     static constexpr const char* kSaveAsPopupId = "Salvar Mapa Como";
+    static constexpr const char* kNewScriptPopupId = "Novo Script";
 
     EditorLayer::EditorLayer() : Layer("EditorLayer") {}
 
@@ -224,6 +226,155 @@ namespace PrismEditor {
                     // qualquer Salvar Como subsequente).
                     std::filesystem::path relativeToMapDir = std::filesystem::relative(previewPath, project->GetMapDirectory());
                     Prism::Project::SetStartMap(relativeToMapDir);
+                }
+                ImGui::CloseCurrentPopup();
+            } else if (cancelled) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    std::vector<std::string> EditorLayer::ListProjectScripts() const {
+        std::vector<std::string> result;
+
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return result;
+
+        std::error_code ec;
+        std::filesystem::path scriptDir = project->GetScriptDirectory();
+        if (!std::filesystem::exists(scriptDir, ec))
+            return result;
+
+        // NAO recursivo (ver comentario no header) - so arquivos .lua
+        // diretamente dentro de Scripts/, comparado case-insensitive para
+        // aceitar ".LUA"/".Lua" tambem (extensao pode vir de qualquer jeito
+        // dependendo de como o arquivo foi criado fora do editor).
+        for (const auto& entry : std::filesystem::directory_iterator(scriptDir, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file())
+                continue;
+
+            std::string ext = entry.path().extension().string();
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext != ".lua")
+                continue;
+
+            result.push_back(entry.path().filename().string());
+        }
+
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
+    std::filesystem::path EditorLayer::CreateNewScript(const std::string& name) {
+        auto project = Prism::Project::GetActive();
+        if (!project || name.empty())
+            return {};
+
+        // Mesma sanitizacao ja usada em RenderSaveAsPopup - nomes de
+        // arquivo nao devem conter caracteres proibidos pelo SO.
+        std::string safeName = name;
+        static const std::string kForbiddenChars = "/\\:*?\"<>|";
+        for (auto& c : safeName)
+            if (kForbiddenChars.find(c) != std::string::npos)
+                c = '_';
+
+        std::filesystem::path relativePath = safeName + ".lua";
+        std::filesystem::path absolutePath = project->GetScriptDirectory() / relativePath;
+
+        if (std::filesystem::exists(absolutePath)) {
+            PRISM_CORE_ERROR("CreateNewScript: ja existe um script chamado '", relativePath.string(), "'.");
+            return {};
+        }
+
+        // Template minimo - os tres callbacks especiais comentados, mesmo
+        // vocabulario/formato dos exemplos em
+        // PrismEditor/assets/ScriptExamples/ (ver example_spin.lua) - assim
+        // um script novo ja mostra a API basica sem o usuario precisar ir
+        // procurar um exemplo em outro lugar.
+        std::ofstream file(absolutePath);
+        if (!file.is_open()) {
+            PRISM_CORE_ERROR("CreateNewScript: falha ao criar '", absolutePath.string(), "'.");
+            return {};
+        }
+
+        file <<
+            "-- " << relativePath.string() << "\n"
+            "-- Tres funcoes especiais, TODAS opcionais (defina so as que precisar):\n"
+            "--   OnCreate()            -- chamada uma vez, quando o Play comeca\n"
+            "--   OnUpdate(deltaTime)   -- chamada toda frame enquanto o Play estiver ligado\n"
+            "--   OnDestroy()           -- chamada uma vez quando o Play para\n"
+            "--\n"
+            "-- A variavel global `entity` ja existe dentro do script - e a PROPRIA\n"
+            "-- entidade dona deste ScriptComponent.\n"
+            "\n"
+            "function OnCreate()\n"
+            "    log(entity:GetName() .. \": OnCreate\")\n"
+            "end\n"
+            "\n"
+            "function OnUpdate(deltaTime)\n"
+            "\n"
+            "end\n"
+            "\n"
+            "function OnDestroy()\n"
+            "\n"
+            "end\n";
+        file.close();
+
+        PRISM_CORE_INFO("CreateNewScript: criado '", absolutePath.string(), "'.");
+        return relativePath;
+    }
+
+    void EditorLayer::RenderNewScriptPopup() {
+        if (m_ShowNewScriptPopup) {
+            ImGui::OpenPopup(kNewScriptPopupId);
+            m_ShowNewScriptPopup = false;
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kNewScriptPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Nome do script (sem extensao):");
+            ImGui::SetNextItemWidth(-1);
+
+            bool confirmedByEnter = ImGui::InputText("##NewScriptName", m_NewScriptNameBuffer, sizeof(m_NewScriptNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            std::string name = m_NewScriptNameBuffer;
+            bool nameEmpty = name.empty();
+
+            auto project = Prism::Project::GetActive();
+            std::filesystem::path previewPath = project ? (project->GetScriptDirectory() / (name + ".lua")) : std::filesystem::path{};
+            bool wouldOverwrite = !nameEmpty && project && std::filesystem::exists(previewPath);
+
+            ImGui::Dummy(ImVec2(0, 4));
+            if (nameEmpty) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o script.");
+            } else if (wouldOverwrite) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Ja existe um script com este nome.");
+            } else {
+                ImGui::TextDisabled("%s", (name + ".lua").c_str());
+            }
+
+            ImGui::Dummy(ImVec2(0, 8));
+
+            bool confirmedByButton = ImGui::Button("Criar", ImVec2(120, 0));
+            ImGui::SameLine();
+            bool cancelled = ImGui::Button("Cancelar", ImVec2(120, 0));
+
+            bool confirmed = (confirmedByEnter || confirmedByButton) && !nameEmpty && !wouldOverwrite;
+
+            if (confirmed) {
+                std::filesystem::path relativePath = CreateNewScript(name);
+                if (!relativePath.empty() && m_SelectedEntity && m_SelectedEntity.HasComponent<Prism::ScriptComponent>()) {
+                    // Atribui o script recem-criado diretamente ao
+                    // ScriptComponent da entidade selecionada (a mesma que
+                    // tinha o botao "Novo..." clicado - ver
+                    // RenderPropertiesPanel) e ja abre no editor, poupando
+                    // o usuario de digitar o nome de novo no combo.
+                    m_SelectedEntity.GetComponent<Prism::ScriptComponent>().ScriptPath = relativePath.string();
+                    m_ScriptEditor.Open(project->GetScriptDirectory() / relativePath);
                 }
                 ImGui::CloseCurrentPopup();
             } else if (cancelled) {
@@ -864,6 +1015,7 @@ namespace PrismEditor {
 
         RenderMenuBar();
         RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
+        RenderNewScriptPopup(); // idem - popup modal do botao "Novo..." do ScriptComponent
 
         ImGui::End();
 
@@ -874,6 +1026,7 @@ namespace PrismEditor {
         RenderPropertiesPanel();
         RenderConsolePanel();
         RenderContentBrowserPanel();
+        RenderScriptEditorPanel();
         RenderCameraPreviewPanel();
     }
 
@@ -981,6 +1134,7 @@ namespace PrismEditor {
                 ImGui::MenuItem("Propriedades", nullptr, true, false);
                 ImGui::MenuItem("Console", nullptr, true, false);
                 ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
+                ImGui::MenuItem("Editor de Script", nullptr, true, false);
                 ImGui::EndMenu();
             }
 
@@ -1429,12 +1583,49 @@ namespace PrismEditor {
             auto& script = m_SelectedEntity.GetComponent<Prism::ScriptComponent>();
             bool keepOpen = true;
             if (ImGui::CollapsingHeader("Script", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
-                char scriptPathBuffer[256];
-                strncpy(scriptPathBuffer, script.ScriptPath.c_str(), sizeof(scriptPathBuffer) - 1);
-                scriptPathBuffer[sizeof(scriptPathBuffer) - 1] = '\0';
-                ImGui::InputTextWithHint("Arquivo", "ex: player_controller.lua", scriptPathBuffer, sizeof(scriptPathBuffer));
-                if (ImGui::IsItemDeactivatedAfterEdit())
-                    script.ScriptPath = scriptPathBuffer;
+                // Combo com os .lua ja existentes em Scripts/ - evita ter
+                // que saber/digitar o nome de cor (ver ListProjectScripts).
+                // "(nenhum)" e sempre a primeira opcao, para poder limpar
+                // ScriptPath sem sair do combo.
+                std::vector<std::string> availableScripts = ListProjectScripts();
+
+                std::string previewLabel = script.ScriptPath.empty() ? "(nenhum)" : script.ScriptPath;
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##ScriptSelect", previewLabel.c_str())) {
+                    bool noneSelected = script.ScriptPath.empty();
+                    if (ImGui::Selectable("(nenhum)", noneSelected))
+                        script.ScriptPath.clear();
+
+                    for (const auto& scriptFile : availableScripts) {
+                        bool selected = (script.ScriptPath == scriptFile);
+                        if (ImGui::Selectable(scriptFile.c_str(), selected))
+                            script.ScriptPath = scriptFile;
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+
+                    if (availableScripts.empty())
+                        ImGui::TextDisabled("Nenhum .lua em Scripts/ ainda.");
+
+                    ImGui::EndCombo();
+                }
+
+                // "Novo..." abre o popup que cria o arquivo (ver
+                // RenderNewScriptPopup/CreateNewScript) e ja atribui a esta
+                // entidade. "Editar" so aparece com um script ja escolhido -
+                // abre o ScriptEditorPanel nele (ver Panels/ScriptEditorPanel.h).
+                if (ImGui::Button("Novo...")) {
+                    m_NewScriptNameBuffer[0] = '\0';
+                    m_ShowNewScriptPopup = true;
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(script.ScriptPath.empty());
+                if (ImGui::Button("Editar")) {
+                    auto project = Prism::Project::GetActive();
+                    if (project)
+                        m_ScriptEditor.Open(project->GetScriptDirectory() / script.ScriptPath);
+                }
+                ImGui::EndDisabled();
 
                 if (script.ScriptPath.empty()) {
                     ImGui::TextDisabled("Nenhum arquivo escolhido ainda.");
@@ -1539,6 +1730,10 @@ namespace PrismEditor {
 
     void EditorLayer::RenderContentBrowserPanel() {
         m_ContentBrowser.OnImGuiRender();
+    }
+
+    void EditorLayer::RenderScriptEditorPanel() {
+        m_ScriptEditor.OnImGuiRender();
     }
 
 }

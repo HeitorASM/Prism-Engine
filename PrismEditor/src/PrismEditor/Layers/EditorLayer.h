@@ -31,6 +31,7 @@
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
+#include "../Panels/ScriptEditorPanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
@@ -86,6 +87,37 @@ namespace PrismEditor {
         //   fazer sentido inline aqui.
         void RenderContentBrowserPanel();
         // ^ mesmo padrao do Console: delega para m_ContentBrowser.OnImGuiRender().
+
+        void RenderScriptEditorPanel();
+        // ^ mesmo padrao do Console/Content Browser: delega para
+        //   m_ScriptEditor.OnImGuiRender() - ver Panels/ScriptEditorPanel.h.
+
+        // Cria um arquivo .lua novo dentro de Project::GetScriptDirectory(),
+        // com um template minimo (OnCreate/OnUpdate/OnDestroy comentados -
+        // mesmo formato dos exemplos em PrismEditor/assets/ScriptExamples/).
+        // 'name' e o nome SEM extensao (ex: "player_controller") - ".lua" e
+        // adicionado aqui. Retorna o caminho RELATIVO (ex:
+        // "player_controller.lua", o formato que ScriptComponent::ScriptPath
+        // espera - ver Components.h) em caso de sucesso, ou um path vazio se
+        // o nome for invalido ou ja existir um arquivo com esse nome. Chamado
+        // pelo botao "Novo..." da UI do ScriptComponent (ver
+        // RenderPropertiesPanel()).
+        std::filesystem::path CreateNewScript(const std::string& name);
+
+        // Lista (nomes relativos, ex: "player_controller.lua") todo arquivo
+        // .lua diretamente dentro de Project::GetScriptDirectory() - NAO
+        // recursivo por simplicidade (mesmo escopo do ContentBrowserPanel
+        // hoje: scripts organizados em subpastas e um caso futuro). Chamado
+        // toda vez que o combo de selecao do ScriptComponent e desenhado
+        // (barato o bastante para nao precisar de cache - ver
+        // RenderPropertiesPanel()).
+        std::vector<std::string> ListProjectScripts() const;
+
+        // Desenha o popup modal "Novo Script" (mesmo padrao de
+        // RenderSaveAsPopup) - pede o nome, chama CreateNewScript() ao
+        // confirmar. Chamado a cada frame de RenderDockspace(), mesmo
+        // fechado (ImGui::OpenPopup exige isso).
+        void RenderNewScriptPopup();
 
         // Painel "Camera" - mostra a visao da entidade com
         // CameraComponent::Primary=true, renderizada num framebuffer PROPRIO
@@ -275,6 +307,21 @@ namespace PrismEditor {
         // Scripts/Cache) - primeira forma de ver o conteudo de um projeto
         // sem sair do editor. Duplo-clique num .prismmap chama LoadScene().
         ContentBrowserPanel m_ContentBrowser;
+
+        // Painel de edicao de scripts .lua (ver Panels/ScriptEditorPanel.h) -
+        // aberto pelo botao "Editar" da UI do ScriptComponent (Properties
+        // panel). So um script pode estar aberto por vez neste painel (nao e
+        // um editor com abas ainda - ver ScriptEditorPanel::Open, que troca
+        // o arquivo ativo em vez de abrir uma segunda instancia).
+        ScriptEditorPanel m_ScriptEditor;
+
+        // Estado do popup modal "Novo Script" (mesmo padrao de
+        // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao
+        // "Novo..." da UI do ScriptComponent, pede so o nome (sem extensao)
+        // do arquivo a criar em Project::GetScriptDirectory() via
+        // CreateNewScript().
+        bool m_ShowNewScriptPopup = false;
+        char m_NewScriptNameBuffer[128] = "";
 
         // Camera de orbita da viewport principal do editor (nao e a camera
         // FPS/TPS de jogo mencionada no guia). Controle: botao direito do

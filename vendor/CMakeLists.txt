@@ -127,6 +127,38 @@ target_link_libraries(imgui PUBLIC glfw)
 target_link_libraries(imgui PUBLIC glad)
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_CUSTOM)
 
+# --- ImGuiColorTextEdit (editor de codigo com syntax highlight para o painel
+#     de scripts do editor - ver PrismEditor/Panels/ScriptEditorPanel) ---
+#
+# Usamos o fork goossens/ImGuiColorTextEdit, nao o BalazsJako/ImGuiColorTextEdit
+# original: o original esta sem atualizacoes desde 2019 (ver README do proprio
+# fork), enquanto o fork do goossens e uma reescrita completa, ativamente
+# mantida, compativel com a versao atual do Dear ImGui (docking, sem funcoes
+# depreciadas) e endossada pelo proprio criador do ImGui (ocornut) como a
+# opcao recomendada em 2026 - ver "Useful Extensions" na wiki do ocornut/imgui.
+#
+# So 2 arquivos (TextEditor.h/.cpp), sem CMakeLists.txt proprio - mesmo
+# approach ja usado acima para ImGui/Lua: baixamos o source e montamos a lib
+# manualmente aqui.
+FetchContent_Declare(
+    imguicolortextedit
+    GIT_REPOSITORY https://github.com/goossens/ImGuiColorTextEdit.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(imguicolortextedit)
+
+add_library(imguicolortextedit STATIC
+    ${imguicolortextedit_SOURCE_DIR}/TextEditor.cpp
+)
+target_include_directories(imguicolortextedit PUBLIC ${imguicolortextedit_SOURCE_DIR})
+target_link_libraries(imguicolortextedit PUBLIC imgui)
+# NAO inclui TextDiff.cpp/TextDiff.h/dtl.h de proposito - esses arquivos so
+# sao necessarios para o widget de comparacao lado-a-lado (TextDiff), que a
+# engine nao usa ainda. Ver README do goossens/ImGuiColorTextEdit, secao
+# "Integration": TextEditor.cpp/.h sozinhos sao suficientes para um editor de
+# texto com highlight simples como o nosso.
+
 # --- Lua 5.4 (linguagem de script - ver guia do prototipo) ---
 # Lua nao tem CMakeLists.txt oficial (o projeto original usa so um
 # Makefile), entao baixamos o codigo-fonte puro e montamos a lib
