@@ -4,24 +4,25 @@ Engine 3D em C++20 com editor integrado (WYSIWYG), construída para projetos
 reais e portfólio. Renderização via OpenGL 4.5, janela via GLFW, UI via Dear
 ImGui (docking), matemática via glm.
 
-## Estado atual (fundação)
+## Estado atual
 
-Esta é a **fundação** do projeto: arquitetura de camadas (`Layer`/`LayerStack`),
-`Application` central, sistema de eventos, `Project`/`ProjectManager` e o
-`EditorLayer` com dockspace e painéis (Viewport, Hierarquia, Propriedades,
-Console). A viewport 3D agora **renderiza de verdade**: um `Framebuffer`
-offscreen recebe o desenho de um cubo de teste (via `Renderer` + `Shader`
-básicos) e o resultado é mostrado dentro do painel Viewport com
-`ImGui::Image`, com uma câmera de órbita simples (botão direito + arrastar,
-scroll para zoom) e resize automático do framebuffer conforme o painel muda
-de tamanho.
+O projeto já passou da fase de "fundação pura": arquitetura de camadas
+(`Layer`/`LayerStack`), `Application` central, sistema de eventos,
+`Project`/`ProjectManager`, `EditorLayer` com dockspace e painéis
+(Viewport, Hierarquia, Propriedades, Console, Content Browser, Editor de
+Script), Scene/ECS via EnTT com parenting real, scripting Lua, física
+Box3D, janela de Play separada, iluminação de verdade (multi-luz
+Point/Spot/Directional) e um gizmo de manipulação (ImGuizmo) para
+mover/rotacionar/escalar direto na viewport já estão implementados — ver
+as notas específicas de cada um mais abaixo, e "Próximos passos sugeridos"
+para o que ainda falta.
 
 Ainda **não** implementados (por design, para não travar o projeto tentando
-fazer tudo de uma vez): física Box3D, BSP/CSG, importação de assets
-(FBX/OBJ/glTF/áudio), sistema de luzes de verdade (afetando a renderização).
-Scene/Entity real e scripting Lua básico já foram implementados desde a
-escrita original deste parágrafo - ver "Nota sobre a Scene/ECS" e "Nota
-sobre Scripting Lua" mais abaixo.
+fazer tudo de uma vez): BSP/CSG, importação de assets externos
+(FBX/OBJ/glTF/áudio/texturas), materiais de verdade (hoje é só cor sólida),
+picking por clique na viewport (seleção ainda só pela Hierarchy panel), e
+um IDE de código mais completo (o `ScriptEditorPanel` atual já tem syntax
+highlight, mas não autocomplete/debugger).
 
 ## Arquitetura em uma frase
 
@@ -419,6 +420,62 @@ lugares.
   preview de camera do editor ja tinha.
 
 
+## Nota sobre Gizmo de Transform / ImGuizmo (estado atual)
+
+Antes desta etapa, a ÚNICA forma de mover, rotacionar ou escalar uma
+entidade era digitar valores nos campos `DragFloat3` da seção Transform da
+Properties panel — funcional, mas lento para posicionar geometria olhando
+a viewport (o fluxo de "mapas de forma rápida" que o guia do protótipo
+pede depende disso funcionar bem). Agora a entidade selecionada
+(`m_SelectedEntity`) desenha um gizmo manipulável de verdade por cima da
+viewport, via [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo)
+(baixado por `FetchContent`, mesmo padrão do resto de `vendor/CMakeLists.txt`).
+
+**Como usar**: selecione uma entidade (Hierarchy panel, por enquanto — sem
+picking por clique na própria viewport ainda, ver limitação abaixo). Um
+gizmo aparece sobre ela. Trocar entre Mover/Rotacionar/Escalar: teclas
+**W / E / R** (mesma convenção de Unity/Unreal/Godot) ou os botões na
+toolbar flutuante no canto superior esquerdo da viewport. O mesmo botão
+alterna **Local/Mundo** (orientação dos eixos do gizmo). Segurar **Ctrl**
+durante o arraste ativa snapping (1 unidade para mover/escalar, 15° para
+rotacionar).
+
+**Onde vive**: `EditorLayer::RenderTransformGizmo` (chamado de dentro de
+`RenderViewportPanel`, DEPOIS do `ImGui::Image` — diferente dos outros
+gizmos como `RenderCameraGizmos`/`RenderLightGizmos`, que são desenhados
+DENTRO do framebuffer 3D via `Renderer::DrawLines`, o ImGuizmo é um
+overlay 2D desenhado por cima da imagem já renderizada, na drawlist da
+própria janela ImGui "Viewport").
+
+**Parenting**: o gizmo sempre opera em espaço de MUNDO internamente
+(`Scene::GetWorldTransform`) — arrastar "para a direita" sempre significa
+direita do mundo, nunca do pai, mesmo que a entidade selecionada tenha um
+ancestral rotacionado. Ao final do gesto, o resultado é convertido de
+volta para o espaço LOCAL do pai (`inverse(parentWorld) * worldMatrix`,
+via `glm::decompose`) antes de escrever em `TransformComponent` — mesmo
+raciocínio que a física já usa para lidar com parenting (ver nota acima).
+
+**Undo/Redo**: um único `TransformCommand` é empurrado no
+`m_CommandHistory` quando o arraste TERMINA (`ImGuizmo::IsUsing()` volta a
+`false`), não a cada frame do gesto — mesmo padrão de "um comando por
+gesto" que os `DragFloat3` da Properties panel já usavam
+(`IsItemActivated`/`IsItemDeactivatedAfterEdit`). Se o gesto não mudou
+nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
+
+**Limitações conhecidas, deixadas de propósito**:
+- **Sem picking por clique na viewport** — selecionar uma entidade ainda
+  exige a Hierarchy panel; clicar num objeto diretamente na viewport 3D
+  não seleciona nada ainda (precisa de raycast contra a geometria, ainda
+  não implementado — ver comentário antigo sobre isso em
+  `RenderViewportPanel`).
+- **Sem gizmo de escala não-uniforme travada por eixo com feedback visual
+  de colisão/overlap** — o ImGuizmo padrão já cobre escala uniforme e por
+  eixo, mas não há nenhuma customização adicional além da configuração
+  default da lib.
+- O atalho de teclado para alternar Local/Mundo não existe ainda (só o
+  botão da toolbar) — não há convenção universal entre engines para essa
+  tecla (Unreal usa nenhuma, Unity não tem atalho nativo também).
+
 ## Próximos passos sugeridos (nesta ordem)
 
 1. ~~Framebuffer + renderização real da cena na Viewport panel.~~ ✅ feito
@@ -467,11 +524,27 @@ lugares.
     jogo, distinta da viewport de edição).~~ ✅ feito (janela real do SO
     com contexto OpenGL compartilhado, Scene clonada - ver nota "Janela de
     Play" acima).
-15. Sistema de iluminação de verdade (hoje só um ponto de luz fixo,
-    hardcoded - sem suporte a spotlight/omnilight configuráveis por
-    cena/jogo, como o guia do protótipo pede).
-16. IDE/editor de código embutido (scripting sem sair do editor).
-17. BSP/CSG (brushes como um tipo de Entity no editor).
+15. ~~Sistema de iluminação de verdade.~~ ✅ feito
+    (`LightComponent` com Point/Spot/Directional, `Renderer::CollectGPULights`
+    + `GPULight`/`MAX_LIGHTS=16`, shader com iluminação multi-luz de verdade
+    - não mais um ponto de luz fixo hardcoded - ver `Renderer.h/.cpp` e
+    `RenderLightGizmos`. Este item já estava implementado quando esta
+    entrada foi escrita; deixado marcado aqui só para o roadmap refletir o
+    estado real).
+16. ~~Gizmo de manipulação (mover/rotacionar/escalar) direto na viewport.~~ ✅ feito
+    (ver nota "Gizmo de Transform (ImGuizmo)" abaixo - antes desta etapa a
+    ÚNICA forma de editar Transform era digitar valores nos DragFloat3 da
+    Properties panel).
+17. IDE/editor de código embutido (scripting sem sair do editor) -
+    `ScriptEditorPanel` já existe (syntax highlight via
+    ImGuiColorTextEdit), falta autocomplete/breakpoints/um "IDE" de verdade
+    como o guia do protótipo pede.
+18. BSP/CSG (brushes como um tipo de Entity no editor).
+19. Importação de assets externos (FBX/OBJ/glTF, áudio, texturas) - hoje só
+    as 5 primitivas embutidas existem; nenhum pipeline de import ainda.
+20. Materiais de verdade (hoje `MeshRendererComponent` só tem uma cor
+    sólida RGB - sem texturas, PBR, ou o sistema "material com albedo/UV
+    editável" que o guia do protótipo descreve).
 
 ## Nota sobre `CameraComponent` funcional (estado atual)
 

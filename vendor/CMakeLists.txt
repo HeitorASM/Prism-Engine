@@ -159,6 +159,61 @@ target_link_libraries(imguicolortextedit PUBLIC imgui)
 # "Integration": TextEditor.cpp/.h sozinhos sao suficientes para um editor de
 # texto com highlight simples como o nosso.
 
+# --- ImGuizmo (gizmos de mover/rotacionar/escalar objetos direto na
+#     viewport 3D - CedricGuillemet/ImGuizmo, o repositorio original e
+#     ainda ativamente mantido) ---
+#
+# Diferente de ImGuiColorTextEdit/Lua acima, este commit do ImGuizmo JA TEM
+# um CMakeLists.txt proprio (cria o target "imguizmo" sozinho, biblioteca
+# STATIC com ImGuizmo.cpp + os outros widgets do repositorio -
+# GraphEditor/ImCurveEdit/ImGradient/ImSequencer/ImVectorEditor - e ja
+# expoe o include directory certo) - FetchContent_MakeAvailable ja e
+# suficiente, sem precisar montar a lib manualmente como fizemos para
+# ImGuiColorTextEdit. NAO declarar add_library(imguizmo ...) de novo aqui:
+# o proprio CMakeLists.txt do ImGuizmo ja faz isso, e um segundo
+# add_library com o mesmo nome de target e um erro do CMake (CMP0002) -
+# foi exatamente esse erro que apareceu na primeira tentativa desta
+# integracao, corrigido removendo nosso add_library duplicado.
+#
+# O CMakeLists.txt do ImGuizmo tenta baixar seu PROPRIO ImGui (branch
+# "master" upstream) so quando IMGUIZMO_BUILD_EXAMPLE esta ligado (default
+# TRUE somente quando ele e o projeto raiz standalone) - como aqui ele e
+# consumido como subdiretorio de um projeto maior (via FetchContent),
+# IMGUIZMO_STANDALONE fica FALSE automaticamente e IMGUIZMO_BUILD_EXAMPLE
+# tambem, entao nao baixa nada extra nem duplica o target "imgui" que ja
+# criamos acima.
+#
+# Usado por EditorLayer::RenderTransformGizmo para desenhar as setas/aneis
+# de Translate/Rotate/Scale sobre a entidade selecionada na viewport
+# principal (ver EditorLayer.cpp) - antes desta integracao, a UNICA forma
+# de mover/rotacionar uma entidade era digitar valores manualmente nos
+# DragFloat3 da Properties panel.
+#
+# ATENCAO sobre a versao: o repositorio NAO publica releases semanticas
+# (as unicas tags existentes sao 1.9/1.10/1.83, todas antigas - ver
+# github.com/CedricGuillemet/ImGuizmo/tags) - todo desenvolvimento ativo
+# acontece direto na branch "master". Por isso fixamos um COMMIT HASH
+# especifico do master (nao "master" em si, que mudaria de build para
+# build sem aviso) - atualizar este hash e uma escolha manual e
+# deliberada, mesmo padrao ja usado para o Box3D acima (fixado em v0.1.0
+# de proposito). GIT_SHALLOW FALSE aqui porque um checkout de commit
+# especifico (em vez de branch/tag) precisa do historico completo.
+FetchContent_Declare(
+    imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG 18cef5e031d8c6973d80284c67f60549fafd78c1 # master em 08/ago/2026 - ver nota acima
+    GIT_SHALLOW FALSE
+)
+FetchContent_MakeAvailable(imguizmo)
+
+# O CMakeLists.txt do ImGuizmo ja cria o target "imguizmo" (ver comentario
+# acima) mas NAO o linka contra o nosso "imgui" (o dele so linkaria um
+# imgui proprio, baixado so se IMGUIZMO_BUILD_EXAMPLE estivesse ligado, o
+# que nao e o caso aqui - ver acima). Precisamos linkar manualmente contra
+# o "imgui" que este arquivo ja monta mais acima, para que ImGuizmo.cpp
+# enxergue os headers do Dear ImGui (imgui.h etc) na hora de compilar.
+target_link_libraries(imguizmo PUBLIC imgui)
+
 # --- Lua 5.4 (linguagem de script - ver guia do prototipo) ---
 # Lua nao tem CMakeLists.txt oficial (o projeto original usa so um
 # Makefile), entao baixamos o codigo-fonte puro e montamos a lib

@@ -1,8 +1,11 @@
 #include "EditorLayer.h"
 #include <imgui.h>
+#include <ImGuizmo.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/matrix_decompose.hpp> // glm::decompose() - GLM_ENABLE_EXPERIMENTAL ja definido globalmente em Components.h
+#include <glm/gtc/quaternion.hpp> // glm::eulerAngles(quat) - usado em RenderTransformGizmo para converter o resultado de glm::decompose() de volta para os graus euler que TransformComponent guarda
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -966,6 +969,26 @@ namespace PrismEditor {
     }
 
     void EditorLayer::OnImGuiRender() {
+        // ImGuizmo::BeginFrame() PRECISA ser chamado uma vez por frame,
+        // logo apos o ImGui::NewFrame() da engine (ver
+        // Prism::ImGuiLayer::Begin) e ANTES de qualquer ImGuizmo::Manipulate
+        // (chamado dentro de RenderTransformGizmo, la dentro de
+        // RenderDockspace -> RenderViewportPanel). Sem isso, o proprio
+        // header do ImGuizmo alerta que e obrigatorio: internamente ele
+        // reseta o estado de hover/hotspot do frame anterior
+        // (mbOverGizmoHotspot, mbUsingViewManipulate) - SEM chamar,
+        // esse estado fica "preso" no valor de frames passados (ou
+        // zerado/invalido logo na inicializacao), o que se manifesta
+        // exatamente como "o gizmo aparece desenhado mas passar o mouse ou
+        // clicar nas setas/aneis nao registra nada" (bug reportado
+        // separadamente do problema de posicionamento do SetRect, ja
+        // corrigido - este era um SEGUNDO bug, independente). Cria e
+        // destroi uma janela ImGui interna própria e invisível
+        // ("gizmo", full-screen, ver ImGuizmo::BeginFrame) - nao interfere
+        // com o resto do editor, so precisa rodar antes de qualquer outro
+        // ImGui::Begin do frame.
+        ImGuizmo::BeginFrame();
+
         RenderDockspace();
     }
 
@@ -1185,12 +1208,59 @@ namespace PrismEditor {
         ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2(m_ViewportSize[0], m_ViewportSize[1]),
                      ImVec2(0, 1), ImVec2(1, 0)); // UV invertido no Y: origem do framebuffer OpenGL e embaixo a esquerda.
 
+        // Posicao/tamanho REAIS (em pixels de tela do SO) de onde a imagem
+        // acabou de ser desenhada - GetItemRectMin() pega isso do ULTIMO
+        // item (o ImGui::Image logo acima), diferente de GetWindowPos()
+        // (que da a posicao da JANELA inteira, incluindo a barra de
+        // titulo "Viewport" no topo). Usar GetWindowPos() aqui foi o bug
+        // original que deixava o retangulo do ImGuizmo desalinhado da
+        // imagem por ~20-30px (a altura da barra de titulo) - o gizmo
+        // aparecia desenhado no lugar certo (ele so precisa de
+        // view/projection para isso), mas a area de CLIQUE/hover do
+        // ImGuizmo usava esse retangulo errado, entao passar o mouse ou
+        // clicar em cima dele nao registrava nada. Guardado aqui (em vez
+        // de so dentro de RenderTransformGizmo) porque a toolbar abaixo
+        // tambem precisa saber onde a imagem comeca.
+        ImVec2 imageMin = ImGui::GetItemRectMin();
+
+        // Toolbar flutuante do gizmo (Translate/Rotate/Scale + Local/World)
+        // - desenhada por CIMA do canto superior esquerdo da IMAGEM (nao
+        // da janela) via SetCursorScreenPos, que usa coordenadas de tela
+        // absolutas (mesmo espaco de GetItemRectMin() acima) - diferente
+        // de SetCursorPos usado antes, que e relativo ao CONTEUDO da
+        // janela e nao contava com a barra de titulo, entao a toolbar
+        // ficava desenhada por cima/atras dela em vez de dentro da area da
+        // imagem. So aparece com alguma entidade selecionada, ja que sem
+        // selecao o gizmo em si nao e desenhado (ver RenderTransformGizmo).
+        // Atalhos W/E/R fazem a mesma coisa que estes botoes - a toolbar
+        // existe para quem prefere clicar, ou nao lembra dos atalhos.
+        if (m_SelectedEntity) {
+            ImGui::SetCursorScreenPos(ImVec2(imageMin.x + 8.0f, imageMin.y + 8.0f));
+            ImGui::BeginGroup();
+            if (ImGui::Button("Mover (W)")) m_GizmoOperation = ImGuizmo::TRANSLATE;
+            ImGui::SameLine();
+            if (ImGui::Button("Rotacionar (E)")) m_GizmoOperation = ImGuizmo::ROTATE;
+            ImGui::SameLine();
+            if (ImGui::Button("Escalar (R)")) m_GizmoOperation = ImGuizmo::SCALE;
+            ImGui::SameLine();
+            ImGui::TextUnformatted("|");
+            ImGui::SameLine();
+            if (ImGui::Button(m_GizmoMode == ImGuizmo::WORLD ? "Mundo" : "Local"))
+                m_GizmoMode = (m_GizmoMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+            ImGui::EndGroup();
+        }
+
         // Controle de camera minimo: segurar botao direito do mouse sobre a
         // viewport e arrastar orbita a camera; scroll (com o mouse sobre a
-        // viewport) aproxima/afasta. E deliberadamente simples - vira a
+        // viewport) aproxima/afasta. Deliberadamente simples - vira a
         // camera de editor "de verdade" (com pan, foco em objeto, etc)
-        // quando o resto do editor (gizmos de manipulacao, picking por
-        // raycast) existir.
+        // quando fizer falta na pratica. O gizmo de manipulacao (mover/
+        // rotacionar/escalar) ja existe - ver RenderTransformGizmo() logo
+        // abaixo; falta so picking por clique direto na viewport (selecao
+        // ainda e so pela Hierarchy panel). Nao checa ImGuizmo::IsOver()
+        // aqui porque o gizmo so responde ao botao ESQUERDO do mouse -
+        // orbitar com o botao DIREITO em cima dele nao teria conflito real
+        // mesmo que os dois "sobrepusessem" na tela.
         if (m_ViewportHovered) {
             ImGuiIO& io = ImGui::GetIO();
 
@@ -1205,8 +1275,149 @@ namespace PrismEditor {
             }
         }
 
+        // Recalcula as MESMAS matrizes view/projection que RenderScene() ja
+        // montou este frame (baratas o bastante para nao valer a pena
+        // cachear em membros so por isto) - o ImGuizmo precisa delas
+        // separadas (nao a viewProjection combinada) para projetar
+        // corretamente o gizmo por cima da imagem.
+        {
+            float aspect = m_ViewportSize[1] > 0.0f ? m_ViewportSize[0] / m_ViewportSize[1] : 1.0f;
+            float yawRad = glm::radians(m_CameraYaw);
+            float pitchRad = glm::radians(m_CameraPitch);
+            glm::vec3 cameraPos;
+            cameraPos.x = m_CameraDistance * cosf(pitchRad) * cosf(yawRad);
+            cameraPos.y = m_CameraDistance * sinf(pitchRad);
+            cameraPos.z = m_CameraDistance * cosf(pitchRad) * sinf(yawRad);
+            glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+
+            RenderTransformGizmo(view, projection, imageMin);
+        }
+
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+
+    void EditorLayer::RenderTransformGizmo(const glm::mat4& view, const glm::mat4& projection, const ImVec2& imageScreenPos) {
+        if (!m_SelectedEntity)
+            return;
+        // So faz sentido manipular Transform de entidades que tem uma (toda
+        // entidade tem, ver Scene::CreateEntity, mas a checagem custa nada
+        // e protege contra qualquer excecao futura).
+        if (!m_SelectedEntity.HasComponent<Prism::TransformComponent>())
+            return;
+
+        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetDrawlist();
+        // ImGuizmo desenha por cima da JANELA IMGUI ATUAL ("Viewport", ja
+        // que RenderTransformGizmo e chamado de dentro de
+        // RenderViewportPanel antes do ImGui::End()) - SetRect define a
+        // regiao de tela (em pixels, espaco de janela do SO) onde a IMAGEM
+        // foi desenhada (imageScreenPos, capturado via GetItemRectMin()
+        // logo apos o ImGui::Image em RenderViewportPanel - NAO
+        // GetWindowPos(), que da a janela inteira incluindo a barra de
+        // titulo e desalinhava a area de clique do gizmo da imagem por
+        // conta da altura dessa barra - bug corrigido).
+        ImGuizmo::SetRect(imageScreenPos.x, imageScreenPos.y, m_ViewportSize[0], m_ViewportSize[1]);
+
+        // Atalhos de teclado (W/E/R) - so quando a viewport esta em foco E
+        // o ImGuizmo nao esta sendo arrastado no momento (nao faz sentido
+        // trocar de operacao no meio de um gesto). Mesma convencao de
+        // Unity/Unreal/Godot. IsAnyItemActive cobre o caso de estar
+        // digitando texto em outro painel (ex: campo "Nome") - nao rouba a
+        // tecla 'e' de dentro de um InputText nesse caso.
+        if (m_ViewportFocused && !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive()) {
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = ImGuizmo::TRANSLATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = ImGuizmo::ROTATE;
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) m_GizmoOperation = ImGuizmo::SCALE;
+        }
+
+        // A entidade pode ter um pai (RelationshipComponent) - o gizmo
+        // sempre opera em espaco de MUNDO (para o usuario, arrastar "para
+        // a direita" deve sempre significar direita do mundo, nao do pai),
+        // entao passamos a matriz de MUNDO para o Manipulate() e, se o
+        // gesto mudou algo, convertemos o resultado de volta para o espaco
+        // LOCAL do pai antes de escrever em TransformComponent (que e
+        // sempre local - ver comentario em Scene::GetWorldTransform).
+        glm::mat4 worldMatrix = m_ActiveScene->GetWorldTransform(m_SelectedEntity);
+
+        bool snap = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        float snapValues[3] = { 0.0f, 0.0f, 0.0f };
+        if (snap) {
+            // Passos de snap convencionais: 1 unidade para posicao/escala,
+            // 15 graus para rotacao - mesmos defaults que Unity usa com
+            // Ctrl segurado.
+            float step = (m_GizmoOperation == ImGuizmo::ROTATE) ? 15.0f : 1.0f;
+            snapValues[0] = snapValues[1] = snapValues[2] = step;
+        }
+
+        ImGuizmo::Manipulate(
+            glm::value_ptr(view), glm::value_ptr(projection),
+            (ImGuizmo::OPERATION)m_GizmoOperation, (ImGuizmo::MODE)m_GizmoMode,
+            glm::value_ptr(worldMatrix), nullptr,
+            snap ? snapValues : nullptr);
+
+        bool isUsing = ImGuizmo::IsUsing();
+
+        // Captura o estado "antes" no exato frame em que o arraste COMECA
+        // - mesmo padrao de m_TransformBeforeEdit para os DragFloat3 da
+        // Properties panel (ver comentario no header).
+        if (isUsing && !m_GizmoWasUsingLastFrame)
+            m_GizmoTransformBeforeEdit = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
+
+        if (isUsing) {
+            glm::mat4 localMatrix = worldMatrix;
+
+            // Se a entidade tem pai, o TransformComponent e relativo a ELE
+            // - multiplicamos pela inversa da matriz de mundo do PAI para
+            // voltar ao espaco local, mesmo raciocinio que a nota de
+            // "Fisica + Parenting" no README ja descreve como o jeito
+            // correto de fazer (so que aqui em vez de la).
+            Prism::Entity parent;
+            if (auto* rel = m_ActiveScene->GetRegistry().try_get<Prism::RelationshipComponent>(m_SelectedEntity.GetHandle())) {
+                if (rel->Parent != entt::null)
+                    parent = Prism::Entity(rel->Parent, m_ActiveScene.get());
+            }
+            if (parent) {
+                glm::mat4 parentWorld = m_ActiveScene->GetWorldTransform(parent);
+                localMatrix = glm::inverse(parentWorld) * worldMatrix;
+            }
+
+            glm::vec3 translation, scale, skew;
+            glm::vec4 perspective;
+            glm::quat rotationQuat;
+            if (glm::decompose(localMatrix, scale, rotationQuat, translation, skew, perspective)) {
+                auto& transform = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
+                transform.Translation = translation;
+                transform.Scale = scale;
+                // glm::decompose retorna um quaternion; a engine guarda
+                // rotacao em euler-graus (ver TransformComponent,
+                // Components.h) - glm::eulerAngles devolve radianos na
+                // ordem (pitch=x, yaw=y, roll=z), que e exatamente o que
+                // TransformComponent::GetTransform() espera de volta via
+                // yawPitchRoll (ver Components.h). Sem isso o objeto
+                // "pularia" de rotacao toda vez que o gizmo fosse usado.
+                glm::vec3 eulerRad = glm::eulerAngles(rotationQuat);
+                transform.Rotation = glm::degrees(eulerRad);
+            }
+        } else if (m_GizmoWasUsingLastFrame) {
+            // Arraste acabou de terminar neste frame (IsUsing() era true no
+            // frame anterior, false agora) - empurra UM TransformCommand
+            // cobrindo o gesto inteiro, mesmo padrao de
+            // IsItemDeactivatedAfterEdit() nos DragFloat3 da Properties
+            // panel. So gera comando se algo de fato mudou (evita entulhar
+            // o historico de undo com um clique que nao moveu nada).
+            const auto& after = m_SelectedEntity.GetComponent<Prism::TransformComponent>();
+            bool changed = m_GizmoTransformBeforeEdit.Translation != after.Translation
+                || m_GizmoTransformBeforeEdit.Rotation != after.Rotation
+                || m_GizmoTransformBeforeEdit.Scale != after.Scale;
+            if (changed) {
+                m_CommandHistory.Execute(Prism::CreateScope<TransformCommand>(
+                    m_SelectedEntity, m_GizmoTransformBeforeEdit, after));
+            }
+        }
+
+        m_GizmoWasUsingLastFrame = isUsing;
     }
 
     void EditorLayer::RenderCameraPreviewPanel() {

@@ -27,6 +27,7 @@
 // ============================================================================
 
 #include <Prism.h>
+#include <imgui.h> // ImVec2 - usado na assinatura de RenderTransformGizmo (ver abaixo)
 #include <glm/glm.hpp>
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
@@ -227,6 +228,32 @@ namespace PrismEditor {
         // de RenderSelectedColliderGizmo().
         void RenderLightGizmos(const glm::mat4& viewProjection);
 
+        // Desenha o gizmo de manipulacao (ImGuizmo) sobre a entidade
+        // atualmente SELECIONADA (m_SelectedEntity) - as setas/planos de
+        // Translate, os aneis de Rotate ou as caixinhas de Scale,
+        // dependendo de m_GizmoOperation. Diferente dos outros gizmos
+        // acima (RenderCameraGizmos etc, que sao desenhados DENTRO do
+        // framebuffer da viewport via Renderer::DrawLines), este e
+        // desenhado por CIMA da imagem ja renderizada, usando a API de
+        // overlay 2D do ImGuizmo (ImGui::GetWindowDrawList() da propria
+        // janela "Viewport") - por isso e chamado de dentro de
+        // RenderViewportPanel(), depois do ImGui::Image(), nao de dentro
+        // de RenderScene(). Escreve direto em
+        // m_ActiveScene->GetWorldTransform-equivalente local (via
+        // TransformComponent, respeitando um pai se houver - ver
+        // comentario no .cpp) e empurra UM TransformCommand no
+        // m_CommandHistory quando o arraste termina (mesmo padrao de
+        // "um comando por gesto" que os DragFloat3 da Properties panel ja
+        // usam - ver ImGui::IsItemActivated()/IsItemDeactivatedAfterEdit
+        // la, e o equivalente ImGuizmo::IsUsing() aqui). Nao faz nada se
+        // nada estiver selecionado.
+        // 'imageScreenPos' e a posicao de tela (GetItemRectMin(), NAO
+        // GetWindowPos() - a janela inclui a barra de titulo, o que
+        // desalinhava a area de clique/hover do gizmo da imagem por conta
+        // dessa altura extra, um bug ja corrigido) de onde a imagem da
+        // viewport foi desenhada neste frame - ver RenderViewportPanel().
+        void RenderTransformGizmo(const glm::mat4& view, const glm::mat4& projection, const ImVec2& imageScreenPos);
+
         // Garante que no maximo UMA entidade da cena tenha
         // CameraComponent::Primary = true: ao marcar 'newPrimary' como
         // Primary, desmarca qualquer outra que estivesse marcada.
@@ -337,6 +364,25 @@ namespace PrismEditor {
         float m_CameraYaw = -35.0f;   // graus
         float m_CameraPitch = 25.0f;  // graus
         float m_CameraDistance = 6.0f;
+
+        // Estado do gizmo de manipulacao (ImGuizmo) - ver RenderTransformGizmo().
+        // m_GizmoOperation troca com as teclas W (Translate) / E (Rotate) /
+        // R (Scale), mesma convencao de atalho que Unity/Unreal/Godot usam
+        // - checada em OnUpdate() so quando a viewport esta em foco, para
+        // nao roubar W/E/R de um campo de texto sendo editado em outro
+        // painel. m_GizmoMode alterna Local/World (tecla nao mapeada
+        // ainda - so o botao na toolbar da viewport, ver
+        // RenderViewportPanel()).
+        int m_GizmoOperation = 0; // ImGuizmo::OPERATION::TRANSLATE (evita incluir ImGuizmo.h neste header)
+        int m_GizmoMode = 1;      // ImGuizmo::MODE::WORLD
+
+        // Mesmo padrao de m_TransformBeforeEdit (ver acima), so que para o
+        // gesto de arrastar o gizmo: capturado no frame em que
+        // ImGuizmo::IsUsing() vira true, usado para montar UM
+        // TransformCommand quando IsUsing() volta a false (arraste
+        // terminou) - ver RenderTransformGizmo() no .cpp.
+        Prism::TransformComponent m_GizmoTransformBeforeEdit;
+        bool m_GizmoWasUsingLastFrame = false;
     };
 
 }
