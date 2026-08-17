@@ -11,7 +11,7 @@ O projeto já passou da fase de "fundação pura": arquitetura de camadas
 `Project`/`ProjectManager`, `EditorLayer` com dockspace e painéis
 (Viewport, Hierarquia, Propriedades, Console, Content Browser, Editor de
 Script), Scene/ECS via EnTT com parenting real, scripting Lua, física
-Box3D, janela de Play separada, iluminação de verdade (multi-luz
+Jolt Physics, janela de Play separada, iluminação de verdade (multi-luz
 Point/Spot/Directional) e um gizmo de manipulação (ImGuizmo) para
 mover/rotacionar/escalar direto na viewport já estão implementados — ver
 as notas específicas de cada um mais abaixo, e "Próximos passos sugeridos"
@@ -44,7 +44,7 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
                    Capsule/Cylinder/Plane), Renderer (API minima de desenho)
     Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
     Scripting/  -> ScriptEngine (VM Lua via sol2, ciclo de vida de scripts)
-    Physics/    -> PhysicsEngine (mundo Box3D, corpos, sincronizacao com Transform)
+    Physics/    -> PhysicsEngine (mundo Jolt Physics, corpos, sincronizacao com Transform)
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
     Project/    -> Project, ProjectSerializer (.prismproj)
 
@@ -235,105 +235,103 @@ ancestrais (retorna so o `TransformComponent` LOCAL, nao
 ainda nao tem essa funcao exposta); sem suporte a scripts chamarem funcoes
 de OUTRAS entidades ainda (so a propria `entity` e visivel).
 
-## Nota sobre Fisica (Box3D) - estado atual
+## Nota sobre Fisica (Jolt Physics) - estado atual
 
-**Correcao de bug "objetos se atravessam sem colidir" + gizmo gigantesco**
-(investigado com logs de diagnostico temporarios - ver historico de commits
-se precisar do processo completo): a fisica em si estava correta desde o
-inicio - o problema real era `ColliderComponent::Size` ser uma medida em
-UNIDADES ABSOLUTAS DE MUNDO, independente do `TransformComponent::Scale`
-da entidade (ver comentario detalhado em `ColliderComponent::Size`,
-`Components.h`). Se voce escala um mesh (ex: um Plane esticado para virar
-um chao grande) sem tambem ajustar manualmente o `Size` do Collider na
-Properties panel, o collider real usado pela fisica continua no default
-(0.5 em cada eixo) - o objeto PARECE do tamanho certo visualmente, mas a
-colisao de verdade e minuscula (ou grande demais) perto do mesh. Isso
-sozinho ja explica "cai, quica de leve ao tocar uma esquina do collider
-errado, depois atravessa".
+**MIGRADO de Box3D para Jolt Physics** (`jrouwe/JoltPhysics`) - ver git
+log / PR de migracao para o historico completo da decisao. Motivo
+resumido: Box3D era v0.1.0 alpha (unica release existente no momento da
+integracao original), com o proprio autor (erincatto, tambem autor do
+Box2D) pedindo explicitamente para nao mandar pull requests ainda (API
+instavel por design, sem garantia de compatibilidade entre versoes -
+comum em libs pre-1.0). Jolt e o motor fisico usado em producao pela
+Horizon Forbidden West (Guerrilla Games) e por diversos engines indie C++
+serios, com releases semanticas estaveis, documentacao completa e
+comunidade ativa - GIT_TAG fixado em `v5.2.0` exato (nao `master`) no
+mesmo espirito de disciplina de versionamento ja usado no resto de
+`vendor/CMakeLists.txt`.
 
-Havia tambem um bug real separado, no GIZMO do collider (nao na fisica):
-`EditorLayer::RenderSelectedColliderGizmo` desenhava o wireframe aplicando
-a matriz de mundo COMPLETA da entidade (`Scene::GetWorldTransform`,
-incluindo Scale) a pontos que ja sao calculados em unidades absolutas a
-partir de `Collider::Size` - isso aplicava a escala da entidade DUAS
-vezes sempre que `Scale != {1,1,1}`, fazendo o wireframe ficar gigantesco
-e desalinhado do tamanho real usado pela fisica (que corretamente ignora
-Scale). Corrigido extraindo so posicao+rotacao da matriz de mundo (sem
-escala) antes de posicionar o gizmo - agora o wireframe reflete fielmente
-o volume que `PhysicsEngine::CreateBodyForEntity` de fato cria no Box3D.
+**A API publica de `Prism::PhysicsEngine` foi mantida IDENTICA** entre as
+duas versoes de proposito - `ScriptEngine.cpp`, `Components.h` e qualquer
+outro consumidor nao precisaram mudar uma linha por causa da migracao. So
+`PhysicsEngine.h/.cpp` e `vendor/CMakeLists.txt` mudaram.
 
-**Correcao de crash aplicada apos a primeira integracao** (se voce ja
-tinha testado antes, este fix resolve um `__debugbreak()`/assert do
-proprio Box3D ao apertar Play): `PhysicsEngine::CreateBodyForEntity`
-extraia a rotacao inicial do corpo com `glm::quat_cast(worldMatrix)`
-DIRETO da matriz de mundo, que ainda tinha a ESCALA da entidade embutida
-nas colunas (`Translation * Rotation * Scale`, ver
-`TransformComponent::GetTransform()`) - a menos que `Scale` fosse
-exatamente `{1,1,1}`, isso produzia um quaternion nao normalizado/
-distorcido, que o Box3D valida internamente e rejeita com um assert (o
-crash reportado, `Core.c`: "instrucao de ponto de interrupcao"). Corrigido
-normalizando as 3 colunas de rotacao da matriz (removendo a escala) ANTES
-de extrair o quaternion, em vez de normalizar o quaternion depois (que
-corrige a magnitude mas nao o eixo de rotacao distorcido por uma escala
-nao-uniforme). Ver comentario `ATENCAO - bug corrigido` em
-`PhysicsEngine::CreateBodyForEntity`.
+**Bugs historicos, ja corrigidos, preservados na migracao**: os dois bugs
+abaixo foram corrigidos ainda na integracao Box3D original e as correcoes
+foram levadas para a implementacao em Jolt (o codigo que evita cada um
+continua no mesmo lugar conceitual, so trocando a chamada de API de baixo
+nivel):
 
-**ATENCAO - Box3D esta em v0.1.0, alpha** (unica release existente,
-30/jun/2026 - ver github.com/erincatto/box3d/releases). O autor
-(erincatto, tambem autor do consagrado Box2D) pede para nao enviar pull
-requests ainda; a API pode ganhar mudancas incompativeis em versoes
-futuras sem aviso de depreciacao, como e comum em libs pre-1.0. Decisao
-consciente de usar mesmo assim - ver `vendor/CMakeLists.txt` para o
-raciocinio completo. `GIT_TAG` fixado em `v0.1.0` exato (nao `main`) de
-proposito - atualizar e uma escolha manual, nunca automatica.
+- **"objetos se atravessam sem colidir" + gizmo gigantesco**: a causa
+  raiz nunca foi a lib de fisica em si - `ColliderComponent::Size` e uma
+  medida em UNIDADES ABSOLUTAS DE MUNDO, independente do
+  `TransformComponent::Scale` da entidade (ver comentario detalhado em
+  `ColliderComponent::Size`, `Components.h`). Escalar um mesh sem tambem
+  ajustar `Size` manualmente na Properties panel deixa o collider real
+  minusculo (ou grande demais) perto do mesh visual. Isso continua
+  verdade com Jolt exatamente como era com Box3D (ver limitacao
+  correspondente mais abaixo) - nao e algo que a troca de motor fisico
+  resolve ou piora.
+- **crash ao apertar Play com entidades escaladas**: `glm::quat_cast`
+  aplicado DIRETO numa matriz de mundo que ainda tem a escala da entidade
+  embutida nas colunas (`Translation * Rotation * Scale`) produz um
+  quaternion distorcido a menos que `Scale` seja exatamente `{1,1,1}` -
+  motores de fisica que validam quaternions de entrada (Box3D antes,
+  Jolt agora via seus asserts internos, `USE_ASSERTS` em
+  `vendor/CMakeLists.txt`) rejeitam isso com um crash/assert. A correcao
+  (normalizar as 3 colunas de rotacao da matriz ANTES de extrair o
+  quaternion, nao normalizar o quaternion resultante depois) e a mesma
+  nas duas versoes - ver comentario `mesmo bug/correcao ja documentado`
+  em `PhysicsEngine::CreateBodyForEntity`.
 
-**Duas funcoes NAO confirmadas contra a documentacao oficial** no momento
-em que esta integracao foi escrita: `b3CreateSphereShape`/
-`b3CreateCapsuleShape` (para `ColliderShape::Sphere`/`Capsule`) e
-`b3Body_SetLinearVelocity`. Foram implementadas seguindo o padrao
-consistente do resto da API C do Box3D (e o padrao identico do Box2D
-3.x), mas a doc publica so mostra o exemplo literal de `b3CreateHullShape`
-(usado para `ColliderShape::Box`, esse sim 100% confirmado). Se os nomes
-reais divergirem, o erro aparece como erro de COMPILACAO (funcao nao
-encontrada) - facil de localizar e corrigir em
-`build/_deps/box3d-src/include/box3d/*.h` apos o primeiro build. Ver
-comentarios `ATENCAO` em `PhysicsEngine.cpp` nesses dois pontos.
+**O que e estruturalmente diferente com Jolt** (nao existia equivalente
+disto com Box3D): Jolt exige que o consumidor da lib defina camadas de
+colisao (`ObjectLayer`/`BroadPhaseLayer` - ver `PhysicsEngine.cpp`,
+classes `Prism*LayerInterface`/`Prism*Filter`) e gerencie um
+`TempAllocator` + `JobSystemThreadPool` proprios (memoria temporaria do
+solver e paralelizacao entre threads, respectivamente) - Box3D vinha com
+um default pronto pra tudo isso (`b3CreateWorld(&worldDef)` e acabou).
+Hoje usamos so duas camadas fixas (Static/Moving, tudo colide com tudo) -
+mesma limitacao de "sem filtro fino por camada" que ja existia com Box3D,
+preservada de proposito para manter o escopo desta migracao contido so a
+troca de motor (nao virou oportunidade de adicionar feature nova).
 
 `Prism::PhysicsEngine` (`Prism/src/Prism/Physics/PhysicsEngine.h/.cpp`)
-cuida de um mundo Box3D (`b3WorldId`) por Scene "rodando" - criado em
+cuida de um `JPH::PhysicsSystem` por Scene "rodando" - criado em
 `Scene::OnScriptsStart()` e destruido em `Scene::OnScriptsStop()`: fisica
 e scripting ligam/desligam JUNTOS (o mesmo botao Play da menu bar liga os
 dois - conceitualmente sao "a simulacao esta rodando ou nao").
 
 **Como usar**: adicione `ColliderComponent` (Box/Sphere/Capsule, ver
 Properties panel) E `RigidBodyComponent` (Static/Kinematic/Dynamic) a uma
-entidade - Fisica so cria um corpo Box3D para entidades com AMBOS os
+entidade - Fisica so cria um corpo Jolt para entidades com AMBOS os
 components. Aperte Play: entidades `Dynamic` caem sob gravidade e colidem
 com `Static`/`Kinematic`, sincronizado de volta para
 `TransformComponent.Translation/Rotation` a cada frame (ver
 `PhysicsEngine::Simulate`).
 
-**API exposta a scripts Lua** (ver `ScriptEngine::RegisterAPI`):
-`entity:ApplyForce(x,y,z)`, `entity:ApplyImpulse(x,y,z)`,
-`entity:GetVelocity()` (retorna um `Vec3`), `entity:SetVelocity(x,y,z)`.
-Todas silenciosas (nao fazem nada) se a entidade nao tiver um corpo fisico
-ativo no momento da chamada.
+**API exposta a scripts Lua** (ver `ScriptEngine::RegisterAPI`) -
+inalterada pela migracao: `entity:ApplyForce(x,y,z)`,
+`entity:ApplyImpulse(x,y,z)`, `entity:GetVelocity()` (retorna um
+`Vec3`), `entity:SetVelocity(x,y,z)`. Todas silenciosas (nao fazem nada)
+se a entidade nao tiver um corpo fisico ativo no momento da chamada.
 
 **Timestep fixo**: `PhysicsEngine::Simulate` usa um acumulador para rodar
-`b3World_Step` em fatias fixas de 1/60s (recomendado pela doc oficial do
-Box3D para estabilidade), independente do deltaTime variavel que a engine
-recebe - protegido contra "espiral da morte" limitando a no maximo 5 steps
-por frame (descarta o resto do acumulador se ultrapassar isso, preferindo
-desacelerar a travar).
+`JPH::PhysicsSystem::Update` em fatias fixas de 1/60s (mesma recomendacao
+de estabilidade que ja valia para Box3D - a maioria dos motores de fisica
+e projetada e testada com passo constante), independente do deltaTime
+variavel que a engine recebe - protegido contra "espiral da morte"
+limitando a no maximo 5 steps por frame (descarta o resto do acumulador
+se ultrapassar isso, preferindo desacelerar a travar).
 
-**Limitacoes conhecidas, deixadas de proposito**:
+**Limitacoes conhecidas, deixadas de proposito** (a maioria preexistente
+a migracao - a troca de Box3D para Jolt nao mudou o escopo destas):
 - **Collider::Size nao acompanha Scale automaticamente** (ver nota acima
   sobre o bug ja corrigido) - nao ha um botao "ajustar collider ao
   tamanho do mesh" ainda; o usuario precisa calcular/digitar o Size
   manualmente na Properties panel toda vez que redimensiona um objeto via
   Scale. Uma melhoria futura natural seria um botao que auto-preenche
   Size a partir do bounding box do mesh vezes a Scale atual.
-- **Fisica + Parenting nao se combinam ainda**: o corpo Box3D e criado na
+- **Fisica + Parenting nao se combinam ainda**: o corpo Jolt e criado na
   posicao de MUNDO da entidade (`Scene::GetWorldTransform`, ancestrais
   inclusos), mas depois de criado e totalmente independente do parenting -
   a sincronizacao de volta escreve a posicao de mundo direto no
@@ -341,24 +339,36 @@ desacelerar a travar).
   fisica que tambem seja filha de outra entidade na Hierarchy. Correto
   para o caso comum (entidade fisica sem pai). Corrigir isso exigiria
   multiplicar pela inversa da transform do pai a cada sincronizacao -
-  adiado para manter o escopo desta primeira integracao controlado.
+  adiado para manter o escopo controlado (mesmo estado de antes da
+  migracao).
 - **Sem callbacks de colisao em Lua ainda**: `PhysicsEngine::Simulate` ja
-  le `b3World_GetBodyEvents` (posicao/rotacao) mas ainda NAO le
-  `b3World_GetContactEvents` (begin/end touch) nem os traduz para
+  sincroniza posicao/rotacao dos corpos de volta para `TransformComponent`
+  a cada frame, mas ainda NAO registra um `JPH::ContactListener` nem
+  traduz `OnContactAdded`/`OnContactRemoved` para
   `OnCollisionEnter`/`OnCollisionExit` no lado do script - o tipo
   `CollisionEvent` e o TODO ja estao la (ver `PhysicsEngine.h/.cpp`), so
-  falta ligar.
+  falta ligar. Mesmo estado (feature ainda nao implementada) de antes da
+  migracao - Box3D tambem nao tinha isso ligado.
 - Sem UI no editor para visualizar/depurar o mundo fisico rodando
   (wireframes de collider, contagem de corpos ativos etc) alem do que ja
   existia antes (gizmo estatico do collider na viewport, ver parenting).
-- Sem joints (revolute/distance/etc) expostos - Box3D suporta, mas nao ha
-  nenhum ColliderComponent-equivalente para configurar um joint no editor
-  ainda.
+- Sem joints (revolute/distance/etc) expostos - Jolt suporta nativamente
+  (inclusive mais tipos de joint que Box3D, incluindo veiculos), mas nao
+  ha nenhum ColliderComponent-equivalente para configurar um joint no
+  editor ainda.
 - `RigidBodyComponent::Mass` ainda nao e usado (a massa vem da densidade
-  padrao de 1.0 aplicada ao shape, nao do campo `Mass` da propria
-  entidade) - `b3Body_SetMassData`/`ApplyMassFromShapes` existem na API
-  para isso, mas conectar o campo `Mass` da UI a eles ficou de fora do
-  escopo desta etapa.
+  padrao aplicada ao shape pelo proprio Jolt, nao do campo `Mass` da
+  propria entidade) - `JPH::MassProperties`/`mMassPropertiesOverride`
+  existem na API do `BodyCreationSettings` para isso, mas conectar o
+  campo `Mass` da UI a eles ficou de fora do escopo desta etapa (mesmo
+  TODO que ja existia com Box3D, so a API de baixo nivel que vai
+  implementa-lo mudou).
+- Camadas de colisao fixas (Static/Moving, sem filtro fino por
+  gameplay-layer/mascara) - ver nota acima sobre `ObjectLayer`/
+  `BroadPhaseLayer`. Melhoria futura natural seria expor um enum de
+  camadas de gameplay (ex: "Player", "Enemy", "Environment",
+  "Trigger-only") configuravel no editor, similar ao que Unity/Unreal
+  oferecem.
 
 ## Nota sobre a Janela de Play (estado atual)
 

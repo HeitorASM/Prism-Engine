@@ -24,7 +24,7 @@ target_link_libraries(Prism PUBLIC
     EnTT::EnTT
     lua
     sol2
-    box3d::box3d
+    Jolt
 )
 
 target_compile_features(Prism PUBLIC cxx_std_20)

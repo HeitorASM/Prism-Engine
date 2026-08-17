@@ -284,32 +284,48 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
-# --- Box3D (fisica 3D - erincatto/box3d, o mesmo autor do consagrado Box2D) ---
+# --- Jolt Physics (fisica 3D - jrouwe/JoltPhysics) ---
 #
-# ATENCAO - Box3D esta em v0.1.0, alpha, lancado em 30/jun/2026 (a UNICA
-# release existente no repositorio no momento em que esta integracao foi
-# escrita). O autor pede explicitamente para NAO enviar pull requests
-# ainda (projeto em estabilizacao ativa) - ver github.com/erincatto/box3d.
-# Isso significa que funcoes/structs podem ser renomeadas ou ter a
-# assinatura mudada em versoes futuras SEM aviso de depreciacao (comum
-# em libs pre-1.0). Decisao consciente de usar mesmo assim (ver
-# discussao no README, secao "Nota sobre Fisica"): a API C e pequena e
-# estavel o suficiente pra documentar bem, e ja tem uso real reportado
-# em producao por outros (s&box da Facepunch Studios substituiu a
-# fisica nativa do Source 2 por ela). GIT_TAG fixado no v0.1.0 exato
-# (nao "main") de proposito - atualizar a versao e uma escolha manual e
-# deliberada, nunca automatica, justamente por causa dessa instabilidade
-# de API esperada.
+# Substituiu o Box3D (erincatto/box3d) nesta engine - ver git log / PR de
+# migracao para o motivo completo. Resumo: Box3D era v0.1.0 alpha (unica
+# release existente), com o proprio autor pedindo para nao mandar PRs
+# ainda (API instavel por design, sem garantia de compatibilidade entre
+# versoes). Jolt e o motor fisico usado em producao pela Horizon Forbidden
+# West (Guerrilla Games) e por diversos engines indie C++ serios, com
+# releases semanticas estaveis, documentacao completa e comunidade ativa -
+# a escolha natural para uma engine que vai depender de fisica solida no
+# longo prazo.
+#
+# GIT_TAG fixado numa release especifica (nao "master") pelo mesmo motivo
+# de disciplina de versionamento ja usado no resto deste arquivo (glfw,
+# glm, entt etc) - atualizar e uma escolha manual e deliberada.
+set(DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
+set(GENERATE_DEBUG_SYMBOLS ON CACHE BOOL "" FORCE)
+set(CROSS_PLATFORM_DETERMINISTIC OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(OBJECT_LAYER_BITS 16 CACHE STRING "" FORCE)
+set(USE_ASSERTS ON CACHE BOOL "" FORCE) # queremos os asserts do Jolt em Debug - ajudam a pegar erro de uso da API cedo, igual o assert do Box3D ja ajudava antes
+
+# ENABLE_ALL_WARNINGS vem ON por padrao no CMakeLists do proprio Jolt (ver
+# Build/CMakeLists.txt do repositorio oficial) - liga /Wall /WX no MSVC,
+# que e PENSADO para os proprios devs do Jolt manterem o codigo deles
+# limpo, nao para quem consome a lib como dependencia via FetchContent.
+# /Wall no MSVC ativa avisos informativos de headers do proprio Windows
+# SDK (ex: mudanca futura de tipo subjacente de enum com /Zc:enumTypes,
+# em headers como windows.h/winuser.h que o Jolt inclui internamente) -
+# com /WX, esses avisos viram ERRO FATAL e travam a build inteira, mesmo
+# sem nenhum problema real no codigo do Jolt ou desta engine. Desligado
+# de proposito aqui.
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
-    box3d
-    GIT_REPOSITORY https://github.com/erincatto/box3d.git
-    GIT_TAG v0.1.0
+    joltphysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.2.0
     GIT_SHALLOW TRUE
+    SOURCE_SUBDIR Build # o CMakeLists.txt real do Jolt fica em Build/, nao na raiz do repo - ver estrutura do repositorio oficial
 )
-FetchContent_MakeAvailable(box3d)
-# FetchContent_MakeAvailable ja expoe o target box3d::box3d (biblioteca
-# apenas - amostras/testes/benchmarks do proprio Box3D sao pulados
-# automaticamente quando consumido como subprojeto, conforme o README
-# oficial). Nao precisa de nenhum passo extra aqui, diferente do Lua
-# (que nao tem CMakeLists.txt oficial) - Box3D ja vem com suporte
-# nativo a CMake/FetchContent.
+FetchContent_MakeAvailable(joltphysics)
+# FetchContent_MakeAvailable ja expoe o target "Jolt" (biblioteca estatica).
+# Diferente do Box3D, Jolt nao usa namespace de target tipo "jolt::jolt" -
+# e so "Jolt" mesmo, ver Build/CMakeLists.txt do repositorio oficial.

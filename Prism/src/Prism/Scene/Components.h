@@ -228,10 +228,9 @@ namespace Prism {
         Capsule
     };
 
-    // Define a FORMA de colisao de uma entidade. Ainda nao alimenta
-    // nenhuma simulacao de fisica de verdade (Box3D - ver guia do
-    // prototipo - ainda nao esta integrado); e o dado/slot que o editor
-    // ja permite configurar. Uma entidade com só Collider (sem
+    // Define a FORMA de colisao de uma entidade, consumida pelo
+    // PhysicsEngine (Jolt Physics - ver Physics/PhysicsEngine.h) quando a
+    // Scene esta rodando (Play). Uma entidade com so Collider (sem
     // RigidBodyComponent) e um obstaculo estatico - nao se move, mas
     // outras coisas colidem com ela (ex: o chao, paredes).
     struct ColliderComponent {
@@ -246,7 +245,8 @@ namespace Prism {
         // entidade e do tamanho do mesh visual (MeshRendererComponent) -
         // ajustar o Scale (ex: esticar um mesh Plane para virar um chao
         // grande) NAO redimensiona o collider junto. Isso e proposital:
-        // Box3D (PhysicsEngine::CreateBodyForEntity) usa Size diretamente,
+        // O motor de fisica (PhysicsEngine::CreateBodyForEntity, Jolt) usa
+        // Size diretamente,
         // sem multiplicar pela Scale da entidade - entao o collider so
         // fica do tamanho certo quando Size e ajustado manualmente na
         // Properties panel para bater com o mesh visual. Esquecer disso e
@@ -264,9 +264,8 @@ namespace Prism {
         ColliderComponent(const ColliderComponent&) = default;
     };
 
-    // Como o corpo fisico se comporta dentro da simulacao (quando existir -
-    // ver ColliderComponent). Nomes que batem com o vocabulario padrao de
-    // motores de fisica (Box3D incluido):
+    // Como o corpo fisico se comporta dentro da simulacao - nomes que
+    // batem com o vocabulario padrao de motores de fisica (Jolt incluido):
     //   Static    - nunca se move, simulacao nao gasta tempo com ele (paredes, chao)
     //   Kinematic - se move, mas so via codigo/script, nunca empurrado pela fisica (plataformas, portas)
     //   Dynamic   - totalmente simulado (gravidade, colisoes empurram) (caixas, o player com fisica)
@@ -279,17 +278,16 @@ namespace Prism {
     // Define o comportamento fisico de uma entidade DENTRO da simulacao -
     // exige um ColliderComponent na mesma entidade para fazer sentido (uma
     // entidade so pode colidir/ser simulada se tiver uma forma definida).
-    // Igual ColliderComponent, ainda nao alimenta nenhuma simulacao de
-    // verdade - e o dado que o editor ja permite configurar, para quando
-    // Box3D for integrado (proximo item grande do roadmap depois de
-    // scripting) essas entidades ja estarem prontas.
+    // Consumido pelo PhysicsEngine (Jolt Physics) quando a Scene esta
+    // rodando (Play).
     struct RigidBodyComponent {
         BodyType Type = BodyType::Dynamic;
         float Mass = 1.0f;              // kg - so relevante para Dynamic
         bool UseGravity = true;         // so relevante para Dynamic
         bool ContinuousCollisionDetection = false; // CCD - para objetos rapidos nao atravessarem paredes (ver guia do prototipo)
 
-        // Trava as 3 rotacoes fisicas do corpo (b3BodyDef::fixedRotation) -
+        // Trava as 3 rotacoes fisicas do corpo (no Jolt, via
+        // BodyCreationSettings::mAllowedDOFs - ver PhysicsEngine::CreateBodyForEntity) -
         // o corpo ainda translada normalmente (cai, e empurrado, colide),
         // mas NUNCA tomba/gira sozinho por torque/atrito/colisao. Esencial
         // para qualquer entidade Dynamic cuja rotacao e controlada por
