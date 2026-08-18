@@ -184,9 +184,11 @@ processo (uma so, nao uma por script - cada script isolado via
 - `log(msg)` / `log_warn(msg)` / `log_error(msg)` - escreve no mesmo Console
   panel do editor (prefixo `[Lua]`).
 
-Fisica (Box3D) e Input ainda nao existem na engine, entao scripts nao tem
-acesso a nenhum dos dois ainda - proximos TODOs marcados direto no codigo
-de `ScriptEngine::RegisterAPI()`.
+Fisica ja existe na engine (`Prism::PhysicsEngine`, ver "Nota sobre Fisica
+(Jolt Physics)" mais abaixo) e ja esta exposta a scripts via
+`entity:ApplyForce/ApplyImpulse/GetVelocity/SetVelocity` - Input ainda nao
+existe, entao scripts ainda nao tem acesso a ele - proximo TODO marcado
+direto no codigo de `ScriptEngine::RegisterAPI()`.
 
 **Tres callbacks opcionais** que um arquivo `.lua` pode definir no seu
 escopo global: `OnCreate()`, `OnUpdate(deltaTime)`, `OnDestroy()`. Nenhum e
@@ -526,10 +528,13 @@ nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
 12. ~~Embutir Lua (ex: via `sol2` ou `LuaBridge`) + primeiro script rodando.~~ ✅ feito
     (`Prism::ScriptEngine`, botao Play/Parar na menu bar, API minima de
     Transform + log - ver nota "Scripting Lua" acima).
-13. ~~Integrar Box3D, corpos rígidos básicos.~~ ✅ feito (fixado em v0.1.0
-    alpha - `Prism::PhysicsEngine`, corpos Dynamic/Static/Kinematic com
-    Box/Sphere/Capsule, ApplyForce/Impulse expostos ao Lua - ver nota
-    "Fisica (Box3D)" acima).
+13. ~~Integrar fisica 3D, corpos rígidos básicos.~~ ✅ feito - `Prism::PhysicsEngine`,
+    corpos Dynamic/Static/Kinematic com Box/Sphere/Capsule,
+    ApplyForce/Impulse expostos ao Lua (ver nota "Fisica (Jolt Physics)"
+    acima). Integrado originalmente com Box3D (fixado em v0.1.0 alpha);
+    **migrado para Jolt Physics** logo em seguida por causa da instabilidade
+    de API de uma lib pre-1.0 - ver essa mesma nota para o historico
+    completo da troca.
 14. ~~Janela de Play separada (própria janela/viewport, câmera Primary do
     jogo, distinta da viewport de edição).~~ ✅ feito (janela real do SO
     com contexto OpenGL compartilhado, Scene clonada - ver nota "Janela de
@@ -809,8 +814,9 @@ removido depois pela Properties panel.
 - `ColliderComponent` — forma (Box/Sphere/Capsule), tamanho, flag de
   trigger.
 - `RigidBodyComponent` — tipo de corpo (Static/Kinematic/Dynamic), massa,
-  gravidade, CCD — nomes escolhidos já pensando no Box3D (próximo item do
-  roadmap).
+  gravidade, CCD — hoje alimenta a simulação de verdade via
+  `Prism::PhysicsEngine`/Jolt Physics (ver nota "Fisica (Jolt Physics)"
+  mais abaixo).
 - `ScriptComponent` — só um caminho relativo para um arquivo `.lua` dentro
   de `Scripts/`. Ainda **não executa nada** — é o slot de dado que a UI e o
   formato de arquivo já suportam, para quando Lua for embutido não precisar
@@ -828,12 +834,13 @@ geram comandos individuais de undo por edição — diferente de
 Transform/Cor, que capturam um `TransformCommand`/`MeshColorCommand` por
 gesto de arraste. Adicionar isso para mais ~15 campos infestaria bastante
 esta etapa; fica para uma passada futura se se mostrar necessário na
-prática. `LightComponent` ainda não afeta a renderização de verdade (o
-Renderer só tem uma luz direcional fixa hardcoded no shader) —
-`ColliderComponent`/`RigidBodyComponent` ainda não alimentam nenhuma
-simulação física — ambos aguardam os próximos itens do roadmap (iluminação
-de verdade / Box3D). Sem parenting/hierarquia real ainda (a Hierarchy panel
-continua sendo uma lista plana, não uma árvore).
+prática. **Nota histórica**: quando esta seção foi escrita originalmente,
+`LightComponent` ainda não afetava a renderização de verdade e
+`ColliderComponent`/`RigidBodyComponent` ainda não alimentavam nenhuma
+simulação física — ambos já foram implementados desde então (ver "Nota
+sobre Iluminação" e "Nota sobre Física (Jolt Physics)" mais abaixo/acima).
+Sem parenting/hierarquia real ainda (a Hierarchy panel continua sendo uma
+lista plana, não uma árvore).
 
 ## Nota sobre Salvar/Salvar Como/Novo Mapa (estado atual)
 
