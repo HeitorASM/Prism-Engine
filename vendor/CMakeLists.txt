@@ -306,6 +306,20 @@ set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
 set(OBJECT_LAYER_BITS 16 CACHE STRING "" FORCE)
 set(USE_ASSERTS ON CACHE BOOL "" FORCE) # queremos os asserts do Jolt em Debug - ajudam a pegar erro de uso da API cedo, igual o assert do Box3D ja ajudava antes
 
+# USE_STATIC_MSVC_RUNTIME_LIBRARY: opcao propria do CMakeLists.txt do Jolt
+# (ver Build/CMakeLists.txt do repositorio oficial), default ON no MSVC.
+# Isso faz o Jolt se compilar com /MTd (runtime estatico), enquanto o
+# resto deste projeto (EditorApp, Prism, GLFW, ImGui etc) usa o default
+# do CMake no Windows, que e /MDd (runtime dinamico). Duas runtime
+# libraries diferentes no mesmo executavel = o linker enxerga DUAS copias
+# de toda a libc/libc++ (uma do msvcprtd.lib dinamico, outra do
+# libcpmtd.lib estatico embutido no Jolt.lib) e reclama de simbolo
+# multiplo definido para cada funcao da STL usada por ambos os lados
+# (LNK2005) + incompatibilidade de runtime (LNK2038), terminando em
+# LNK1169 no link do PrismEditor.exe. Forcamos OFF aqui para o Jolt usar
+# /MD (Release) e /MDd (Debug), igual a todo o resto do projeto.
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+
 # ENABLE_ALL_WARNINGS vem ON por padrao no CMakeLists do proprio Jolt (ver
 # Build/CMakeLists.txt do repositorio oficial) - liga /Wall /WX no MSVC,
 # que e PENSADO para os proprios devs do Jolt manterem o codigo deles
