@@ -1858,7 +1858,22 @@ namespace PrismEditor {
                 ImGui::Checkbox("Rotacao Fixa (nao tomba/gira por fisica)", &rigidBody.FixedRotation);
                 if (rigidBody.FixedRotation)
                     ImGui::TextDisabled("Corpo ainda translada normalmente - so a ROTACAO fica travada. Use para camera/player controlado por script.");
-                ImGui::TextDisabled("Ainda nao alimenta simulacao de fisica (ver README).");
+
+                ImGui::Separator();
+                ImGui::TextDisabled("Material fisico");
+                // Friction/Restitution valem para qualquer BodyType (uma
+                // rampa Static com atrito baixo ainda afeta o que desliza
+                // nela) - ver comentario em RigidBodyComponent, Components.h.
+                ImGui::SliderFloat("Atrito", &rigidBody.Friction, 0.0f, 1.0f);
+                ImGui::SliderFloat("Restituicao (quique)", &rigidBody.Restitution, 0.0f, 1.0f);
+
+                // Damping so tem efeito em corpos Dynamic (o Jolt integra
+                // isso a cada step da simulacao - Static/Kinematic nao sao
+                // integrados de qualquer forma).
+                ImGui::BeginDisabled(!dynamicOnly);
+                ImGui::SliderFloat("Amortecimento Linear", &rigidBody.LinearDamping, 0.0f, 1.0f);
+                ImGui::SliderFloat("Amortecimento Angular", &rigidBody.AngularDamping, 0.0f, 1.0f);
+                ImGui::EndDisabled();
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));

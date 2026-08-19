@@ -358,19 +358,40 @@ a migracao - a troca de Box3D para Jolt nao mudou o escopo destas):
   (inclusive mais tipos de joint que Box3D, incluindo veiculos), mas nao
   ha nenhum ColliderComponent-equivalente para configurar um joint no
   editor ainda.
-- `RigidBodyComponent::Mass` ainda nao e usado (a massa vem da densidade
-  padrao aplicada ao shape pelo proprio Jolt, nao do campo `Mass` da
-  propria entidade) - `JPH::MassProperties`/`mMassPropertiesOverride`
-  existem na API do `BodyCreationSettings` para isso, mas conectar o
-  campo `Mass` da UI a eles ficou de fora do escopo desta etapa (mesmo
-  TODO que ja existia com Box3D, so a API de baixo nivel que vai
-  implementa-lo mudou).
 - Camadas de colisao fixas (Static/Moving, sem filtro fino por
   gameplay-layer/mascara) - ver nota acima sobre `ObjectLayer`/
   `BroadPhaseLayer`. Melhoria futura natural seria expor um enum de
   camadas de gameplay (ex: "Player", "Enemy", "Environment",
   "Trigger-only") configuravel no editor, similar ao que Unity/Unreal
   oferecem.
+
+**Massa/Friction/Restitution/Damping (estado atual)**: `RigidBodyComponent`
+agora alimenta a simulacao de verdade com `Mass`, `Friction`, `Restitution`,
+`LinearDamping` e `AngularDamping` - ate aqui so `Mass` existia como campo
+(sem efeito nenhum - TODO historico) e os outros 4 nao existiam. Hoje:
+- `Mass` (so Dynamic): usa `EOverrideMassProperties::CalculateInertia` +
+  `mMassPropertiesOverride.mMass` - o Jolt ainda calcula a INERCIA a partir
+  da forma (correto para a geometria configurada), mas a MASSA e exatamente
+  a que o usuario definiu na Properties panel, em vez da densidade generica
+  automatica que valia antes. Minimo de 0.001 (protege contra massa
+  zero/negativa travando o solver).
+- `Friction`/`Restitution` (qualquer BodyType, nao so Dynamic): setados
+  direto em `mFriction`/`mRestitution` do `BodyCreationSettings`. Jolt
+  combina os dois lados de um contato automaticamente (media geometrica
+  para friction, maior valor para restitution - defaults do proprio Jolt,
+  nao trocados aqui).
+- `LinearDamping`/`AngularDamping` (efetivos so em Dynamic - Jolt ignora em
+  Static/Kinematic de qualquer forma): arrasto simulado a cada step,
+  independente de contato (diferente de Friction, que so age quando dois
+  corpos se tocam).
+
+Todos os 4 novos campos ja tem UI na Properties panel (secao "Rigid Body")
+e sao salvos/carregados no `.prismmap` (formato subiu para **v8** - ver
+`SceneSerializer.cpp`). Ainda **nao** expostos a scripts Lua (API atual
+continua so `ApplyForce`/`ApplyImpulse`/`GetVelocity`/`SetVelocity` - ver
+"API exposta a scripts Lua" acima); getters/setters de
+massa/friction/restitution em runtime ficam para quando/se algum caso de
+uso real pedir (ex: um power-up que muda o peso do player em tempo real).
 
 ## Nota sobre a Janela de Play (estado atual)
 
@@ -550,14 +571,26 @@ nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
     (ver nota "Gizmo de Transform (ImGuizmo)" abaixo - antes desta etapa a
     ÚNICA forma de editar Transform era digitar valores nos DragFloat3 da
     Properties panel).
-17. IDE/editor de código embutido (scripting sem sair do editor) -
+17. ~~Física alimentada por massa/atrito/restitution/damping.~~ ✅ feito
+    (`RigidBodyComponent::Mass` agora afeta a simulação de verdade via
+    `EOverrideMassProperties::CalculateInertia`, mais `Friction`,
+    `Restitution`, `LinearDamping`, `AngularDamping` novos - `.prismmap`
+    subiu para **v8** - ver nota "Física (Jolt Physics)" acima).
+18. Sistema de iluminação expandido (sombras + SSAO/HBAO) - hoje é forward
+    rendering puro, sem shadow map nem ambient occlusion; ver nota
+    "Iluminação" (a fazer em separado, como sistema próprio, para não virar
+    dívida técnica em cima do forward atual).
+19. Sistema de prefabs/cenas reutilizáveis (estilo Godot: uma "cena" de
+    personagem instanciável em múltiplas cenas/entidades) - ainda não
+    existe; hoje toda entidade é definida do zero em cada `.prismmap`.
+20. IDE/editor de código embutido (scripting sem sair do editor) -
     `ScriptEditorPanel` já existe (syntax highlight via
     ImGuiColorTextEdit), falta autocomplete/breakpoints/um "IDE" de verdade
     como o guia do protótipo pede.
-18. BSP/CSG (brushes como um tipo de Entity no editor).
-19. Importação de assets externos (FBX/OBJ/glTF, áudio, texturas) - hoje só
+21. BSP/CSG (brushes como um tipo de Entity no editor) / map building.
+22. Importação de assets externos (FBX/OBJ/glTF, áudio, texturas) - hoje só
     as 5 primitivas embutidas existem; nenhum pipeline de import ainda.
-20. Materiais de verdade (hoje `MeshRendererComponent` só tem uma cor
+23. Materiais de verdade (hoje `MeshRendererComponent` só tem uma cor
     sólida RGB - sem texturas, PBR, ou o sistema "material com albedo/UV
     editável" que o guia do protótipo descreve).
 

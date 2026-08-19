@@ -282,9 +282,45 @@ namespace Prism {
     // rodando (Play).
     struct RigidBodyComponent {
         BodyType Type = BodyType::Dynamic;
-        float Mass = 1.0f;              // kg - so relevante para Dynamic
+        float Mass = 1.0f;              // kg - so relevante para Dynamic. Agora alimenta a simulacao de verdade (ver PhysicsEngine::CreateBodyForEntity, EOverrideMassProperties::CalculateInertia) - antes deste campo era ignorado (TODO historico), todo corpo Dynamic tinha massa calculada automaticamente pela densidade default do Jolt independente do que estivesse aqui.
         bool UseGravity = true;         // so relevante para Dynamic
         bool ContinuousCollisionDetection = false; // CCD - para objetos rapidos nao atravessarem paredes (ver guia do prototipo)
+
+        // Atrito de Coulomb (0 = gelo, sem atrito nenhum; 1 = atrito alto,
+        // valor tipico de borracha em asfalto). Jolt combina o atrito dos
+        // DOIS corpos em contato (por padrao, media geometrica -
+        // sqrt(a*b) - ver JPH::PhysicsSystem::SetCombineFriction; a engine
+        // nao troca esse combinador, fica no default do Jolt) - entao o
+        // atrito EFETIVO de um contato depende dos dois lados, nao so
+        // deste. Relevante para Static/Kinematic tambem (uma rampa Static
+        // com atrito baixo ainda deixa uma caixa Dynamic escorregar nela).
+        float Friction = 0.5f;
+
+        // Restitution ("bounciness"/elasticidade): 0 = nao quica nada
+        // (perde toda energia no impacto, ex: uma caixa de papelao), 1 =
+        // quicaria mantendo toda a energia (uma bola de borracha ideal -
+        // fisicamente irreal na pratica por perdas numericas, mas util
+        // como extremo). Assim como Friction, Jolt combina os dois lados
+        // do contato (default: pega o MAIOR dos dois - ver
+        // SetCombineRestitution) - uma bola bem elastica ainda quica bem
+        // mesmo caindo num chao com Restitution 0.
+        float Restitution = 0.0f;
+
+        // Damping ("arrasto"/resistencia) aplicado pelo PROPRIO Jolt a
+        // cada step de simulacao, simulando perda de energia por atrito
+        // com o ar/fluido - diferente de Friction (que so age em
+        // CONTATOS entre corpos), Damping desacelera um corpo Dynamic
+        // mesmo no ar, sem tocar em nada. LinearDamping reduz a
+        // velocidade linear (o corpo "flutua" ate parar de se mover sem
+        // forca nenhuma agindo); AngularDamping reduz a velocidade
+        // angular do mesmo jeito. Valores pequenos (0.0-0.1) sao o normal
+        // para a maioria dos objetos "solidos"; 0 desliga o efeito
+        // completamente (comportamento identico ao que a engine tinha
+        // antes deste campo existir). So relevante para Dynamic - Jolt
+        // ignora damping em corpos Static/Kinematic (eles nao sao
+        // integrados pela simulacao de qualquer forma).
+        float LinearDamping = 0.05f;
+        float AngularDamping = 0.05f;
 
         // Trava as 3 rotacoes fisicas do corpo (no Jolt, via
         // BodyCreationSettings::mAllowedDOFs - ver PhysicsEngine::CreateBodyForEntity) -

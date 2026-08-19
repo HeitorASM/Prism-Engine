@@ -67,7 +67,17 @@ namespace Prism {
     // comentario no bloco de Serialize/Deserialize). Arquivos v6 nao sao
     // lidos por este parser - mapas salvos antes desta mudanca precisam
     // ser resalvos uma vez (mesmo padrao de todo bump anterior).
-    static constexpr uint32_t kSceneFormatVersion = 7;
+    //
+    // v7 -> v8: RigidBodyComponent ganhou Friction/Restitution/
+    // LinearDamping/AngularDamping - ate aqui esses 4 valores existiam
+    // (com defaults fixos) mas nunca chegavam ao Jolt nem ao arquivo;
+    // agora alimentam a simulacao de verdade (ver
+    // PhysicsEngine::CreateBodyForEntity) e por isso precisam ser salvos,
+    // ou um mapa recarregado perderia o ajuste fino do usuario e voltaria
+    // silenciosamente para os defaults. Arquivos v7 nao sao lidos por
+    // este parser - mapas salvos antes desta mudanca precisam ser
+    // resalvos uma vez (mesmo padrao de todo bump anterior).
+    static constexpr uint32_t kSceneFormatVersion = 8;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -199,6 +209,10 @@ namespace Prism {
                 WriteRaw(out, rigidBody.UseGravity);
                 WriteRaw(out, rigidBody.ContinuousCollisionDetection);
                 WriteRaw(out, rigidBody.FixedRotation); // v6+ (ver kSceneFormatVersion)
+                WriteRaw(out, rigidBody.Friction);      // v8+ (ver kSceneFormatVersion)
+                WriteRaw(out, rigidBody.Restitution);   // v8+
+                WriteRaw(out, rigidBody.LinearDamping); // v8+
+                WriteRaw(out, rigidBody.AngularDamping);// v8+
             }
 
             bool hasScript = entity.HasComponent<ScriptComponent>();
@@ -430,7 +444,11 @@ namespace Prism {
                 auto& rigidBody = entity.AddComponent<RigidBodyComponent>();
                 bool rigidBodyOk = ReadRaw(in, rigidBody.Type) && ReadRaw(in, rigidBody.Mass)
                                 && ReadRaw(in, rigidBody.UseGravity) && ReadRaw(in, rigidBody.ContinuousCollisionDetection)
-                                && ReadRaw(in, rigidBody.FixedRotation); // v6+ (ver kSceneFormatVersion)
+                                && ReadRaw(in, rigidBody.FixedRotation)   // v6+ (ver kSceneFormatVersion)
+                                && ReadRaw(in, rigidBody.Friction)        // v8+
+                                && ReadRaw(in, rigidBody.Restitution)     // v8+
+                                && ReadRaw(in, rigidBody.LinearDamping)   // v8+
+                                && ReadRaw(in, rigidBody.AngularDamping); // v8+
                 if (!rigidBodyOk) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (rigidbody da entidade ", i, "): ", filepath.string());
                     return false;

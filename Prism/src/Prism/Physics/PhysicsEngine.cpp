@@ -6,6 +6,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <algorithm>
 
 #include <Jolt/Jolt.h>
 #include <Jolt/RegisterTypes.h>
@@ -451,11 +452,46 @@ namespace Prism {
         // sobreposicao mas nao gera resposta fisica (nao empurra nada).
         bodyCreationSettings.mIsSensor = collider.IsTrigger;
 
-        // TODO: expor densidade/massa customizada quando
-        // RigidBodyComponent::Mass for usado para overridar via
-        // MassPropertiesOverride - mesmo TODO que ja existia na versao
-        // Box3D (shapeDef.density = 1.0f la), preservado aqui de
-        // proposito (fora do escopo desta migracao).
+        // Atrito e restitution (elasticidade) do material - Jolt combina
+        // os dois lados de um contato automaticamente (default:
+        // sqrt(a*b) para friction, max(a,b) para restitution - ver
+        // comentario em RigidBodyComponent::Friction/Restitution,
+        // Components.h). Relevante para qualquer BodyType (uma rampa
+        // Static com atrito baixo ainda afeta corpos Dynamic que
+        // deslizam nela), nao so Dynamic.
+        bodyCreationSettings.mFriction = rigidBody.Friction;
+        bodyCreationSettings.mRestitution = rigidBody.Restitution;
+
+        // Damping (arrasto/resistencia simulado a cada step, independente
+        // de contato - ver comentario grande em
+        // RigidBodyComponent::LinearDamping/AngularDamping, Components.h).
+        // Jolt so integra isto para corpos Dynamic de qualquer forma
+        // (Static/Kinematic nao sao afetados mesmo com o campo setado),
+        // entao nao ha necessidade de condicionar isto a rigidBody.Type
+        // aqui.
+        bodyCreationSettings.mLinearDamping = rigidBody.LinearDamping;
+        bodyCreationSettings.mAngularDamping = rigidBody.AngularDamping;
+
+        // Massa customizada: por padrao (EOverrideMassProperties::
+        // CalculateMassAndInertia) o Jolt calcularia massa E inercia
+        // sozinho a partir do Shape * uma densidade generica fixa,
+        // ignorando RigidBodyComponent::Mass completamente - era esse o
+        // TODO historico deixado aqui (preservado da migracao Box3D ->
+        // Jolt, ver comentario que existia nesta mesma linha antes desta
+        // mudanca). CalculateInertia pede pro Jolt calcular a INERCIA
+        // ainda a partir da forma (relacao correta massa/tamanho/torque
+        // para a geometria configurada), mas usar a MASSA exata que o
+        // usuario colocou no Properties panel em vez da densidade
+        // generica - a combinacao certa para "eu quero controlar o peso,
+        // mas nao quero calcular um tensor de inercia a mao". So faz
+        // sentido para Dynamic (Static/Kinematic nao tem massa simulada
+        // de qualquer forma - o Jolt ignora MassPropertiesOverride nesses
+        // casos); Mass minimo de 0.001f evita massa zero/negativa (por
+        // erro de digitacao no editor) travando o solver do Jolt.
+        if (rigidBody.Type == BodyType::Dynamic) {
+            bodyCreationSettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            bodyCreationSettings.mMassPropertiesOverride.mMass = std::max(rigidBody.Mass, 0.001f);
+        }
 
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         JPH::Body* body = bodyInterface.CreateBody(bodyCreationSettings);
