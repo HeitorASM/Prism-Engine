@@ -489,6 +489,7 @@ namespace PrismEditor {
         RenderCameraGizmos(viewProjection);
         RenderSelectedColliderGizmo(viewProjection);
         RenderLightGizmos(viewProjection);
+        RenderRaycastGizmos(viewProjection);
 
         m_ViewportFramebuffer->Unbind();
     }
@@ -1256,11 +1257,10 @@ namespace PrismEditor {
         // camera de editor "de verdade" (com pan, foco em objeto, etc)
         // quando fizer falta na pratica. O gizmo de manipulacao (mover/
         // rotacionar/escalar) ja existe - ver RenderTransformGizmo() logo
-        // abaixo; falta so picking por clique direto na viewport (selecao
-        // ainda e so pela Hierarchy panel). Nao checa ImGuizmo::IsOver()
-        // aqui porque o gizmo so responde ao botao ESQUERDO do mouse -
-        // orbitar com o botao DIREITO em cima dele nao teria conflito real
-        // mesmo que os dois "sobrepusessem" na tela.
+        // abaixo. Nao checa ImGuizmo::IsOver() aqui porque o gizmo so
+        // responde ao botao ESQUERDO do mouse - orbitar com o botao
+        // DIREITO em cima dele nao teria conflito real mesmo que os dois
+        // "sobrepusessem" na tela.
         if (m_ViewportHovered) {
             ImGuiIO& io = ImGui::GetIO();
 
@@ -1277,9 +1277,9 @@ namespace PrismEditor {
 
         // Recalcula as MESMAS matrizes view/projection que RenderScene() ja
         // montou este frame (baratas o bastante para nao valer a pena
-        // cachear em membros so por isto) - o ImGuizmo precisa delas
-        // separadas (nao a viewProjection combinada) para projetar
-        // corretamente o gizmo por cima da imagem.
+        // cachear em membros so por isto) - tanto o picking abaixo quanto o
+        // ImGuizmo (RenderTransformGizmo) precisam delas separadas (nao a
+        // viewProjection combinada).
         {
             float aspect = m_ViewportSize[1] > 0.0f ? m_ViewportSize[0] / m_ViewportSize[1] : 1.0f;
             float yawRad = glm::radians(m_CameraYaw);
@@ -1291,11 +1291,121 @@ namespace PrismEditor {
             glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
 
+            // Picking: clique ESQUERDO simples (sem arrastar - IsMouseClicked
+            // dispara so no frame em que o botao desce) sobre a viewport
+            // seleciona a entidade sob o cursor, igual Unity/Unreal/Godot.
+            // Duas checagens evitam roubar o clique de outra coisa:
+            //   - !ImGuizmo::IsOver(): um clique EM CIMA do gizmo de
+            //     manipulacao (quando ha selecao) deve mover/rotacionar/
+            //     escalar a entidade, nao trocar a selecao por baixo dele.
+            //   - !ImGui::IsAnyItemHovered(): cobre a toolbar flutuante
+            //     (Mover/Rotacionar/Escalar/Mundo, ver acima) desenhada por
+            //     cima do canto da viewport - clicar nela nao deve
+            //     "vazar" como picking na cena atras.
+            if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                !ImGuizmo::IsOver() && !ImGui::IsAnyItemHovered()) {
+
+                // Posicao do mouse RELATIVA a imagem da viewport (nao a
+                // janela) e em [0,1] - mesmo espaco de imageMin/m_ViewportSize
+                // usados por ImGuizmo::SetRect acima.
+                ImVec2 mousePos = ImGui::GetMousePos();
+                float mouseX = mousePos.x - imageMin.x;
+                float mouseY = mousePos.y - imageMin.y;
+                float ndcX = (mouseX / m_ViewportSize[0]) * 2.0f - 1.0f;
+                // Y de tela cresce para BAIXO, NDC cresce para CIMA - inverte.
+                float ndcY = 1.0f - (mouseY / m_ViewportSize[1]) * 2.0f;
+
+                // Unprojection classica: leva dois pontos em clip space (no
+                // near e no far plane, mesmo XY de NDC) de volta para
+                // espaço de mundo via a inversa da view-projection - a reta
+                // entre eles E o raio de mundo que passa pelo pixel
+                // clicado. Mais simples e robusto que tentar reconstruir o
+                // raio a partir so do FOV/aspect manualmente, e reaproveita
+                // exatamente as mesmas view/projection que desenharam a
+                // cena, entao nao pode dessincronizar delas.
+                glm::mat4 invViewProjection = glm::inverse(projection * view);
+
+                glm::vec4 nearPointClip(ndcX, ndcY, -1.0f, 1.0f);
+                glm::vec4 farPointClip(ndcX, ndcY, 1.0f, 1.0f);
+
+                glm::vec4 nearPointWorld = invViewProjection * nearPointClip;
+                glm::vec4 farPointWorld = invViewProjection * farPointClip;
+                nearPointWorld /= nearPointWorld.w;
+                farPointWorld /= farPointWorld.w;
+
+                Prism::VisualRay ray;
+                ray.Origin = glm::vec3(nearPointWorld);
+                ray.Direction = glm::normalize(glm::vec3(farPointWorld - nearPointWorld));
+
+                Prism::VisualRaycastHit hit = m_ActiveScene->VisualRaycast(ray);
+                m_SelectedEntity = hit.Hit ? Prism::Entity(hit.Entity, m_ActiveScene.get())
+                                            : Prism::Entity{};
+            }
+
             RenderTransformGizmo(view, projection, imageMin);
         }
 
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+
+    void EditorLayer::RenderRaycastGizmos(const glm::mat4& viewProjection) {
+        auto view = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::RaycastComponent>();
+        for (auto entityHandle : view) {
+            auto& raycast = view.get<Prism::RaycastComponent>(entityHandle);
+            Prism::Entity entity(entityHandle, m_ActiveScene.get());
+
+            // TargetPosition e um PONTO local (identico em espirito a
+            // TransformComponent::Translation, NAO uma medida absoluta
+            // como ColliderComponent::Size/LightComponent::Range) - por
+            // isso usamos GetWorldTransform() COMPLETO (com Scale
+            // inclusa), diferente de RenderSelectedColliderGizmo/
+            // RenderLightGizmos acima, que extraem so posicao+rotacao de
+            // proposito. Mesma matriz que Scene::UpdateRaycastComponents
+            // usa para o teste fisico de verdade - o gizmo sempre bate
+            // com o que o raio realmente testou.
+            glm::mat4 world = m_ActiveScene->GetWorldTransform(entity);
+            glm::vec3 worldOrigin = glm::vec3(world * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            glm::vec3 worldTarget = glm::vec3(world * glm::vec4(raycast.TargetPosition, 1.0f));
+
+            // Enquanto a Scene esta rodando E o raio acertou algo, desenha
+            // so ate o ponto de impacto (nao ate TargetPosition) - deixa
+            // claro visualmente ONDE o raio parou, igual o debug draw de
+            // raycast de qualquer engine. Nos demais casos (nao rodando,
+            // ou rodando mas sem acerto) desenha ate TargetPosition
+            // inteiro - ver comentario no header sobre nao mostrar um
+            // HitPoint congelado/desatualizado fora do modo Play.
+            bool showingHit = m_ActiveScene->IsRunning() && raycast.Hit;
+            glm::vec3 lineEnd = showingHit ? raycast.HitPoint : worldTarget;
+
+            // Verde = acertou algo (mesma convencao universal de "hit" em
+            // debug draw); cinza = sem acerto ou fora do modo Play (raio
+            // "inativo"). Amarelo ja e usado pelo Collider (ver
+            // RenderSelectedColliderGizmo) - evitado aqui para os dois
+            // gizmos nunca se confundirem quando aparecem juntos na mesma
+            // entidade (um RaycastComponent sensor de chao, por exemplo,
+            // tipicamente vive numa entidade que TAMBEM tem Collider).
+            glm::vec3 color = showingHit ? glm::vec3(0.25f, 0.9f, 0.35f) : glm::vec3(0.55f, 0.55f, 0.55f);
+
+            std::vector<glm::vec3> points = { worldOrigin, lineEnd };
+            Prism::Renderer::DrawLines(glm::value_ptr(points[0]), (uint32_t)points.size(), glm::value_ptr(viewProjection), glm::value_ptr(color));
+
+            // Uma pequena cruz no ponto de impacto (3 segmentos curtos
+            // cruzando nos eixos) so quando ha um Hit de verdade - ajuda a
+            // localizar o ponto exato sem precisar aproximar a camera,
+            // mesmo padrao visual usado por editores para marcar um ponto
+            // de impacto (diferente de um circulo/esfera, que exigiria
+            // saber a normal para orientar).
+            if (showingHit) {
+                constexpr float kMarkerSize = 0.1f;
+                std::vector<glm::vec3> marker = {
+                    raycast.HitPoint - glm::vec3(kMarkerSize, 0, 0), raycast.HitPoint + glm::vec3(kMarkerSize, 0, 0),
+                    raycast.HitPoint - glm::vec3(0, kMarkerSize, 0), raycast.HitPoint + glm::vec3(0, kMarkerSize, 0),
+                    raycast.HitPoint - glm::vec3(0, 0, kMarkerSize), raycast.HitPoint + glm::vec3(0, 0, kMarkerSize),
+                };
+                Prism::Renderer::DrawLines(glm::value_ptr(marker[0]), (uint32_t)marker.size(), glm::value_ptr(viewProjection), glm::value_ptr(color));
+            }
+        }
     }
 
     void EditorLayer::RenderTransformGizmo(const glm::mat4& view, const glm::mat4& projection, const ImVec2& imageScreenPos) {
@@ -1754,6 +1864,44 @@ namespace PrismEditor {
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
         }
 
+        if (m_SelectedEntity.HasComponent<Prism::RaycastComponent>()) {
+            auto& raycast = m_SelectedEntity.GetComponent<Prism::RaycastComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Raycast", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Ativo", &raycast.Enabled);
+
+                // Mesmo padrao Godot: um PONTO local, nao um vetor
+                // direcao + distancia separados (ver comentario grande em
+                // RaycastComponent, Components.h). DragFloat3 comum, mesmo
+                // widget usado por TransformComponent::Translation na
+                // Properties panel - o usuario ja conhece essa UI.
+                ImGui::DragFloat3("Alvo (espaco local)", glm::value_ptr(raycast.TargetPosition), 0.05f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Ponto ate onde o raio vai, em espaco LOCAL da entidade (gira/translada junto com ela).\nEx: (0,0,-3) = para frente, 3 unidades. (0,-2,0) = para baixo, 2 unidades (sensor de chao).");
+
+                ImGui::Separator();
+                ImGui::TextDisabled("Resultado (fisico - so atualiza durante o modo Play):");
+                if (!m_ActiveScene->IsRunning()) {
+                    ImGui::TextDisabled("(fora do modo Play - sem resultado ainda)");
+                } else if (raycast.Hit) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Acertou algo");
+                    std::string hitName = "(entidade invalida)";
+                    if (m_ActiveScene->GetRegistry().valid(raycast.HitEntity)) {
+                        Prism::Entity hitEntity(raycast.HitEntity, m_ActiveScene.get());
+                        if (hitEntity.HasComponent<Prism::TagComponent>())
+                            hitName = hitEntity.GetComponent<Prism::TagComponent>().Tag;
+                    }
+                    ImGui::Text("Entidade: %s", hitName.c_str());
+                    ImGui::Text("Distancia: %.2f", raycast.HitDistance);
+                    ImGui::Text("Ponto: (%.2f, %.2f, %.2f)", raycast.HitPoint.x, raycast.HitPoint.y, raycast.HitPoint.z);
+                } else {
+                    ImGui::TextDisabled("Sem acerto");
+                }
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RaycastComponent>>(m_SelectedEntity, "Raycast"));
+        }
+
         if (m_SelectedEntity.HasComponent<Prism::CameraComponent>()) {
             auto& camera = m_SelectedEntity.GetComponent<Prism::CameraComponent>();
             bool keepOpen = true;
@@ -1878,6 +2026,7 @@ namespace PrismEditor {
                            || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
+                           || !m_SelectedEntity.HasComponent<Prism::RaycastComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>()
                            || !m_SelectedEntity.HasComponent<Prism::CameraComponent>();
 
@@ -1904,6 +2053,10 @@ namespace PrismEditor {
             }
             if (!m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>() && ImGui::MenuItem("Rigid Body")) {
                 m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
+                ImGui::CloseCurrentPopup();
+            }
+            if (!m_SelectedEntity.HasComponent<Prism::RaycastComponent>() && ImGui::MenuItem("Raycast")) {
+                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RaycastComponent>>(m_SelectedEntity, "Raycast"));
                 ImGui::CloseCurrentPopup();
             }
             if (!m_SelectedEntity.HasComponent<Prism::ScriptComponent>() && ImGui::MenuItem("Script")) {

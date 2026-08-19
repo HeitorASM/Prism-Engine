@@ -237,4 +237,50 @@ namespace Prism {
         return mesh;
     }
 
+    LocalBounds PrimitiveMeshFactory::GetLocalBounds(PrimitiveMesh mesh) {
+        switch (mesh) {
+            case PrimitiveMesh::Cube:
+                // Cubo unitario 1x1x1 centrado na origem (ver CreateCube).
+                return { { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+
+            case PrimitiveMesh::Sphere:
+                // Esfera unitaria de raio 0.5 centrada na origem (ver CreateSphere).
+                return { { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+
+            case PrimitiveMesh::Capsule: {
+                // Capsula = cilindro de altura 'height' (default 1.0, ver
+                // CreateCapsule) entre os centros das tampas + uma
+                // meia-esfera de raio 0.5 em cada ponta - altura TOTAL e
+                // height + 2*0.5 (raio das pontas), largura/profundidade
+                // sempre 0.5 (mesmo raio dos hemisferios). Usamos o
+                // 'height' default (1.0) aqui: GetLocalBounds nao recebe os
+                // parametros de resolucao/altura usados na geracao porque
+                // ColliderComponent (que teria o dado real por entidade) e
+                // um component separado do MeshRendererComponent - mesma
+                // limitacao que ColliderComponent::Size ja documenta
+                // (visual e collider sao independentes nesta engine, ver
+                // Components.h). Serve bem o suficiente para picking, que
+                // so precisa de um teste aproximado.
+                constexpr float defaultHeight = 1.0f;
+                float halfHeight = defaultHeight * 0.5f + 0.5f;
+                return { { -0.5f, -halfHeight, -0.5f }, { 0.5f, halfHeight, 0.5f } };
+            }
+
+            case PrimitiveMesh::Cylinder:
+                // Cilindro de raio 0.5, altura 1.0, centrado na origem (ver CreateCylinder).
+                return { { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+
+            case PrimitiveMesh::Plane:
+                // Plano 1x1 no plano XZ (ver CreatePlane) - espessura zero
+                // no Y por definicao. Scene::Raycast trata este caso
+                // especial (ver comentario la) para nao falhar sempre que
+                // o raio for quase paralelo ao plano.
+                return { { -0.5f, 0.0f, -0.5f }, { 0.5f, 0.0f, 0.5f } };
+        }
+
+        // Nunca deveria chegar aqui (switch cobre todos os valores do enum) -
+        // fallback conservador do tamanho do cubo, so por seguranca.
+        return { { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+    }
+
 }

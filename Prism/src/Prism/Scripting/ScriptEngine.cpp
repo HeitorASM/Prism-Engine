@@ -83,9 +83,9 @@ namespace Prism {
             "Distance", &RaycastHit::Distance
         );
 
-        // --- Fisica (Box3D via PhysicsEngine) -----------------------------
+        // --- Fisica (Jolt via PhysicsEngine) -----------------------------
         // Expostas como metodos de Entity, no mesmo padrao de Transform
-        // acima - o script nunca ve um b3BodyId ou qualquer tipo do Box3D
+        // acima - o script nunca ve um JPH::BodyID ou qualquer tipo do Jolt
         // diretamente, so o vocabulario da propria engine. Todas silenciosas
         // se a entidade nao tiver um corpo fisico ativo (fora do modo Play,
         // ou sem RigidBodyComponent+ColliderComponent - ver
@@ -299,7 +299,7 @@ namespace Prism {
 
         // TODO(colisao): expor callbacks OnCollisionEnter/OnCollisionExit
         // chamados pelo PhysicsEngine::Simulate quando eventos de contato
-        // do Box3D ocorrem envolvendo esta entidade - adiado desta
+        // do Jolt ocorrem envolvendo esta entidade - adiado desta
         // primeira integracao de fisica (ver TODO identico em
         // PhysicsEngine::Simulate, no bloco de eventos de colisao).
     }

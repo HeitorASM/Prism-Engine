@@ -228,6 +228,23 @@ namespace PrismEditor {
         // de RenderSelectedColliderGizmo().
         void RenderLightGizmos(const glm::mat4& viewProjection);
 
+        // Desenha uma linha (Renderer::DrawLines) do centro de mundo ate o
+        // ponto de impacto (RaycastComponent::HitPoint, se Hit) ou ate o
+        // TargetPosition transformado para mundo (se nao acertou nada) de
+        // TODA entidade com RaycastComponent na cena - mesmo padrao de
+        // "toda entidade sempre visivel, nao so a selecionada" que
+        // RenderLightGizmos ja usa (ver comentario la sobre o motivo: sem
+        // gizmo, um RaycastComponent seria invisivel na viewport, ja que
+        // nao tem MeshRendererComponent). Verde quando acertou algo,
+        // cinza quando nao - mesma linguagem visual de "hit/miss" que a
+        // maioria dos motores usa para debug de raycast. So mostra
+        // resultado de verdade durante o modo Play (Scene::IsRunning) -
+        // RaycastComponent::Hit fica congelado no ultimo valor fora disso
+        // (ver Scene::UpdateRaycastComponents), entao o gizmo sempre
+        // desenha a linha ATE TargetPosition (nunca um HitPoint desatualizado)
+        // quando a Scene nao esta rodando.
+        void RenderRaycastGizmos(const glm::mat4& viewProjection);
+
         // Desenha o gizmo de manipulacao (ImGuizmo) sobre a entidade
         // atualmente SELECIONADA (m_SelectedEntity) - as setas/planos de
         // Translate, os aneis de Rotate ou as caixinhas de Scale,

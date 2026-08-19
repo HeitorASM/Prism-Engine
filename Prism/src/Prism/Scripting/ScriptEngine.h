@@ -14,11 +14,12 @@
 //      erros viram PRISM_CORE_ERROR no Console, o script fica "quebrado"
 //      ate ser corrigido e recarregado, so isso.
 //
-// Escopo deliberadamente contido (mesmo espirito do resto do roadmap - ver
-// README "Nota sobre Scripting"): SO Transform (posicao/rotacao/escala da
-// PROPRIA entidade) e log() sao expostos por enquanto. Fisica (Box3D) e
-// Input ainda nao existem na engine, entao nao ha nada pra expor delas
-// ainda - meros TODOs para quando esses sistemas chegarem.
+// Escopo da API Lua: Transform (posicao/rotacao/escala da PROPRIA
+// entidade), fisica (ApplyForce/ApplyImpulse/GetVelocity/SetVelocity em
+// Entity + Physics.Raycast global - ver PhysicsEngine::Raycast), Input
+// (teclado/mouse/cursor - ver Core/Input.h) e log(). Ver
+// example_player_input_raycast.lua (PrismEditor/assets/ScriptExamples)
+// para um exemplo completo combinando os tres.
 // ============================================================================
 
 #include "../Core/Base.h"

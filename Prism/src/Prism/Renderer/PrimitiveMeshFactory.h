@@ -11,6 +11,8 @@
 // ============================================================================
 
 #include "Mesh.h"
+#include "../Scene/Components.h" // PrimitiveMesh
+#include <glm/glm.hpp>
 #include <vector>
 
 namespace Prism {
@@ -18,6 +20,18 @@ namespace Prism {
     struct GeneratedMesh {
         std::vector<MeshVertex> Vertices;
         std::vector<uint32_t> Indices;
+    };
+
+    // Bounding box axis-aligned MINIMA/MAXIMA no espaco LOCAL (nao-transformado)
+    // de uma primitiva - usada por raycast/picking (ver Scene::Raycast) para
+    // um teste rapido de intersecao sem precisar iterar vertice por vertice
+    // do mesh de verdade. Cada primitiva e gerada centrada na origem com
+    // dimensoes unitarias (ver cada Create* acima) - por isso estes bounds
+    // sao constantes conhecidas, nao precisam ser calculados a partir da
+    // geometria gerada.
+    struct LocalBounds {
+        glm::vec3 Min;
+        glm::vec3 Max;
     };
 
     class PrimitiveMeshFactory {
@@ -46,6 +60,16 @@ namespace Prism {
         // Plano unitario (1x1) no plano XZ, normal apontando para +Y - util
         // como chao/piso de teste antes do sistema de brushes/BSP existir.
         static GeneratedMesh CreatePlane();
+
+        // Bounding box local (nao-transformada) da primitiva 'mesh' - ver
+        // comentario de LocalBounds acima. Usada por Scene::Raycast para
+        // testar um raio contra a entidade sem tocar na geometria de GPU.
+        // O Plano tem espessura zero no eixo Y por definicao (e um
+        // quadrilatero, nao um solido) - Scene::Raycast da a ele uma
+        // pequena espessura minima so para o teste de raio nao falhar
+        // sempre que o raio for exatamente paralelo ao plano (ver
+        // comentario la).
+        static LocalBounds GetLocalBounds(PrimitiveMesh mesh);
     };
 
 }

@@ -347,4 +347,52 @@ namespace Prism {
         ScriptComponent(const std::string& scriptPath) : ScriptPath(scriptPath) {}
     };
 
+    // Um raio FISICO (contra ColliderComponent, via Jolt - mesmo raycast
+    // que Physics.Raycast expoe ao Lua, ver PhysicsEngine::Raycast) que
+    // dispara automaticamente TODO FRAME enquanto a Scene esta rodando
+    // (Play), sem exigir nenhum script - util para sensores reutilizaveis
+    // configurados so pela Properties panel: "esta entidade tocando o
+    // chao?", visao de um NPC, gatilho de arma, etc.
+    //
+    // Mesmo espirito de design do RayCast3D da Godot: TargetPosition e um
+    // ponto em ESPACO LOCAL da propria entidade (nao um vetor direcao +
+    // distancia separados) - o raio vai de (0,0,0) local ate TargetPosition
+    // local, e ambos os pontos sao levados para o espaco de MUNDO usando a
+    // TransformComponent (ver Scene::UpdateRaycastComponents) antes do
+    // teste fisico de verdade. Isso significa que o raio automaticamente
+    // gira/translada junto com a entidade (rotacionar o objeto rotaciona
+    // o raio junto) sem exigir nenhuma trigonometria manual - so escolher
+    // o vetor local certo:
+    //   (0, 0, -1) * distancia -> "para frente" (mesma convencao de
+    //                             Entity:GetForward() no Lua)
+    //   (0, -1, 0) * distancia -> "para baixo" (sensor de chao)
+    //   (1, 0, 0)  * distancia -> "para a direita local"
+    // etc - qualquer combinacao X/Y/Z e valida, exatamente como no Godot.
+    struct RaycastComponent {
+        glm::vec3 TargetPosition = { 0.0f, 0.0f, -3.0f }; // espaco local - default "para frente", 3 unidades
+
+        // Se false, o raio nao e testado neste frame (resultado abaixo
+        // congela no ultimo valor) - equivalente ao "Enabled" do Godot.
+        // Util para ligar/desligar um sensor por script sem precisar
+        // remover/recriar o component inteiro.
+        bool Enabled = true;
+
+        // --- Resultado do ultimo teste (somente leitura pela UI/scripts;
+        // escrito exclusivamente por Scene::UpdateRaycastComponents) ---
+        // Mesmos campos de PhysicsEngine::RaycastHit, copiados aqui para
+        // a Properties panel poder mostrar o resultado ao vivo sem
+        // precisar guardar um RaycastHit inteiro (que tem um entt::entity
+        // cru, mais dificil de exibir como "nome da entidade" sem acesso
+        // a Scene de dentro do proprio component - ver
+        // Scene::UpdateRaycastComponents, que resolve o nome ali mesmo).
+        bool Hit = false;
+        entt::entity HitEntity = entt::null;
+        glm::vec3 HitPoint = { 0.0f, 0.0f, 0.0f };
+        glm::vec3 HitNormal = { 0.0f, 0.0f, 0.0f };
+        float HitDistance = 0.0f;
+
+        RaycastComponent() = default;
+        RaycastComponent(const RaycastComponent&) = default;
+    };
+
 }

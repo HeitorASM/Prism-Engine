@@ -59,7 +59,15 @@ namespace Prism {
     // camera/player controlados por script). Arquivos v5 nao sao lidos
     // por este parser - mapas salvos antes desta mudanca precisam ser
     // resalvos uma vez (mesmo padrao de todo bump anterior).
-    static constexpr uint32_t kSceneFormatVersion = 6;
+    //
+    // v6 -> v7: adicionado RaycastComponent (opcional, mesmo padrao de
+    // flag de presenca). So TargetPosition/Enabled sao gravados - os
+    // campos de resultado (Hit/HitEntity/HitPoint/HitNormal/HitDistance)
+    // sao transientes de runtime e nunca vao para o arquivo (ver
+    // comentario no bloco de Serialize/Deserialize). Arquivos v6 nao sao
+    // lidos por este parser - mapas salvos antes desta mudanca precisam
+    // ser resalvos uma vez (mesmo padrao de todo bump anterior).
+    static constexpr uint32_t kSceneFormatVersion = 7;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -213,6 +221,21 @@ namespace Prism {
                 WriteRaw(out, camera.NearClip);
                 WriteRaw(out, camera.FarClip);
                 WriteRaw(out, camera.Primary);
+            }
+
+            // RaycastComponent - adicionado na v7 do formato (ver
+            // kSceneFormatVersion). So TargetPosition/Enabled sao gravados -
+            // Hit/HitEntity/HitPoint/HitNormal/HitDistance sao resultado
+            // TRANSIENTE de runtime (recalculado todo frame por
+            // Scene::UpdateRaycastComponents enquanto a Scene esta
+            // rodando, ver Components.h), gravar isso no mapa seria so
+            // lixo que nunca reflete a realidade no proximo carregamento.
+            bool hasRaycast = entity.HasComponent<RaycastComponent>();
+            WriteRaw(out, hasRaycast);
+            if (hasRaycast) {
+                auto& raycast = entity.GetComponent<RaycastComponent>();
+                WriteRaw(out, raycast.TargetPosition);
+                WriteRaw(out, raycast.Enabled);
             }
 
             // RelationshipComponent - adicionado na v4 do formato. So o
@@ -447,6 +470,27 @@ namespace Prism {
                 }
                 if (camera.ProjectionType != CameraProjectionType::Perspective && camera.ProjectionType != CameraProjectionType::Orthographic) {
                     PRISM_CORE_ERROR("SceneSerializer: CameraProjectionType invalido na entidade ", i, " de '", filepath.string(), "'.");
+                    return false;
+                }
+            }
+
+            // RaycastComponent - adicionado na v7 do formato (ver
+            // kSceneFormatVersion). So TargetPosition/Enabled sao lidos -
+            // Hit/HitEntity/HitPoint/HitNormal/HitDistance ficam nos
+            // defaults de RaycastComponent (Hit=false etc), ja que nunca
+            // foram gravados (ver comentario no bloco de Serialize acima)
+            // - o primeiro frame do modo Play recalcula tudo de qualquer
+            // forma (ver Scene::UpdateRaycastComponents).
+            bool hasRaycast = false;
+            if (!ReadRaw(in, hasRaycast)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de raycast da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasRaycast) {
+                auto& raycast = entity.AddComponent<RaycastComponent>();
+                bool raycastOk = ReadRaw(in, raycast.TargetPosition) && ReadRaw(in, raycast.Enabled);
+                if (!raycastOk) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (raycast da entidade ", i, "): ", filepath.string());
                     return false;
                 }
             }
