@@ -36,7 +36,7 @@ namespace PrismEditor {
         m_ContentBrowser.ResetToProjectRoot();
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             LoadScene(mapPath);
-        });
+            });
 
         LoadOrCreateScene();
     }
@@ -203,9 +203,11 @@ namespace PrismEditor {
             ImGui::Dummy(ImVec2(0, 4));
             if (nameEmpty) {
                 ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o mapa.");
-            } else if (wouldOverwrite) {
+            }
+            else if (wouldOverwrite) {
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Ja existe um mapa com este nome - sera sobrescrito.");
-            } else {
+            }
+            else {
                 ImGui::TextDisabled("%s", previewPath.filename().string().c_str());
             }
 
@@ -231,7 +233,8 @@ namespace PrismEditor {
                     Prism::Project::SetStartMap(relativeToMapDir);
                 }
                 ImGui::CloseCurrentPopup();
-            } else if (cancelled) {
+            }
+            else if (cancelled) {
                 ImGui::CloseCurrentPopup();
             }
 
@@ -354,9 +357,11 @@ namespace PrismEditor {
             ImGui::Dummy(ImVec2(0, 4));
             if (nameEmpty) {
                 ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o script.");
-            } else if (wouldOverwrite) {
+            }
+            else if (wouldOverwrite) {
                 ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Ja existe um script com este nome.");
-            } else {
+            }
+            else {
                 ImGui::TextDisabled("%s", (name + ".lua").c_str());
             }
 
@@ -380,7 +385,8 @@ namespace PrismEditor {
                     m_ScriptEditor.Open(project->GetScriptDirectory() / relativePath);
                 }
                 ImGui::CloseCurrentPopup();
-            } else if (cancelled) {
+            }
+            else if (cancelled) {
                 ImGui::CloseCurrentPopup();
             }
 
@@ -427,17 +433,8 @@ namespace PrismEditor {
 
         RenderScene(deltaTime);
 
-        // Resize do framebuffer de preview segue o mesmo padrao do
-        // m_ViewportFramebuffer acima - so que usando o tamanho do painel
-        // Camera (m_CameraPreviewSize), setado por RenderCameraPreviewPanel().
-        if (m_CameraPreviewFramebuffer) {
-            const auto& previewSpec = m_CameraPreviewFramebuffer->GetSpecification();
-            if (m_CameraPreviewSize[0] > 0.0f && m_CameraPreviewSize[1] > 0.0f &&
-                (previewSpec.Width != (uint32_t)m_CameraPreviewSize[0] || previewSpec.Height != (uint32_t)m_CameraPreviewSize[1])) {
-                m_CameraPreviewFramebuffer->Resize((uint32_t)m_CameraPreviewSize[0], (uint32_t)m_CameraPreviewSize[1]);
-            }
-        }
-        RenderCameraPreview(deltaTime);
+        // Nao chamamos mais RenderCameraPreview() aqui - agora ela e
+        // chamada sob demanda dentro de RenderPropertiesPanel().
 
         // PlayWindow::OnUpdate cuida do proprio ciclo (simulacao + desenho
         // + eventos) da janela separada de Play, se estiver aberta -
@@ -494,68 +491,41 @@ namespace PrismEditor {
         m_ViewportFramebuffer->Unbind();
     }
 
-    void EditorLayer::RenderCameraPreview(float deltaTime) {
-        // Sem framebuffer ainda (painel Camera nunca foi aberto) - nada a
-        // fazer. Criado sob demanda em RenderCameraPreviewPanel().
-        if (!m_CameraPreviewFramebuffer)
-            return;
+    uint32_t EditorLayer::RenderCameraPreview(Prism::Entity cameraEntity, float width, float height) {
+        if (!cameraEntity || !cameraEntity.HasComponent<Prism::CameraComponent>())
+            return 0;
+
+        // Cria o framebuffer sob demanda
+        if (!m_CameraPreviewFramebuffer) {
+            Prism::FramebufferSpecification fbSpec;
+            fbSpec.Width = (uint32_t)std::max(width, 1.0f);
+            fbSpec.Height = (uint32_t)std::max(height, 1.0f);
+            m_CameraPreviewFramebuffer = Prism::Framebuffer::Create(fbSpec);
+        }
+
+        // Redimensiona se necessário
+        const auto& spec = m_CameraPreviewFramebuffer->GetSpecification();
+        uint32_t w = (uint32_t)std::max(width, 1.0f);
+        uint32_t h = (uint32_t)std::max(height, 1.0f);
+        if (spec.Width != w || spec.Height != h) {
+            m_CameraPreviewFramebuffer->Resize(w, h);
+        }
 
         m_CameraPreviewFramebuffer->Bind();
         Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
 
-        // Acha a entidade com CameraComponent::Primary=true - mesma busca
-        // que RenderScene() fazia antes desta mudanca (agora vive so aqui,
-        // ja que so a preview usa a camera de jogo).
-        Prism::Entity primaryCameraEntity;
-        auto cameraView = m_ActiveScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
-        for (auto entityHandle : cameraView) {
-            auto [transform, camera] = cameraView.get<Prism::TransformComponent, Prism::CameraComponent>(entityHandle);
-            if (camera.Primary) {
-                primaryCameraEntity = Prism::Entity(entityHandle, m_ActiveScene.get());
-                break; // so a primeira Primary encontrada conta - SetPrimaryCamera() ja garante que so existe uma
-            }
-        }
+        float aspect = h > 0 ? (float)w / (float)h : 1.0f;
+        auto& camera = cameraEntity.GetComponent<Prism::CameraComponent>();
+        glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(cameraEntity);
+        glm::mat4 view = glm::inverse(worldTransform);
+        glm::mat4 projection = camera.GetProjection(aspect);
+        glm::mat4 viewProjection = projection * view;
+        glm::vec3 worldPos = glm::vec3(worldTransform[3]);
 
-        if (primaryCameraEntity) {
-            const auto& spec = m_CameraPreviewFramebuffer->GetSpecification();
-            float aspect = spec.Height > 0 ? (float)spec.Width / (float)spec.Height : 1.0f;
-
-            auto& camera = primaryCameraEntity.GetComponent<Prism::CameraComponent>();
-
-            // View da camera de jogo: inversa da matriz de MUNDO da
-            // entidade (ancestrais inclusos, via GetWorldTransform - ver
-            // parenting em Scene.h; ex: uma camera filha de um Character
-            // acompanha o pai). GetWorldTransform ja inclui Scale, que nao
-            // faz sentido para uma camera, mas cameras tipicamente ficam
-            // com Scale=1 em toda a cadeia de ancestrais (o preset de
-            // criacao garante isso na propria entidade), entao nao e um
-            // problema na pratica.
-            glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(primaryCameraEntity);
-            glm::mat4 view = glm::inverse(worldTransform);
-            glm::mat4 projection = camera.GetProjection(aspect);
-            glm::mat4 viewProjection = projection * view;
-
-            // Renderer::DrawScene ja chama SetCameraPosition() internamente
-            // (necessario ANTES de qualquer DrawMesh() deste framebuffer -
-            // ver comentario em Renderer::SetCameraPosition, Renderer.h.
-            // E EXATAMENTE este teste que resolve o problema original de
-            // uma CameraComponent posicionada dentro de outro mesh (ex: a
-            // capsula de colisao de um Character): a face interna do mesh
-            // que a envolve fica transparente na preview, entao a camera
-            // enxerga o resto da cena em vez de uma parede solida.
-            glm::vec3 worldPos = glm::vec3(worldTransform[3]);
-            Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(viewProjection), glm::value_ptr(worldPos));
-            // Nao chama RenderCameraGizmos aqui de proposito - a propria
-            // camera nao deve desenhar o frustum dela mesma dentro da sua
-            // propria preview (ficaria com a geometria do gizmo colada na
-            // tela toda, ja que a camera esta dentro do proprio frustum).
-        }
-        // Sem Primary: framebuffer fica so com o Clear acima (fundo escuro
-        // solido) - RenderCameraPreviewPanel() mostra uma mensagem de texto
-        // em cima dessa imagem vazia, explicando que nenhuma camera foi
-        // marcada como Primary ainda.
+        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(viewProjection), glm::value_ptr(worldPos));
 
         m_CameraPreviewFramebuffer->Unbind();
+        return m_CameraPreviewFramebuffer->GetColorAttachmentID();
     }
 
     void EditorLayer::RenderCameraGizmos(const glm::mat4& viewProjection) {
@@ -587,7 +557,8 @@ namespace PrismEditor {
                 float halfHeight = camera.OrthoSize * 0.5f * 0.15f; // escalado para o mesmo tamanho visual do frustum perspective
                 nearHalfHeight = farHalfHeight = halfHeight;
                 nearHalfWidth = farHalfWidth = halfHeight * kGizmoAspect;
-            } else {
+            }
+            else {
                 float tanHalfFov = tanf(glm::radians(camera.FOV) * 0.5f);
                 nearHalfHeight = kGizmoNear * tanHalfFov;
                 nearHalfWidth = nearHalfHeight * kGizmoAspect;
@@ -601,17 +572,17 @@ namespace PrismEditor {
             // assume implicitamente).
             auto toWorld = [&](float x, float y, float z) {
                 return glm::vec3(model * glm::vec4(x, y, -z, 1.0f));
-            };
+                };
 
             glm::vec3 apex = toWorld(0, 0, 0);
-            glm::vec3 nearTL = toWorld(-nearHalfWidth,  nearHalfHeight, kGizmoNear);
-            glm::vec3 nearTR = toWorld( nearHalfWidth,  nearHalfHeight, kGizmoNear);
+            glm::vec3 nearTL = toWorld(-nearHalfWidth, nearHalfHeight, kGizmoNear);
+            glm::vec3 nearTR = toWorld(nearHalfWidth, nearHalfHeight, kGizmoNear);
             glm::vec3 nearBL = toWorld(-nearHalfWidth, -nearHalfHeight, kGizmoNear);
-            glm::vec3 nearBR = toWorld( nearHalfWidth, -nearHalfHeight, kGizmoNear);
-            glm::vec3 farTL  = toWorld(-farHalfWidth,   farHalfHeight,  kGizmoFar);
-            glm::vec3 farTR  = toWorld( farHalfWidth,   farHalfHeight,  kGizmoFar);
-            glm::vec3 farBL  = toWorld(-farHalfWidth,  -farHalfHeight,  kGizmoFar);
-            glm::vec3 farBR  = toWorld( farHalfWidth,  -farHalfHeight,  kGizmoFar);
+            glm::vec3 nearBR = toWorld(nearHalfWidth, -nearHalfHeight, kGizmoNear);
+            glm::vec3 farTL = toWorld(-farHalfWidth, farHalfHeight, kGizmoFar);
+            glm::vec3 farTR = toWorld(farHalfWidth, farHalfHeight, kGizmoFar);
+            glm::vec3 farBL = toWorld(-farHalfWidth, -farHalfHeight, kGizmoFar);
+            glm::vec3 farBR = toWorld(farHalfWidth, -farHalfHeight, kGizmoFar);
 
             // 8 segmentos: retangulo near, retangulo far, 4 arestas
             // conectando near->far (para Perspective isso converge para o
@@ -670,7 +641,7 @@ namespace PrismEditor {
         );
         auto toWorld = [&](const glm::vec3& local) {
             return worldPosition + worldRotationOnly * local;
-        };
+            };
 
         // Amarelo: convencao comum de "gizmo de colisao selecionado" (Unity
         // usa verde-claro, Unreal usa laranja/vermelho, Godot usa um roxo
@@ -697,7 +668,7 @@ namespace PrismEditor {
                 if (i > 0) { points.push_back(prev); points.push_back(p); }
                 prev = p;
             }
-        };
+            };
 
         // Gera um arco de 180 graus (meio-circulo) de raio 'radius',
         // centrado em 'center', comecando na direcao 'startAxis' e
@@ -715,83 +686,83 @@ namespace PrismEditor {
                 if (i > 0) { points.push_back(prev); points.push_back(p); }
                 prev = p;
             }
-        };
+            };
 
         std::vector<glm::vec3> localPoints;
         constexpr int kCircleSegments = 24;
         constexpr int kArcSegments = 12;
 
         switch (collider.Shape) {
-            case Prism::ColliderShape::Box: {
-                // Size e ja meio-extensao (half-extents) - ver comentario em
-                // ColliderComponent (Components.h).
-                glm::vec3 e = collider.Size;
-                glm::vec3 c[8] = {
-                    { -e.x,-e.y,-e.z }, {  e.x,-e.y,-e.z }, {  e.x, e.y,-e.z }, { -e.x, e.y,-e.z }, // face -Z
-                    { -e.x,-e.y, e.z }, {  e.x,-e.y, e.z }, {  e.x, e.y, e.z }, { -e.x, e.y, e.z }, // face +Z
-                };
-                int edges[12][2] = {
-                    {0,1},{1,2},{2,3},{3,0}, // face -Z
-                    {4,5},{5,6},{6,7},{7,4}, // face +Z
-                    {0,4},{1,5},{2,6},{3,7}, // arestas conectando as duas faces
-                };
-                for (auto& e2 : edges) { localPoints.push_back(c[e2[0]]); localPoints.push_back(c[e2[1]]); }
-                break;
+        case Prism::ColliderShape::Box: {
+            // Size e ja meio-extensao (half-extents) - ver comentario em
+            // ColliderComponent (Components.h).
+            glm::vec3 e = collider.Size;
+            glm::vec3 c[8] = {
+                { -e.x,-e.y,-e.z }, {  e.x,-e.y,-e.z }, {  e.x, e.y,-e.z }, { -e.x, e.y,-e.z }, // face -Z
+                { -e.x,-e.y, e.z }, {  e.x,-e.y, e.z }, {  e.x, e.y, e.z }, { -e.x, e.y, e.z }, // face +Z
+            };
+            int edges[12][2] = {
+                {0,1},{1,2},{2,3},{3,0}, // face -Z
+                {4,5},{5,6},{6,7},{7,4}, // face +Z
+                {0,4},{1,5},{2,6},{3,7}, // arestas conectando as duas faces
+            };
+            for (auto& e2 : edges) { localPoints.push_back(c[e2[0]]); localPoints.push_back(c[e2[1]]); }
+            break;
+        }
+        case Prism::ColliderShape::Sphere: {
+            float r = collider.Size.x; // so Size.x e usado como raio, ver ColliderComponent
+            appendCircle(localPoints, glm::vec3(0.0f), r, 0, kCircleSegments);
+            appendCircle(localPoints, glm::vec3(0.0f), r, 1, kCircleSegments);
+            appendCircle(localPoints, glm::vec3(0.0f), r, 2, kCircleSegments);
+            break;
+        }
+        case Prism::ColliderShape::Capsule: {
+            // Size.x = raio, Size.y = altura TOTAL da capsula, incluindo
+            // as duas calotas hemisfericas (Size.z ignorado - ver
+            // ColliderComponent). O "cilindro" do meio vai de
+            // -halfCylinderHeight a +halfCylinderHeight; cada calota e
+            // uma hemisfera de raio 'radius' colada em cada ponta,
+            // desenhada com 2 arcos de meridiano (planos XY e ZY) + o
+            // equador (reaproveitando appendCircle) - suficiente para
+            // ler "isto e uma capsula, nao um cilindro" de relance, sem
+            // precisar de uma malha completa de esfera.
+            float radius = collider.Size.x;
+            float halfCylinderHeight = std::max(collider.Size.y * 0.5f - radius, 0.0f); // metade da parte cilindrica, descontando as 2 calotas de raio 'radius'
+
+            // Equador do cilindro (topo e base da parte reta).
+            appendCircle(localPoints, glm::vec3(0.0f, halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
+            appendCircle(localPoints, glm::vec3(0.0f, -halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
+
+            // Calota de cima: hemisferio acima de y=halfCylinderHeight,
+            // desenhado como 2 meridianos de 180 graus (de +X a +Y, e
+            // de +Z a +Y) - a metade "de cima" do arco (de 0 a PI/2 ja
+            // cobre o quarto que importa, mas usar o arco completo de
+            // +X/+Z ate -X/-Z passando por +Y da a cupula inteira numa
+            // linha so por meridiano).
+            glm::vec3 topCenter(0.0f, halfCylinderHeight, 0.0f);
+            appendArc(localPoints, topCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
+            appendArc(localPoints, topCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
+            appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, 1, 0), kArcSegments);
+            appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, 1, 0), kArcSegments);
+
+            // Calota de baixo: espelhada (aponta para -Y em vez de +Y).
+            glm::vec3 bottomCenter(0.0f, -halfCylinderHeight, 0.0f);
+            appendArc(localPoints, bottomCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
+            appendArc(localPoints, bottomCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
+            appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, -1, 0), kArcSegments);
+            appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), kArcSegments);
+
+            // 4 linhas verticais ao redor do cilindro (nas direcoes
+            // +X/-X/+Z/-Z) conectando o equador de cima ao de baixo -
+            // sem essas, as duas calotas + equadores pareceriam 2
+            // esferas soltas em vez de uma capsula conectada.
+            glm::vec3 dirs[4] = { {radius,0,0}, {-radius,0,0}, {0,0,radius}, {0,0,-radius} };
+            for (auto& d : dirs) {
+                localPoints.push_back(topCenter + d);
+                localPoints.push_back(bottomCenter + d);
             }
-            case Prism::ColliderShape::Sphere: {
-                float r = collider.Size.x; // so Size.x e usado como raio, ver ColliderComponent
-                appendCircle(localPoints, glm::vec3(0.0f), r, 0, kCircleSegments);
-                appendCircle(localPoints, glm::vec3(0.0f), r, 1, kCircleSegments);
-                appendCircle(localPoints, glm::vec3(0.0f), r, 2, kCircleSegments);
-                break;
-            }
-            case Prism::ColliderShape::Capsule: {
-                // Size.x = raio, Size.y = altura TOTAL da capsula, incluindo
-                // as duas calotas hemisfericas (Size.z ignorado - ver
-                // ColliderComponent). O "cilindro" do meio vai de
-                // -halfCylinderHeight a +halfCylinderHeight; cada calota e
-                // uma hemisfera de raio 'radius' colada em cada ponta,
-                // desenhada com 2 arcos de meridiano (planos XY e ZY) + o
-                // equador (reaproveitando appendCircle) - suficiente para
-                // ler "isto e uma capsula, nao um cilindro" de relance, sem
-                // precisar de uma malha completa de esfera.
-                float radius = collider.Size.x;
-                float halfCylinderHeight = std::max(collider.Size.y * 0.5f - radius, 0.0f); // metade da parte cilindrica, descontando as 2 calotas de raio 'radius'
-
-                // Equador do cilindro (topo e base da parte reta).
-                appendCircle(localPoints, glm::vec3(0.0f, halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
-                appendCircle(localPoints, glm::vec3(0.0f, -halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
-
-                // Calota de cima: hemisferio acima de y=halfCylinderHeight,
-                // desenhado como 2 meridianos de 180 graus (de +X a +Y, e
-                // de +Z a +Y) - a metade "de cima" do arco (de 0 a PI/2 ja
-                // cobre o quarto que importa, mas usar o arco completo de
-                // +X/+Z ate -X/-Z passando por +Y da a cupula inteira numa
-                // linha so por meridiano).
-                glm::vec3 topCenter(0.0f, halfCylinderHeight, 0.0f);
-                appendArc(localPoints, topCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
-                appendArc(localPoints, topCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0), kArcSegments);
-                appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, 1, 0), kArcSegments);
-                appendArc(localPoints, topCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, 1, 0), kArcSegments);
-
-                // Calota de baixo: espelhada (aponta para -Y em vez de +Y).
-                glm::vec3 bottomCenter(0.0f, -halfCylinderHeight, 0.0f);
-                appendArc(localPoints, bottomCenter, radius, glm::vec3(1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
-                appendArc(localPoints, bottomCenter, radius, glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0), kArcSegments);
-                appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, 1), glm::vec3(0, -1, 0), kArcSegments);
-                appendArc(localPoints, bottomCenter, radius, glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), kArcSegments);
-
-                // 4 linhas verticais ao redor do cilindro (nas direcoes
-                // +X/-X/+Z/-Z) conectando o equador de cima ao de baixo -
-                // sem essas, as duas calotas + equadores pareceriam 2
-                // esferas soltas em vez de uma capsula conectada.
-                glm::vec3 dirs[4] = { {radius,0,0}, {-radius,0,0}, {0,0,radius}, {0,0,-radius} };
-                for (auto& d : dirs) {
-                    localPoints.push_back(topCenter + d);
-                    localPoints.push_back(bottomCenter + d);
-                }
-                break;
-            }
+            break;
+        }
         }
 
         std::vector<glm::vec3> worldPoints;
@@ -821,7 +792,7 @@ namespace PrismEditor {
                 if (i > 0) { points.push_back(prev); points.push_back(p); }
                 prev = p;
             }
-        };
+            };
 
         constexpr int kCircleSegments = 24;
         constexpr int kConeRaySegments = 8; // quantas linhas do apice ate a borda do cone (leque)
@@ -850,7 +821,7 @@ namespace PrismEditor {
             );
             auto toWorld = [&](const glm::vec3& local) {
                 return worldPosition + worldRotationOnly * local;
-            };
+                };
 
             // "Frente" da luz em espaco local - mesma convencao -Z usada
             // por CameraComponent (ver RenderCameraGizmos/RenderScene) e
@@ -869,76 +840,76 @@ namespace PrismEditor {
             std::vector<glm::vec3> localPoints;
 
             switch (light.Type) {
-                case Prism::LightType::Point: {
-                    // Omnilight: esfera de raio Range, mesma tecnica de 3
-                    // circulos ortogonais que RenderSelectedColliderGizmo
-                    // usa para Sphere - da a nocao de volume sem exigir
-                    // uma malha completa.
-                    appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1), light.Range, kCircleSegments); // plano YZ
-                    appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1), light.Range, kCircleSegments); // plano XZ
-                    appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), light.Range, kCircleSegments); // plano XY
-                    break;
-                }
-                case Prism::LightType::Spot: {
-                    // Cone: apice na origem (posicao da luz), abrindo na
-                    // direcao -Z local ate uma base circular a distancia
-                    // Range, com raio determinado pelo angulo EXTERNO do
-                    // cone (SpotAngle - o angulo que efetivamente delimita
-                    // onde a luz chega a zero, ver LightComponent e o
-                    // shader em Renderer.cpp). InnerSpotAngle (soft edge)
-                    // nao ganha um circulo proprio aqui de proposito - um
-                    // segundo circulo concentrico so adicionaria ruido
-                    // visual sem ajudar a posicionar a luz, que e o
-                    // objetivo deste gizmo.
-                    float coneLength = light.Range;
-                    float baseRadius = coneLength * tanf(glm::radians(light.SpotAngle));
-                    glm::vec3 baseCenter(0.0f, 0.0f, -coneLength); // -Z local = "frente" (ver 'forward' acima)
+            case Prism::LightType::Point: {
+                // Omnilight: esfera de raio Range, mesma tecnica de 3
+                // circulos ortogonais que RenderSelectedColliderGizmo
+                // usa para Sphere - da a nocao de volume sem exigir
+                // uma malha completa.
+                appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1), light.Range, kCircleSegments); // plano YZ
+                appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1), light.Range, kCircleSegments); // plano XZ
+                appendCircle(localPoints, glm::vec3(0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), light.Range, kCircleSegments); // plano XY
+                break;
+            }
+            case Prism::LightType::Spot: {
+                // Cone: apice na origem (posicao da luz), abrindo na
+                // direcao -Z local ate uma base circular a distancia
+                // Range, com raio determinado pelo angulo EXTERNO do
+                // cone (SpotAngle - o angulo que efetivamente delimita
+                // onde a luz chega a zero, ver LightComponent e o
+                // shader em Renderer.cpp). InnerSpotAngle (soft edge)
+                // nao ganha um circulo proprio aqui de proposito - um
+                // segundo circulo concentrico so adicionaria ruido
+                // visual sem ajudar a posicionar a luz, que e o
+                // objetivo deste gizmo.
+                float coneLength = light.Range;
+                float baseRadius = coneLength * tanf(glm::radians(light.SpotAngle));
+                glm::vec3 baseCenter(0.0f, 0.0f, -coneLength); // -Z local = "frente" (ver 'forward' acima)
 
-                    appendCircle(localPoints, baseCenter, glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), baseRadius, kCircleSegments);
+                appendCircle(localPoints, baseCenter, glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), baseRadius, kCircleSegments);
 
-                    // Leque de linhas do apice (origem) ate a borda do
-                    // circulo da base - poucas linhas (kConeRaySegments),
-                    // so para comunicar "isto e um cone solido", nao um
-                    // anel solto no ar.
-                    for (int i = 0; i < kConeRaySegments; i++) {
-                        float t = (float)i / (float)kConeRaySegments * 2.0f * 3.14159265f;
-                        glm::vec3 edge = baseCenter + baseRadius * (glm::vec3(1, 0, 0) * cosf(t) + glm::vec3(0, 1, 0) * sinf(t));
-                        localPoints.push_back(glm::vec3(0.0f));
-                        localPoints.push_back(edge);
-                    }
-                    break;
-                }
-                case Prism::LightType::Directional: {
-                    // Sem posicao nem alcance reais (ver LightComponent) -
-                    // o gizmo e so uma seta curta indicando a DIREcao que
-                    // a luz viaja, saindo da posicao da entidade (que e
-                    // arbitraria/so para posicionar o gizmo na viewport,
-                    // ja que Renderer::CollectGPULights ignora a posicao
-                    // deste tipo). Tamanho fixo (nao ha Range para
-                    // escalar) - grande o suficiente para ser visivel sem
-                    // depender do tamanho da cena.
-                    constexpr float kArrowLength = 1.5f;
-                    constexpr float kArrowHeadSize = 0.25f;
-                    glm::vec3 tip(0.0f, 0.0f, -kArrowLength);
-
+                // Leque de linhas do apice (origem) ate a borda do
+                // circulo da base - poucas linhas (kConeRaySegments),
+                // so para comunicar "isto e um cone solido", nao um
+                // anel solto no ar.
+                for (int i = 0; i < kConeRaySegments; i++) {
+                    float t = (float)i / (float)kConeRaySegments * 2.0f * 3.14159265f;
+                    glm::vec3 edge = baseCenter + baseRadius * (glm::vec3(1, 0, 0) * cosf(t) + glm::vec3(0, 1, 0) * sinf(t));
                     localPoints.push_back(glm::vec3(0.0f));
-                    localPoints.push_back(tip);
-
-                    // Cabeca da seta: 4 linhas curtas da ponta "voltando"
-                    // em diagonal - leitura clara de qual ponta e a ponta
-                    // sem precisar de um cone/malha completa.
-                    glm::vec3 back = tip + glm::vec3(0, 0, kArrowHeadSize);
-                    glm::vec3 heads[4] = {
-                        back + glm::vec3(kArrowHeadSize, 0, 0), back + glm::vec3(-kArrowHeadSize, 0, 0),
-                        back + glm::vec3(0, kArrowHeadSize, 0), back + glm::vec3(0, -kArrowHeadSize, 0),
-                    };
-                    for (auto& h : heads) { localPoints.push_back(tip); localPoints.push_back(h); }
-                    break;
+                    localPoints.push_back(edge);
                 }
-                // TODO(Area/IES): quando LightType ganhar esses valores
-                // (ver Components.h), adicionar o wireframe correspondente
-                // aqui - ex: Area desenharia um retangulo (Size.x/Size.y)
-                // em vez de esfera/cone.
+                break;
+            }
+            case Prism::LightType::Directional: {
+                // Sem posicao nem alcance reais (ver LightComponent) -
+                // o gizmo e so uma seta curta indicando a DIREcao que
+                // a luz viaja, saindo da posicao da entidade (que e
+                // arbitraria/so para posicionar o gizmo na viewport,
+                // ja que Renderer::CollectGPULights ignora a posicao
+                // deste tipo). Tamanho fixo (nao ha Range para
+                // escalar) - grande o suficiente para ser visivel sem
+                // depender do tamanho da cena.
+                constexpr float kArrowLength = 1.5f;
+                constexpr float kArrowHeadSize = 0.25f;
+                glm::vec3 tip(0.0f, 0.0f, -kArrowLength);
+
+                localPoints.push_back(glm::vec3(0.0f));
+                localPoints.push_back(tip);
+
+                // Cabeca da seta: 4 linhas curtas da ponta "voltando"
+                // em diagonal - leitura clara de qual ponta e a ponta
+                // sem precisar de um cone/malha completa.
+                glm::vec3 back = tip + glm::vec3(0, 0, kArrowHeadSize);
+                glm::vec3 heads[4] = {
+                    back + glm::vec3(kArrowHeadSize, 0, 0), back + glm::vec3(-kArrowHeadSize, 0, 0),
+                    back + glm::vec3(0, kArrowHeadSize, 0), back + glm::vec3(0, -kArrowHeadSize, 0),
+                };
+                for (auto& h : heads) { localPoints.push_back(tip); localPoints.push_back(h); }
+                break;
+            }
+                                              // TODO(Area/IES): quando LightType ganhar esses valores
+                                              // (ver Components.h), adicionar o wireframe correspondente
+                                              // aqui - ex: Area desenharia um retangulo (Size.x/Size.y)
+                                              // em vez de esfera/cone.
             }
 
             std::vector<glm::vec3> worldPoints;
@@ -1004,7 +975,7 @@ namespace PrismEditor {
         ImGui::SetNextWindowViewport(viewport->ID);
 
         windowFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
         windowFlags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -1051,7 +1022,7 @@ namespace PrismEditor {
         RenderConsolePanel();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
-        RenderCameraPreviewPanel();
+        // REMOVIDO: RenderCameraPreviewPanel() - agora integrado ao painel de Propriedades
     }
 
     void EditorLayer::RenderMenuBar() {
@@ -1159,6 +1130,7 @@ namespace PrismEditor {
                 ImGui::MenuItem("Console", nullptr, true, false);
                 ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
                 ImGui::MenuItem("Editor de Script", nullptr, true, false);
+                // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();
             }
 
@@ -1175,7 +1147,8 @@ namespace PrismEditor {
                 if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
                     OnStopButtonClicked();
                 ImGui::PopStyleColor();
-            } else {
+            }
+            else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
                 if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
                     OnPlayButtonClicked();
@@ -1207,7 +1180,7 @@ namespace PrismEditor {
         // 3D dentro de uma janela de UI dockavel.
         uint32_t textureID = m_ViewportFramebuffer->GetColorAttachmentID();
         ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2(m_ViewportSize[0], m_ViewportSize[1]),
-                     ImVec2(0, 1), ImVec2(1, 0)); // UV invertido no Y: origem do framebuffer OpenGL e embaixo a esquerda.
+            ImVec2(0, 1), ImVec2(1, 0)); // UV invertido no Y: origem do framebuffer OpenGL e embaixo a esquerda.
 
         // Posicao/tamanho REAIS (em pixels de tela do SO) de onde a imagem
         // acabou de ser desenhada - GetItemRectMin() pega isso do ULTIMO
@@ -1339,7 +1312,7 @@ namespace PrismEditor {
 
                 Prism::VisualRaycastHit hit = m_ActiveScene->VisualRaycast(ray);
                 m_SelectedEntity = hit.Hit ? Prism::Entity(hit.Entity, m_ActiveScene.get())
-                                            : Prism::Entity{};
+                    : Prism::Entity{};
             }
 
             RenderTransformGizmo(view, projection, imageMin);
@@ -1510,7 +1483,8 @@ namespace PrismEditor {
                 glm::vec3 eulerRad = glm::eulerAngles(rotationQuat);
                 transform.Rotation = glm::degrees(eulerRad);
             }
-        } else if (m_GizmoWasUsingLastFrame) {
+        }
+        else if (m_GizmoWasUsingLastFrame) {
             // Arraste acabou de terminar neste frame (IsUsing() era true no
             // frame anterior, false agora) - empurra UM TransformCommand
             // cobrindo o gesto inteiro, mesmo padrao de
@@ -1530,51 +1504,6 @@ namespace PrismEditor {
         m_GizmoWasUsingLastFrame = isUsing;
     }
 
-    void EditorLayer::RenderCameraPreviewPanel() {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::Begin("Camera");
-
-        ImVec2 size = ImGui::GetContentRegionAvail();
-        m_CameraPreviewSize[0] = std::max(size.x, 1.0f);
-        m_CameraPreviewSize[1] = std::max(size.y, 1.0f);
-
-        // Framebuffer criado sob demanda, na primeira vez que este painel
-        // e desenhado - evita alocar uma textura de GPU extra em sessoes
-        // que nunca abrem o painel Camera (ele fica fechado por padrao?
-        // nao - ImGui::Begin sempre desenha a janela se ela nao foi
-        // explicitamente escondida - mas o custo de checar aqui e minimo,
-        // e deixa o codigo resistente a um futuro "fechar painel").
-        if (!m_CameraPreviewFramebuffer)
-            m_CameraPreviewFramebuffer = Prism::Framebuffer::Create({ (uint32_t)m_CameraPreviewSize[0], (uint32_t)m_CameraPreviewSize[1] });
-
-        // Existe alguma entidade Primary agora? Se nao, RenderCameraPreview()
-        // so limpou o framebuffer (fundo solido) - mostramos uma mensagem
-        // em vez da imagem, para deixar claro que falta marcar uma camera
-        // como Primary (Properties panel > secao Camera > checkbox Primary).
-        bool hasPrimary = false;
-        {
-            auto view = m_ActiveScene->GetRegistry().view<Prism::CameraComponent>();
-            for (auto entityHandle : view) {
-                if (view.get<Prism::CameraComponent>(entityHandle).Primary) {
-                    hasPrimary = true;
-                    break;
-                }
-            }
-        }
-
-        if (hasPrimary) {
-            uint32_t textureID = m_CameraPreviewFramebuffer->GetColorAttachmentID();
-            ImGui::Image((ImTextureID)(uintptr_t)textureID, ImVec2(m_CameraPreviewSize[0], m_CameraPreviewSize[1]),
-                         ImVec2(0, 1), ImVec2(1, 0)); // UV invertido no Y, mesmo motivo do painel Viewport.
-        } else {
-            ImGui::SetCursorPos(ImVec2(10.0f, 10.0f));
-            ImGui::TextWrapped("Nenhuma camera marcada como Primary. Selecione uma entidade com CameraComponent e marque \"Primary\" na Properties panel.");
-        }
-
-        ImGui::End();
-        ImGui::PopStyleVar();
-    }
-
     void EditorLayer::RenderHierarchyPanel() {
         ImGui::Begin("Hierarquia");
 
@@ -1584,7 +1513,7 @@ namespace PrismEditor {
         // (ver RelationshipComponent em Components.h).
         m_ActiveScene->ForEachRootEntity([&](entt::entity handle, Prism::TagComponent&) {
             RenderHierarchyNode(Prism::Entity(handle, m_ActiveScene.get()));
-        });
+            });
 
         // Area vazia do painel tambem e um alvo de drop valido - soltar
         // uma entidade aqui a torna raiz de novo (reparentar para
@@ -1682,7 +1611,8 @@ namespace PrismEditor {
                     RenderHierarchyNode(Prism::Entity(childHandle, m_ActiveScene.get()));
             }
             ImGui::TreePop();
-        } else if (open && !hasChildren) {
+        }
+        else if (open && !hasChildren) {
             // Leaf com NoTreePushOnOpen nao empurra um nivel de arvore -
             // nada a fazer aqui, mas o 'open' de um Leaf via
             // NoTreePushOnOpen sempre vem true quando clicado (nao abre
@@ -1809,16 +1739,16 @@ namespace PrismEditor {
                     collider.Shape = (Prism::ColliderShape)shapeIndex;
 
                 switch (collider.Shape) {
-                    case Prism::ColliderShape::Box:
-                        ImGui::DragFloat3("Half-Extents", glm::value_ptr(collider.Size), 0.05f, 0.01f, 100.0f);
-                        break;
-                    case Prism::ColliderShape::Sphere:
-                        ImGui::DragFloat("Raio", &collider.Size.x, 0.05f, 0.01f, 100.0f);
-                        break;
-                    case Prism::ColliderShape::Capsule:
-                        ImGui::DragFloat("Raio##Capsule", &collider.Size.x, 0.05f, 0.01f, 100.0f);
-                        ImGui::DragFloat("Altura##Capsule", &collider.Size.y, 0.05f, 0.01f, 100.0f);
-                        break;
+                case Prism::ColliderShape::Box:
+                    ImGui::DragFloat3("Half-Extents", glm::value_ptr(collider.Size), 0.05f, 0.01f, 100.0f);
+                    break;
+                case Prism::ColliderShape::Sphere:
+                    ImGui::DragFloat("Raio", &collider.Size.x, 0.05f, 0.01f, 100.0f);
+                    break;
+                case Prism::ColliderShape::Capsule:
+                    ImGui::DragFloat("Raio##Capsule", &collider.Size.x, 0.05f, 0.01f, 100.0f);
+                    ImGui::DragFloat("Altura##Capsule", &collider.Size.y, 0.05f, 0.01f, 100.0f);
+                    break;
                 }
 
                 ImGui::Checkbox("E um Trigger", &collider.IsTrigger);
@@ -1898,7 +1828,8 @@ namespace PrismEditor {
                 ImGui::TextDisabled("Resultado (fisico - so atualiza durante o modo Play):");
                 if (!m_ActiveScene->IsRunning()) {
                     ImGui::TextDisabled("(fora do modo Play - sem resultado ainda)");
-                } else if (raycast.Hit) {
+                }
+                else if (raycast.Hit) {
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Acertou algo");
                     std::string hitName = "(entidade invalida)";
                     if (m_ActiveScene->GetRegistry().valid(raycast.HitEntity)) {
@@ -1909,7 +1840,8 @@ namespace PrismEditor {
                     ImGui::Text("Entidade: %s", hitName.c_str());
                     ImGui::Text("Distancia: %.2f", raycast.HitDistance);
                     ImGui::Text("Ponto: (%.2f, %.2f, %.2f)", raycast.HitPoint.x, raycast.HitPoint.y, raycast.HitPoint.z);
-                } else {
+                }
+                else {
                     ImGui::TextDisabled("Sem acerto");
                 }
             }
@@ -1917,6 +1849,7 @@ namespace PrismEditor {
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::RaycastComponent>>(m_SelectedEntity, "Raycast"));
         }
 
+        // ==================== SEÇÃO CAMERA (CORRIGIDA) ====================
         if (m_SelectedEntity.HasComponent<Prism::CameraComponent>()) {
             auto& camera = m_SelectedEntity.GetComponent<Prism::CameraComponent>();
             bool keepOpen = true;
@@ -1934,24 +1867,57 @@ namespace PrismEditor {
                 ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, camera.FarClip - 0.01f);
                 ImGui::DragFloat("Far Clip", &camera.FarClip, 1.0f, camera.NearClip + 0.01f, 100000.0f);
 
-                // Marcar esta camera como Primary desmarca qualquer outra
-                // na cena (ver SetPrimaryCamera) - so faz sentido existir
-                // uma Primary por vez, ja que e ela que o modo Play (e a
-                // propria viewport do editor, como fallback - ver
-                // RenderScene) usa para renderizar.
                 bool isPrimary = camera.Primary;
                 if (ImGui::Checkbox("Primary", &isPrimary)) {
                     if (isPrimary)
                         SetPrimaryCamera(m_SelectedEntity);
                     else
-                        camera.Primary = false; // desmarcar a unica Primary e permitido - so significa "nenhuma camera de jogo definida ainda"
+                        camera.Primary = false;
                 }
                 if (!isPrimary)
                     ImGui::TextDisabled("Nao e a camera principal - o modo Play/viewport nao vai usar esta.");
+
+                // --- Pre-visualizacao da camera (integrada) ---
+                ImGui::Separator();
+                ImGui::TextDisabled("Pre-visualizacao");
+
+                // Reserva uma area com altura fixa (ex: 200px) para o preview
+                float previewHeight = 200.0f;
+                float previewWidth = ImGui::GetContentRegionAvail().x;
+                // Mantem proporção 16:9, mas respeita a largura
+                float aspect = 16.0f / 9.0f;
+                if (previewWidth / aspect < previewHeight)
+                    previewHeight = previewWidth / aspect;
+                else
+                    previewWidth = previewHeight * aspect;
+                previewWidth = std::max(1.0f, previewWidth);
+                previewHeight = std::max(1.0f, previewHeight);
+
+                // Cria um child para delimitar a area e evitar vazamento
+                ImGui::BeginChild("CameraPreviewContainer", ImVec2(previewWidth, previewHeight), false);
+                {
+                    // Centraliza a imagem dentro do child
+                    ImVec2 availChild = ImGui::GetContentRegionAvail();
+                    float offsetX = (availChild.x - previewWidth) * 0.5f;
+                    float offsetY = (availChild.y - previewHeight) * 0.5f;
+                    if (offsetX > 0) ImGui::SetCursorPosX(offsetX);
+                    if (offsetY > 0) ImGui::SetCursorPosY(offsetY);
+
+                    uint32_t texID = RenderCameraPreview(m_SelectedEntity, previewWidth, previewHeight);
+                    if (texID != 0) {
+                        ImGui::Image((ImTextureID)(uintptr_t)texID, ImVec2(previewWidth, previewHeight),
+                            ImVec2(0, 1), ImVec2(1, 0));
+                    }
+                    else {
+                        ImGui::TextDisabled("Falha ao renderizar preview");
+                    }
+                }
+                ImGui::EndChild();
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::CameraComponent>>(m_SelectedEntity, "Camera"));
         }
+        // ==================== FIM SEÇÃO CAMERA ==========================
 
         if (m_SelectedEntity.HasComponent<Prism::ScriptComponent>()) {
             auto& script = m_SelectedEntity.GetComponent<Prism::ScriptComponent>();
@@ -2003,7 +1969,8 @@ namespace PrismEditor {
 
                 if (script.ScriptPath.empty()) {
                     ImGui::TextDisabled("Nenhum arquivo escolhido ainda.");
-                } else if (m_PlayWindow.IsOpen()) {
+                }
+                else if (m_PlayWindow.IsOpen()) {
                     // A PlayWindow roda uma COPIA clonada da Scene (ver
                     // Play/PlayWindow.h) - m_SelectedEntity pertence a
                     // Scene de EDICAO, uma entidade DIFERENTE (ainda que
@@ -2014,7 +1981,8 @@ namespace PrismEditor {
                     // Play de novo (que clona a Scene do zero, incluindo o
                     // arquivo .lua atualizado do disco).
                     ImGui::TextDisabled("Play em andamento - Pare e aperte Play de novo para recarregar.");
-                } else {
+                }
+                else {
                     ImGui::TextDisabled("Aperte Play (menu bar) para rodar este script.");
                 }
             }
@@ -2038,12 +2006,12 @@ namespace PrismEditor {
         // entidade ainda nao tem - evita um popup vazio (a entidade ja
         // tem TransformComponent sempre, entao esse nunca entra na lista).
         bool hasAnyMissing = !m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::RaycastComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>()
-                           || !m_SelectedEntity.HasComponent<Prism::CameraComponent>();
+            || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
+            || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
+            || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
+            || !m_SelectedEntity.HasComponent<Prism::RaycastComponent>()
+            || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>()
+            || !m_SelectedEntity.HasComponent<Prism::CameraComponent>();
 
         if (!hasAnyMissing) {
             ImGui::TextDisabled("(todos os components ja adicionados)");

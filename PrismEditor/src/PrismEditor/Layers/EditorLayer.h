@@ -120,17 +120,6 @@ namespace PrismEditor {
         // fechado (ImGui::OpenPopup exige isso).
         void RenderNewScriptPopup();
 
-        // Painel "Camera" - mostra a visao da entidade com
-        // CameraComponent::Primary=true, renderizada num framebuffer PROPRIO
-        // (m_CameraPreviewFramebuffer), separado do m_ViewportFramebuffer da
-        // viewport principal do editor. Isso e deliberado: a viewport
-        // principal do editor NUNCA e substituida pela camera de jogo (ela
-        // continua sempre sendo a camera de orbita livre, do mesmo jeito que
-        // Unity/Unreal/Godot fazem) - assim voce nunca fica "preso" dentro
-        // de um mesh ou sem visao de trabalho so por ter marcado uma camera
-        // como Primary. Ver RenderCameraPreview() em EditorLayer.cpp.
-        void RenderCameraPreviewPanel();
-
         // Carrega o mapa em 'path' na Scene ativa, substituindo o que
         // estiver aberto no momento (sem perguntar "salvar antes?" ainda -
         // ver nota no README). Chamado tanto por LoadOrCreateScene()
@@ -182,15 +171,15 @@ namespace PrismEditor {
         // que aparece dentro do painel Viewport neste mesmo frame.
         void RenderScene(float deltaTime);
 
-        // Desenha a cena a partir do ponto de vista da entidade com
-        // CameraComponent::Primary=true (se houver) dentro de
-        // m_CameraPreviewFramebuffer - mesma logica de desenho de
-        // RenderScene(), mas com a view/projection vindas da camera de jogo
-        // em vez da orbita do editor. Chamado de OnUpdate logo depois de
-        // RenderScene(). Sem entidade Primary na cena, so limpa o
-        // framebuffer (ver EditorLayer.cpp) - RenderCameraPreviewPanel()
-        // mostra uma mensagem nesse caso em vez da imagem.
-        void RenderCameraPreview(float deltaTime);
+        // Desenha a cena a partir do ponto de vista da entidade passada
+        // (espera-se que tenha CameraComponent) dentro de
+        // m_CameraPreviewFramebuffer. O framebuffer e redimensionado para
+        // caber exatamente em (width, height) (em pixels) - usado para
+        // exibir a pre-visualizacao da camera selecionada dentro do painel
+        // de Propriedades. Retorna o ID da textura de cor para ser exibido
+        // via ImGui::Image. Se a entidade nao tiver CameraComponent, ou se
+        // m_CameraPreviewFramebuffer nao estiver inicializado, retorna 0.
+        uint32_t RenderCameraPreview(Prism::Entity cameraEntity, float width, float height);
 
         // Desenha um wireframe de frustum (Renderer::DrawLines) para toda
         // entidade com CameraComponent na cena - a Primary usa uma cor
@@ -288,16 +277,12 @@ namespace PrismEditor {
         // Viewport - ver RenderViewportPanel().
         Prism::Scope<Prism::Framebuffer> m_ViewportFramebuffer;
 
-        // Framebuffer offscreen SEPARADO, usado so pelo painel "Camera"
-        // (RenderCameraPreviewPanel/RenderCameraPreview) para mostrar a
-        // visao da camera de jogo Primary sem nunca tocar no
-        // m_ViewportFramebuffer da viewport principal - ver nota em
-        // RenderCameraPreviewPanel() no header acima sobre o motivo dessa
-        // separacao. Criado sob demanda (fica nulo ate a primeira vez que o
-        // painel Camera e aberto) para nao gastar uma textura de GPU extra
-        // em projetos que nunca abrem esse painel.
+        // Framebuffer offscreen SEPARADO, usado exclusivamente para a
+        // pre-visualizacao da camera dentro do painel de Propriedades.
+        // Criado sob demanda (fica nulo ate a primeira vez que for
+        // necessario exibir o preview) para nao gastar uma textura de GPU
+        // extra em sessoes que nunca abrem o painel Camera.
         Prism::Scope<Prism::Framebuffer> m_CameraPreviewFramebuffer;
-        float m_CameraPreviewSize[2] = { 0.0f, 0.0f };
 
         // A cena ativa do editor. Por ora criada em memoria com uma entidade
         // de exemplo em OnAttach() - salvar/carregar cenas do disco (dentro
