@@ -576,10 +576,10 @@ nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
     `EOverrideMassProperties::CalculateInertia`, mais `Friction`,
     `Restitution`, `LinearDamping`, `AngularDamping` novos - `.prismmap`
     subiu para **v8** - ver nota "Física (Jolt Physics)" acima).
-18. Sistema de iluminação expandido (sombras + SSAO/HBAO) - hoje é forward
-    rendering puro, sem shadow map nem ambient occlusion; ver nota
-    "Iluminação" (a fazer em separado, como sistema próprio, para não virar
-    dívida técnica em cima do forward atual).
+18. ~~Shadow mapping (luz Directional).~~ ✅ feito (parcialmente - ver nota
+    abaixo). SSAO/HBAO continuam pendentes, junto com shadow mapping para
+    Point/Spot e Cascaded Shadow Maps - ver nota "Shadow Mapping" abaixo
+    para o escopo exato do que já funciona.
 19. Sistema de prefabs/cenas reutilizáveis (estilo Godot: uma "cena" de
     personagem instanciável em múltiplas cenas/entidades) - ainda não
     existe; hoje toda entidade é definida do zero em cada `.prismmap`.
@@ -950,3 +950,41 @@ direcional simples, sabendo desenhar só um tipo de primitiva (cubo unitário,
 ponta a ponta. O "Renderizador principal" definitivo (forward vs deferred,
 batching, materiais de verdade, importação de meshes) ainda está em aberto,
 conforme o guia do protótipo.
+## Nota sobre Shadow Mapping (estado atual)
+
+Shadow mapping foi implementado para luzes **Directional** - ver
+`Prism::ShadowMap` (`Prism/src/Prism/Renderer/ShadowMap.h/.cpp`) e
+`Renderer::RenderShadowPass` (`Renderer.cpp`), chamado automaticamente de
+dentro de `Renderer::DrawScene` (nenhum outro código - `EditorLayer`,
+`PlayWindow` - precisa saber que este pass existe).
+
+**Como ativar**: marque `Projetar Sombras` (`LightComponent::CastShadows`)
+numa entidade com `LightComponent` do tipo `Directional`. O checkbox já
+funciona no editor (Properties panel) - versões anteriores desta nota
+diziam "ainda não implementado"/checkbox desabilitado, isso não é mais
+verdade.
+
+**Escopo desta implementação (limitações deixadas de propósito)**:
+- Apenas **uma** luz projeta sombra por frame: a primeira `LightComponent`
+  do tipo `Directional` com `CastShadows = true`, na ordem de iteração do
+  registry EnTT. Uma segunda luz Directional com `CastShadows = true` é
+  ignorada silenciosamente (sem erro/aviso ainda).
+- Point e Spot **não têm sombra** ainda, mesmo com `CastShadows = true`
+  marcado - exigiria projeção perspective (Spot) ou cubemap (Point), fora
+  do escopo desta primeira etapa. Marcar o checkbox numa luz Point/Spot
+  não causa erro, só não produz nenhuma sombra visível.
+- Sem Cascaded Shadow Maps (CSM): um único frustum ortho, dimensionado a
+  partir do bounding box (posições, não geometria) de toda entidade com
+  `MeshRendererComponent` na cena, recalculado a cada frame. Suficiente
+  para as cenas de portfólio/protótipo atuais; cenas muito maiores podem
+  mostrar sombra com resolução visivelmente baixa - CSM é a evolução
+  natural se isso incomodar na prática.
+- PCF 3x3 (suaviza a borda da sombra) - sem soft shadows mais avançadas
+  (PCSS).
+- Resolução fixa do shadow map: 2048x2048 (`ShadowMap` construído sem
+  argumento em `RenderShadowPass`).
+
+**Custo de performance**: quando alguma luz projeta sombra, todo frame
+desenha a cena duas vezes (profundidade + cor) - aceitável para o tamanho
+de cena atual; se isso virar gargalo em cenas maiores, é candidato a
+otimização futura (frustum culling no próprio shadow pass, por exemplo).

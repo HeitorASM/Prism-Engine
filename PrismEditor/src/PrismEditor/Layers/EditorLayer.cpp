@@ -1719,11 +1719,9 @@ namespace PrismEditor {
                     ImGui::TextDisabled("(?) Entre os dois angulos a luz cai suavemente ate a borda.");
                 }
 
-                ImGui::BeginDisabled();
                 ImGui::Checkbox("Projetar Sombras", &light.CastShadows);
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Ainda nao implementado - shadow mapping fica para uma proxima etapa.");
+                if (light.Type != Prism::LightType::Directional && light.CastShadows && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Shadow mapping hoje so suporta luzes Directional - marcar aqui nao tem efeito visual para Point/Spot ainda.");
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::LightComponent>>(m_SelectedEntity, "Light"));

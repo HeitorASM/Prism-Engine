@@ -25,6 +25,8 @@
 #include "../Scene/Components.h" // PrimitiveMesh, LightComponent, LightType
 #include "Shader.h"
 #include "Mesh.h"
+#include "ShadowMap.h"
+#include <glm/glm.hpp>
 #include <cstdint>
 #include <vector>
 
@@ -56,6 +58,17 @@ namespace Prism {
         float Range = 10.0f;               // Point/Spot - Directional ignora
         float CosOuterAngle = -1.0f;       // cos(SpotAngle) pre-calculado - so Spot
         float CosInnerAngle = -1.0f;       // cos(InnerSpotAngle) pre-calculado - so Spot
+
+        // Identidade da entidade EnTT dona deste LightComponent (ver
+        // Renderer::CollectGPULights) - existe SO para permitir achar de
+        // volta, dentro de 'lights', qual elemento corresponde a qual
+        // entidade (ver Renderer::DrawScene, que usa isto para casar o
+        // resultado de RenderShadowPass - que sabe a entidade shadow
+        // caster, nao so o Type - com o indice certo em u_Lights[]). Sem
+        // isto, uma cena com DUAS luzes Directional (so uma delas com
+        // CastShadows=true) aplicaria a sombra na luz errada se a
+        // primeira Directional da lista nao fosse a shadow caster.
+        uint32_t SourceEntityId = 0;
     };
 
     // Numero maximo de luzes simultaneas que uma cena pode enviar ao
@@ -96,7 +109,19 @@ namespace Prism {
         // tem uma lista de GPULight a mao (ex: previews avulsas). Passar
         // as luzes coletadas via CollectGPULights() para iluminacao de
         // verdade - ver DrawScene(), que ja faz isso automaticamente.
-        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr);
+        // 'shadowMap'/'lightSpaceMatrix' sao opcionais (ambos nullptr por
+        // padrao = "sem sombra", comportamento identico a antes desta
+        // feature existir): quando fornecidos, o fragment shader amostra
+        // 'shadowMap' para decidir se cada fragmento esta na sombra da luz
+        // Directional que gerou 'lightSpaceMatrix' (ver CalculateShadow em
+        // s_FragmentSrc, Renderer.cpp). DrawScene() preenche os dois
+        // automaticamente a partir de RenderShadowPass(); chamadores
+        // manuais de DrawMesh (ex: previews avulsas) continuam
+        // funcionando sem eles, so sem sombra na preview.
+        // 'shadowCasterLightIndex' identifica, dentro de 'lights', qual
+        // luz corresponde a 'shadowMap' (ver comentario em UploadLights) -
+        // ignorado se 'shadowMap' for nullptr.
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1);
 
         // Define a posicao (world space, 3 floats xyz) da camera usada
         // pelo teste de "face interna transparente" dentro de DrawMesh() -
@@ -144,16 +169,69 @@ namespace Prism {
         // traducao/coleta.
         static std::vector<GPULight> CollectGPULights(class Scene& scene);
 
+        // --- Shadow mapping (directional, uma luz por vez) --------------
+        // Ver comentario grande em Renderer.cpp acima de RenderShadowPass
+        // para o pipeline completo. Chamado automaticamente de dentro de
+        // DrawScene() - nenhum chamador (EditorLayer, PlayWindow) precisa
+        // saber que este pass existe ou chama-lo separadamente.
+        //
+        // Publica (nao so uso interno) pelo mesmo motivo de
+        // CollectGPULights: uma ferramenta de editor (ex: um futuro painel
+        // de debug que mostra o shadow map como imagem, tipo o "shadow map
+        // viewer" de engines maiores) pode precisar do resultado sem
+        // duplicar a logica de "qual luz projeta sombra e qual matriz ela
+        // usa".
+        //
+        // Retorna nullptr se nenhuma luz da cena tem
+        // LightComponent::CastShadows == true (comportamento identico a
+        // antes desta feature existir: sem shadow map, sem sombra
+        // nenhuma).
+        static ShadowMap* RenderShadowPass(class Scene& scene);
+
         // Envia o array 'lights' para o shader atualmente bindado (deve
         // ser chamado depois de s_BasicShader->Bind()) como os uniforms
         // u_LightCount + u_Lights[i].*. Uso interno de DrawMesh/DrawScene,
         // mas exposta para o caso raro de um caller externo precisar
         // desenhar com s_BasicShader fora do fluxo normal de DrawMesh.
-        static void UploadLights(const std::vector<GPULight>& lights);
+        // 'shadowCasterLightIndex' e o indice dentro de 'lights' da UNICA
+        // luz (identificada por entidade, ver GPULight::SourceEntityId e
+        // Renderer::DrawScene) cuja sombra foi desenhada em
+        // RenderShadowPass (-1 = nenhuma, valor padrao) - repassado ao
+        // shader para CalculateLight() saber em qual luz aplicar
+        // CalculateShadow().
+        static void UploadLights(const std::vector<GPULight>& lights, int shadowCasterLightIndex = -1);
 
     private:
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
+
+        // Shader "depth-only" usado exclusivamente por RenderShadowPass -
+        // so precisa de posicao (nem normal, nem cor) e nao tem fragment
+        // shader com logica nenhuma (so existe para a GPU ter algo para
+        // linkar - ver s_ShadowDepthFragmentSrc em Renderer.cpp). Programa
+        // SEPARADO de s_BasicShader, nao um "modo" dele, porque os dois
+        // tem conjuntos de uniforms/atributos completamente diferentes.
+        static Ref<Shader> s_ShadowDepthShader;
+
+        // Um unico ShadowMap, reusado a cada frame (recriado so se a
+        // engine ganhar shadow maps por-luz/CSM no futuro - ver comentario
+        // em ShadowMap.h). Alocado sob demanda na primeira vez que
+        // RenderShadowPass encontra uma luz com CastShadows=true (nao em
+        // Init()), para nao gastar os ~16MB de VRAM em cenas que nunca
+        // usam sombra.
+        static Scope<ShadowMap> s_ShadowMap;
+
+        // Identidade EnTT (ver GPULight::SourceEntityId) da entidade cuja
+        // luz foi desenhada em s_ShadowMap neste frame - preenchido por
+        // RenderShadowPass, lido por DrawScene logo em seguida para achar
+        // o indice correto dentro do 'lights' ja coletado (ver comentario
+        // em GPULight::SourceEntityId sobre o bug que isto evita).
+        // s_HasShadowCasterEntity distingue "nenhuma luz encontrada" de
+        // "encontrada, id == 0" sem depender do valor numerico exato de
+        // entt::null (que nao e garantido ser 0 em toda versao do EnTT).
+        static uint32_t s_ShadowCasterEntityId;
+        static bool s_HasShadowCasterEntity;
+
         static float s_CameraWorldPos[3];
 
         // VAO/VBO dedicados ao DrawLines() - o buffer e reescrito
