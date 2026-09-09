@@ -277,10 +277,9 @@ namespace PrismEditor {
             glm::mat4 worldTransform = m_PlayScene->GetWorldTransform(primaryCameraEntity);
             glm::mat4 view = glm::inverse(worldTransform);
             glm::mat4 projection = camera.GetProjection(aspect);
-            glm::mat4 viewProjection = projection * view;
             glm::vec3 worldPos = glm::vec3(worldTransform[3]);
 
-            Prism::Renderer::DrawScene(*m_PlayScene, glm::value_ptr(viewProjection), glm::value_ptr(worldPos));
+            Prism::Renderer::DrawScene(*m_PlayScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos));
         } else if (!m_LoggedNoCameraWarning) {
             // Log UMA vez so (nao a cada frame) avisando por que a tela
             // fica preta - ajuda a diagnosticar sem inundar o console.

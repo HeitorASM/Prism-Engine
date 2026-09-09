@@ -33,8 +33,20 @@ namespace Prism {
 
         void SetMat4(const std::string& name, const float* matrix4x4) const;
         void SetFloat3(const std::string& name, float x, float y, float z) const;
+
+        // 'x'/'y' - usado hoje so por u_ScreenSize (Renderer::DrawMesh) e
+        // u_NoiseScale (Renderer::RenderSSAOPass).
+        void SetFloat2(const std::string& name, float x, float y) const;
+
         void SetFloat(const std::string& name, float value) const;
         void SetInt(const std::string& name, int value) const;
+
+        // Envia um array de vetores glm::vec3 contiguo como
+        // 'uniform vec3 name[count]' no shader - usado hoje so por
+        // u_Samples[16] (kernel de SSAO, ver Renderer::RenderSSAOPass).
+        // 'values' deve apontar para 'count' glm::vec3 consecutivos (ex:
+        // std::array<glm::vec3, N>::data()).
+        void SetFloat3Array(const std::string& name, const float* values, uint32_t count) const;
 
         const std::string& GetName() const { return m_Name; }
 

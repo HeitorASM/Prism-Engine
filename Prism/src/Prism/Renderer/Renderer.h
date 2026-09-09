@@ -22,13 +22,18 @@
 // ============================================================================
 
 #include "../Core/Base.h"
-#include "../Scene/Components.h" // PrimitiveMesh, LightComponent, LightType
+#include "../Scene/Components.h"
 #include "Shader.h"
 #include "Mesh.h"
 #include "ShadowMap.h"
+#include "GeometryBuffer.h"
+#include "SSAO.h"
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <vector>
+#include <utility> 
+
+struct GLFWwindow;
 
 namespace Prism {
 
@@ -121,7 +126,14 @@ namespace Prism {
         // 'shadowCasterLightIndex' identifica, dentro de 'lights', qual
         // luz corresponde a 'shadowMap' (ver comentario em UploadLights) -
         // ignorado se 'shadowMap' for nullptr.
-        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1);
+        // 'ssao' e opcional (nullptr por padrao = "sem AO", identico ao
+        // comportamento antes desta feature existir): quando fornecida, o
+        // termo de luz ambiente e multiplicado por (1 - oclusao) lida da
+        // textura JA SUAVIZADA (BindBlurredForReading) de 'ssao' (ver
+        // u_AOMap/u_HasAO em s_FragmentSrc, Renderer.cpp). DrawScene()
+        // preenche isto automaticamente a partir de RenderSSAOPass +
+        // RenderSSAOBlurPass.
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr);
 
         // Define a posicao (world space, 3 floats xyz) da camera usada
         // pelo teste de "face interna transparente" dentro de DrawMesh() -
@@ -151,7 +163,16 @@ namespace Prism {
         // SetCameraPosition(cameraWorldPos) internamente antes de
         // qualquer DrawMesh() (ver comentario em SetCameraPosition acima)
         // - o chamador nao precisa fazer isso separadamente.
-        static void DrawScene(class Scene& scene, const float* viewProjection, const float* cameraWorldPos);
+        //
+        // 'view' e 'projection' SEPARADAS (nao uma unica viewProjection
+        // combinada, como antes desta funcao ganhar SSAO) - necessario
+        // porque RenderGeometryPrePass/RenderSSAOPass precisam de cada
+        // matriz individualmente: 'view' para transformar normais para
+        // view-space, 'projection' para reconstruir posicao 3D a partir
+        // da profundidade (unproject). viewProjection = projection * view
+        // e calculada internamente, ja que o pass de cor final ainda
+        // precisa dela combinada.
+        static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos);
 
         // Varre 'scene' por toda entidade com TransformComponent +
         // LightComponent e traduz cada uma para um GPULight (ver comentario
@@ -187,6 +208,22 @@ namespace Prism {
         // antes desta feature existir: sem shadow map, sem sombra
         // nenhuma).
         static ShadowMap* RenderShadowPass(class Scene& scene);
+
+        // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
+        // Ver comentario grande em SSAO.h para o pipeline completo (3
+        // sub-passes: geometria -> SSAO bruto -> blur). Todos chamados
+        // automaticamente de dentro de DrawScene() na ordem certa -
+        // nenhum chamador externo precisa orquestrar isso manualmente.
+        //
+        // 'view'/'projection' SEPARADAS (nao combinadas) pelo mesmo motivo
+        // documentado em DrawScene() acima.
+        //
+        // Publicas pelo mesmo motivo de RenderShadowPass/CollectGPULights:
+        // permitir que ferramentas de editor (ex: um futuro "AO buffer
+        // viewer" de debug) reusem o resultado sem duplicar logica.
+        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height);
+        static SSAO* RenderSSAOPass(GeometryBuffer& gBuffer, const float* projection, uint32_t width, uint32_t height);
+        static void RenderSSAOBlurPass(SSAO& ssao);
 
         // Envia o array 'lights' para o shader atualmente bindado (deve
         // ser chamado depois de s_BasicShader->Bind()) como os uniforms
@@ -231,6 +268,56 @@ namespace Prism {
         // entt::null (que nao e garantido ser 0 em toda versao do EnTT).
         static uint32_t s_ShadowCasterEntityId;
         static bool s_HasShadowCasterEntity;
+
+        // --- SSAO: shaders e recursos, mesmo padrao de s_ShadowDepthShader/
+        // s_ShadowMap acima -----------------------------------------------
+
+        // Depth+normal-only, usado por RenderGeometryPrePass - variante do
+        // s_ShadowDepthShader mas com uma segunda saida (normal em
+        // view-space) e usando a camera PRINCIPAL, nao a da luz.
+        static Ref<Shader> s_GeometryPrePassShader;
+
+        // Fullscreen-quad, calcula oclusao a partir do GeometryBuffer.
+        static Ref<Shader> s_SSAOShader;
+
+        // Fullscreen-quad, box blur sobre o resultado bruto de s_SSAOShader.
+        static Ref<Shader> s_SSAOBlurShader;
+
+        // Alocados sob demanda (mesma logica de s_ShadowMap) - so na
+        // primeira vez que alguma cena/camera realmente usa SSAO. Ao
+        // contrario de s_ShadowMap (resolucao fixa), os dois acompanham a
+        // resolucao da viewport sendo desenhada a cada chamada de
+        // DrawScene (ver GeometryBuffer::Resize/SSAO::Resize).
+        static Scope<GeometryBuffer> s_GeometryBuffer;
+        static Scope<SSAO> s_SSAO;
+
+        // VAO vazio (sem VBO/atributos) usado pelo fullscreen quad de
+        // s_SSAOShader/s_SSAOBlurShader - os 3 vertices sao gerados
+        // inteiramente dentro do vertex shader via gl_VertexID (ver
+        // s_FullscreenQuadVertexSrc, Renderer.cpp), tecnica classica do
+        // "big triangle" que cobre a tela toda sem precisar upload nenhum
+        // de dados de vertice. OpenGL Core Profile exige um VAO bindado
+        // para qualquer glDrawArrays, mesmo sem nenhum atributo habilitado
+        // nele - por isso ainda precisamos de UM VAO, so que vazio.
+        //
+        // BUG HISTORICO consertado aqui: uma versao anterior desta feature
+        // usava um UNICO VAO estatico (criado uma vez, no contexto do
+        // editor, dentro de Init()) para TODOS os contextos GLFW - isso
+        // produzia lixo visual (padrao de listras/ruido, cores como
+        // magenta) quando SSAO rodava dentro da Play Window (PlayWindow.cpp),
+        // que usa um GLFWwindow/contexto SEPARADO do editor. VAOs (Vertex
+        // Array Objects) sao objetos de "container" no OpenGL e, ao
+        // contrario de texturas/buffers/shaders, NAO SAO COMPARTILHADOS
+        // entre contextos mesmo quando os contextos compartilham a share
+        // list (glfwCreateWindow(..., sharedContextWindow) - ver
+        // PlayWindow::Open) - um VAO valido num contexto e invalido/vazio
+        // em outro. Mesh ja resolvia exatamente este problema (ver
+        // Mesh::BindForCurrentContext, Mesh.cpp/.h) muito antes do SSAO
+        // existir; GetFullscreenQuadVAOForCurrentContext() abaixo aplica a
+        // mesma tecnica (um VAO por GLFWwindow*, criado sob demanda e
+        // cacheado) para o VAO do fullscreen quad.
+        static uint32_t GetFullscreenQuadVAOForCurrentContext();
+        static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_FullscreenQuadVAOsByContext;
 
         static float s_CameraWorldPos[3];
 

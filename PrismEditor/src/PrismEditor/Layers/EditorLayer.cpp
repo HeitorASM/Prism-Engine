@@ -482,7 +482,11 @@ namespace PrismEditor {
         // comentario em Renderer::SetCameraPosition, Renderer.h, sobre o
         // teste de "face interna transparente") - nao precisa ser feito
         // aqui separadamente.
-        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(viewProjection), glm::value_ptr(cameraPos));
+        //
+        // 'view'/'projection' passadas SEPARADAS (nao 'viewProjection'
+        // combinada) desde que DrawScene ganhou SSAO - ver comentario na
+        // assinatura de Renderer::DrawScene (Renderer.h).
+        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(cameraPos));
         RenderCameraGizmos(viewProjection);
         RenderSelectedColliderGizmo(viewProjection);
         RenderLightGizmos(viewProjection);
@@ -519,10 +523,9 @@ namespace PrismEditor {
         glm::mat4 worldTransform = m_ActiveScene->GetWorldTransform(cameraEntity);
         glm::mat4 view = glm::inverse(worldTransform);
         glm::mat4 projection = camera.GetProjection(aspect);
-        glm::mat4 viewProjection = projection * view;
         glm::vec3 worldPos = glm::vec3(worldTransform[3]);
 
-        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(viewProjection), glm::value_ptr(worldPos));
+        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos));
 
         m_CameraPreviewFramebuffer->Unbind();
         return m_CameraPreviewFramebuffer->GetColorAttachmentID();

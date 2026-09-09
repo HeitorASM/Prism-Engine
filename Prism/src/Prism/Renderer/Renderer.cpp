@@ -1,14 +1,15 @@
 #include <glad/gl.h>
+#include <GLFW/glfw3.h> 
 #include "Renderer.h"
 #include "PrimitiveMeshFactory.h"
 #include "../Core/Log.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp> // glm::lookAt, glm::ortho (RenderShadowPass)
-#include <algorithm> // std::min (UploadLights)
-#include <string>    // std::to_string (UploadLights - nomes de uniform por indice)
-#include <limits>    // std::numeric_limits (RenderShadowPass - bounding box da cena)
+#include <glm/gtc/matrix_transform.hpp> 
+#include <algorithm> 
+#include <string>    
+#include <limits>   
 
 namespace Prism {
 
@@ -18,6 +19,12 @@ namespace Prism {
     Scope<ShadowMap> Renderer::s_ShadowMap = nullptr;
     uint32_t Renderer::s_ShadowCasterEntityId = 0;
     bool Renderer::s_HasShadowCasterEntity = false;
+    Ref<Shader> Renderer::s_GeometryPrePassShader = nullptr;
+    Ref<Shader> Renderer::s_SSAOShader = nullptr;
+    Ref<Shader> Renderer::s_SSAOBlurShader = nullptr;
+    Scope<GeometryBuffer> Renderer::s_GeometryBuffer = nullptr;
+    Scope<SSAO> Renderer::s_SSAO = nullptr;
+    std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_FullscreenQuadVAOsByContext;
     Scope<Mesh> Renderer::s_Meshes[5] = {};
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
@@ -101,6 +108,175 @@ namespace Prism {
         void main() {
             // Vazio de proposito - ver comentario acima de
             // s_ShadowDepthVertexSrc.
+        }
+    )";
+
+    // ========================================================================
+    // Shaders de SSAO - ver comentario grande em SSAO.h para o pipeline
+    // completo (geometria -> SSAO bruto -> blur -> pass de cor final).
+    // ========================================================================
+
+    // Pre-pass de geometria (RenderGeometryPrePass): mesma ideia do
+    // shadow-depth acima, mas com a camera PRINCIPAL (nao a da luz) e uma
+    // SEGUNDA saida (normal em view-space, alem da profundidade que a GPU
+    // ja escreve sozinha no depth buffer).
+    static const char* s_GeometryPrePassVertexSrc = R"(
+        #version 450 core
+        layout(location = 0) in vec3 a_Position;
+        layout(location = 1) in vec3 a_Normal;
+
+        uniform mat4 u_ViewProjection;
+        uniform mat4 u_View;
+        uniform mat4 u_Model;
+
+        // Normal transformada para VIEW-SPACE (nao world-space) - ver
+        // comentario grande em GeometryBuffer.h sobre o motivo. A matriz
+        // normal correta seria transpose(inverse(mat3(u_View * u_Model)))
+        // para lidar com escala nao-uniforme sem distorcer a normal -
+        // omitido aqui de proposito (mat3(u_View * u_Model) direto) pela
+        // mesma razao ja documentada em s_VertexSrc (o shader principal):
+        // esta engine ainda nao aplica escala nao-uniforme em nenhum fluxo
+        // de edicao hoje, entao a versao mais simples e barata e
+        // equivalente na pratica. Revisitar junto se/quando escala
+        // nao-uniforme for suportada.
+        out vec3 v_ViewNormal;
+
+        void main() {
+            v_ViewNormal = normalize(mat3(u_View * u_Model) * a_Normal);
+            gl_Position = u_ViewProjection * u_Model * vec4(a_Position, 1.0);
+        }
+    )";
+
+    static const char* s_GeometryPrePassFragmentSrc = R"(
+        #version 450 core
+        in vec3 v_ViewNormal;
+        layout(location = 0) out vec4 o_ViewNormal;
+
+        void main() {
+            o_ViewNormal = vec4(normalize(v_ViewNormal), 1.0);
+        }
+    )";
+
+    // Vertex shader COMPARTILHADO pelos 2 fullscreen-quad passes abaixo
+    // (SSAO e blur) - gera um unico triangulo GIGANTE que cobre a tela
+    // inteira usando so gl_VertexID (sem VBO/atributos nenhum - ver
+    // comentario em Renderer::GetFullscreenQuadVAOForCurrentContext, Renderer.h). Tecnica
+    // padrao ("fullscreen triangle trick"): um triangulo com vertices em
+    // (-1,-1), (3,-1), (-1,3) cobre totalmente a regiao [-1,1]x[-1,1] (o
+    // NDC inteiro), com a parte que sobra do triangulo fora da tela
+    // simplesmente descartada pelo clipping do rasterizador - mais barato
+    // que desenhar 2 triangulos (4 vertices, 6 indices) formando um quad
+    // de verdade, pela mesma razao que menos chamadas/vertices e sempre
+    // melhor quando o resultado visual e identico.
+    static const char* s_FullscreenQuadVertexSrc = R"(
+        #version 450 core
+        out vec2 v_TexCoord;
+
+        void main() {
+            v_TexCoord = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+            gl_Position = vec4(v_TexCoord * 2.0 - 1.0, 0.0, 1.0);
+        }
+    )";
+
+    static const char* s_SSAOFragmentSrc = R"(
+        #version 450 core
+        in vec2 v_TexCoord;
+        layout(location = 0) out float o_Occlusion;
+
+        uniform sampler2D u_ViewNormal;  // GeometryBuffer - view-space
+        uniform sampler2D u_Depth;       // GeometryBuffer
+        uniform sampler2D u_NoiseTexture;
+
+        uniform vec3 u_Samples[16];
+        uniform mat4 u_Projection;
+        uniform mat4 u_InverseProjection;
+        uniform vec2 u_ScreenSize;
+        uniform vec2 u_NoiseScale; // ScreenSize / 4.0 (tamanho da textura de ruido) - repete o ruido "ladrilhado" por toda a tela
+
+        const int kKernelSize = 16;
+        const float kRadius = 0.5;     // raio da hemisfera de amostragem, em unidades de mundo (metros, assumindo 1 unidade = 1 metro) - ajustar aqui se cenas muito maiores/menores mostrarem AO fraco/exagerado demais
+        const float kBias = 0.025;     // evita "acne" de auto-oclusao por precisao limitada de profundidade, mesmo espirito do bias em CalculateShadow (Renderer.cpp)
+
+        // Reconstroi a posicao em VIEW-SPACE de um pixel a partir da sua
+        // profundidade (NDC) - "unproject" via a inversa da matriz de
+        // projecao, tecnica padrao para SSAO sem precisar guardar a
+        // posicao 3D inteira num G-buffer extra (so profundidade, que
+        // ja escrevemos de qualquer forma para o teste de profundidade
+        // normal do pre-pass).
+        vec3 ReconstructViewPos(vec2 texCoord) {
+            float depthNDC = texture(u_Depth, texCoord).r * 2.0 - 1.0;
+            vec4 clipPos = vec4(texCoord * 2.0 - 1.0, depthNDC, 1.0);
+            vec4 viewPos = u_InverseProjection * clipPos;
+            return viewPos.xyz / viewPos.w;
+        }
+
+        void main() {
+            vec3 fragPos = ReconstructViewPos(v_TexCoord);
+            vec3 normal = normalize(texture(u_ViewNormal, v_TexCoord).rgb);
+            vec3 randomVec = normalize(texture(u_NoiseTexture, v_TexCoord * u_NoiseScale).xyz);
+
+            // Base TBN (tangent/bitangent/normal) para orientar o kernel de
+            // amostras (definido em tangent space, ver SSAO::GenerateKernelAndNoise)
+            // ao longo da normal REAL de cada pixel - processo de
+            // Gram-Schmidt simplificado (a "aleatoriedade" de randomVec e o
+            // que produz a rotacao usada para quebrar o banding, ver
+            // comentario em SSAO.cpp sobre a textura de ruido).
+            vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+            vec3 bitangent = cross(normal, tangent);
+            mat3 TBN = mat3(tangent, bitangent, normal);
+
+            float occlusion = 0.0;
+            for (int i = 0; i < kKernelSize; i++) {
+                vec3 samplePos = fragPos + (TBN * u_Samples[i]) * kRadius;
+
+                vec4 offset = u_Projection * vec4(samplePos, 1.0);
+                offset.xyz /= offset.w;
+                offset.xyz = offset.xyz * 0.5 + 0.5; // NDC -> [0,1] (coordenada de textura)
+
+                float sampleDepthViewZ = ReconstructViewPos(offset.xy).z;
+
+                // Range check: sem isto, geometria muito distante do ponto
+                // amostrado (ex: uma parede longe atras de um objeto
+                // pequeno) contaria como "oclusao" so por estar mais perto
+                // da camera que o far plane - smoothstep suaviza a
+                // transicao em vez de um corte abrupto (que apareceria
+                // como uma borda visivel de AO ao redor de cada objeto).
+                float rangeCheck = smoothstep(0.0, 1.0, kRadius / max(abs(fragPos.z - sampleDepthViewZ), 0.0001));
+                occlusion += (sampleDepthViewZ >= samplePos.z + kBias ? 1.0 : 0.0) * rangeCheck;
+            }
+
+            occlusion = occlusion / float(kKernelSize);
+            o_Occlusion = 1.0 - occlusion; // convertido para "quanto de luz passa" - facilita o pass de cor final so multiplicar direto (ver u_AOMap em s_FragmentSrc)
+        }
+    )";
+
+    static const char* s_SSAOBlurFragmentSrc = R"(
+        #version 450 core
+        in vec2 v_TexCoord;
+        layout(location = 0) out float o_Occlusion;
+
+        uniform sampler2D u_SSAOTexture;
+
+        void main() {
+            // Box blur 4x4 simples sobre o texel size do proprio SSAO
+            // (nao um blur "geometry-aware"/bilateral que preservaria
+            // bordas com mais fidelidade) - suficiente para remover o
+            // ruido introduzido pela textura de rotacao 4x4 (ver
+            // SSAO::GenerateKernelAndNoise) sem borrar visivelmente
+            // silhuetas de objetos, dado que o proprio kernel de SSAO ja
+            // e localizado (kRadius pequeno). Um blur bilateral (que leva
+            // profundidade/normal em conta para nao misturar objetos
+            // diferentes) e a evolucao natural se esta versao mostrar halo
+            // perceptivel nas bordas dos objetos.
+            vec2 texelSize = 1.0 / vec2(textureSize(u_SSAOTexture, 0));
+            float result = 0.0;
+            for (int x = -2; x < 2; x++) {
+                for (int y = -2; y < 2; y++) {
+                    vec2 offset = vec2(float(x), float(y)) * texelSize;
+                    result += texture(u_SSAOTexture, v_TexCoord + offset).r;
+                }
+            }
+            o_Occlusion = result / 16.0;
         }
     )";
 
@@ -278,6 +454,15 @@ namespace Prism {
             return light.Color * light.Intensity * diffuse * attenuation * (1.0 - shadow);
         }
 
+        // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
+        // u_HasAO=false (o padrao, ver Renderer::DrawMesh) e o
+        // comportamento antigo exato: ambiente fixo em 0.25 sem nenhuma
+        // amostragem extra. Ver comentario grande em SSAO.h para o
+        // pipeline completo que produz u_AOMap ANTES deste shader rodar.
+        uniform sampler2D u_AOMap;
+        uniform bool u_HasAO;
+        uniform vec2 u_ScreenSize;
+
         void main() {
             vec3 normal = normalize(v_Normal);
             vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
@@ -293,7 +478,20 @@ namespace Prism {
             // ainda). Mesmo valor (0.25) que o shader antigo usava, para
             // cenas sem luzes configuradas nao ficarem mais escuras do
             // que estavam antes desta mudanca.
-            vec3 lightAccum = vec3(0.25);
+            //
+            // SSAO e aplicado SO no termo ambiente, nunca na contribuicao
+            // direta de cada luz (CalculateLight) - fisicamente, ambient
+            // occlusion aproxima o bloqueio de luz AMBIENTE/INDIRETA que
+            // vem de todas as direcoes (por isso escurece cantos/frestas),
+            // nao luz DIRETA vinda de uma direcao especifica - aplicar em
+            // cima da luz direta tambem escureceria incorretamente
+            // superficies bem iluminadas de frente so por estarem perto de
+            // outra geometria.
+            float ao = 1.0;
+            if (u_HasAO)
+                ao = texture(u_AOMap, gl_FragCoord.xy / u_ScreenSize).r;
+
+            vec3 lightAccum = vec3(0.25) * ao;
 
             for (int i = 0; i < u_LightCount; i++) {
                 bool applyShadow = (i == u_ShadowCasterLightIndex);
@@ -361,6 +559,16 @@ namespace Prism {
         // s_ShadowMap NAO e criado aqui de proposito - ver comentario em
         // Renderer.h (s_ShadowMap) sobre alocacao sob demanda.
 
+        s_GeometryPrePassShader = Shader::Create("GeometryPrePass", s_GeometryPrePassVertexSrc, s_GeometryPrePassFragmentSrc);
+        s_SSAOShader = Shader::Create("SSAO", s_FullscreenQuadVertexSrc, s_SSAOFragmentSrc);
+        s_SSAOBlurShader = Shader::Create("SSAOBlur", s_FullscreenQuadVertexSrc, s_SSAOBlurFragmentSrc);
+        // s_GeometryBuffer/s_SSAO NAO sao criados aqui de proposito - mesma
+        // alocacao sob demanda de s_ShadowMap (ver comentario em Renderer.h).
+        //
+        // Nenhum VAO do fullscreen quad e criado aqui - GetFullscreenQuadVAOForCurrentContext()
+        // cria sob demanda, por contexto GLFW (ver comentario grande em
+        // Renderer.h sobre por que isto e necessario).
+
         // VAO/VBO de linhas: so posicao (3 floats), sem EBO - DrawLines()
         // sempre desenha via GL_LINES direto do VBO, sem indexacao. O VBO
         // comeca vazio (GL_DYNAMIC_DRAW, sem dados ainda) - o conteudo real
@@ -383,9 +591,43 @@ namespace Prism {
         s_LineShader.reset();
         s_ShadowDepthShader.reset();
         s_ShadowMap.reset();
+        s_GeometryPrePassShader.reset();
+        s_SSAOShader.reset();
+        s_SSAOBlurShader.reset();
+        s_GeometryBuffer.reset();
+        s_SSAO.reset();
 
         if (s_LineVBO) { glDeleteBuffers(1, &s_LineVBO); s_LineVBO = 0; }
         if (s_LineVAO) { glDeleteVertexArrays(1, &s_LineVAO); s_LineVAO = 0; }
+
+        // Deleta todos os VAOs do fullscreen quad, um por contexto GLFW
+        // (ver GetFullscreenQuadVAOForCurrentContext) - cada glDeleteVertexArrays
+        // so tem efeito real se chamado com o contexto correspondente
+        // ainda ativo/valido, mas e seguro chamar mesmo apos o contexto
+        // ja ter sido destruido (o driver ignora silenciosamente).
+        for (auto& [window, vao] : s_FullscreenQuadVAOsByContext)
+            glDeleteVertexArrays(1, &vao);
+        s_FullscreenQuadVAOsByContext.clear();
+    }
+
+    // Ver comentario grande em Renderer.h (s_FullscreenQuadVAOsByContext)
+    // sobre por que isto e necessario (VAOs nao sao compartilhados entre
+    // contextos GLFW, mesmo com share list) - mesma tecnica de
+    // Mesh::BindForCurrentContext (Mesh.cpp), simplificada aqui porque
+    // este VAO nao tem VBO/atributos para reconfigurar, so precisa
+    // existir.
+    uint32_t Renderer::GetFullscreenQuadVAOForCurrentContext() {
+        GLFWwindow* current = glfwGetCurrentContext();
+
+        for (auto& [window, vao] : s_FullscreenQuadVAOsByContext) {
+            if (window == current)
+                return vao;
+        }
+
+        uint32_t vao;
+        glCreateVertexArrays(1, &vao);
+        s_FullscreenQuadVAOsByContext.emplace_back(current, vao);
+        return vao;
     }
 
     void Renderer::Clear(float r, float g, float b, float a) {
@@ -397,7 +639,7 @@ namespace Prism {
         glViewport(0, 0, (GLsizei)width, (GLsizei)height);
     }
 
-    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex) {
+    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao) {
         if (!s_BasicShader) return;
 
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
@@ -422,9 +664,10 @@ namespace Prism {
         // 'shadowMap' e opcional (ver comentario em Renderer.h) - sem ele,
         // u_HasShadow fica false e CalculateShadow nunca e chamada no
         // shader (comportamento identico a antes desta feature existir).
-        // GL_TEXTURE0 e reservado para o shadow map: DrawMesh nao usa
-        // nenhuma outra textura hoje (sem materiais/texturas ainda - ver
-        // README), entao nao ha conflito de slot.
+        // GL_TEXTURE0 e reservado para o shadow map, GL_TEXTURE1 para o
+        // AO map (ver abaixo) - DrawMesh nao usa nenhuma outra textura
+        // hoje (sem materiais/texturas ainda - ver README), entao nao ha
+        // conflito de slot.
         if (shadowMap) {
             shadowMap->BindForReading(0);
             s_BasicShader->SetInt("u_ShadowMap", 0);
@@ -432,6 +675,18 @@ namespace Prism {
             s_BasicShader->SetInt("u_HasShadow", 1);
         } else {
             s_BasicShader->SetInt("u_HasShadow", 0);
+        }
+
+        // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
+        // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao),
+        // comportamento identico a antes desta feature existir.
+        if (ssao) {
+            ssao->BindBlurredForReading(1);
+            s_BasicShader->SetInt("u_AOMap", 1);
+            s_BasicShader->SetInt("u_HasAO", 1);
+            s_BasicShader->SetFloat2("u_ScreenSize", (float)ssao->GetWidth(), (float)ssao->GetHeight());
+        } else {
+            s_BasicShader->SetInt("u_HasAO", 0);
         }
 
         mesh->BindForCurrentContext();
@@ -719,8 +974,124 @@ namespace Prism {
         return s_ShadowMap.get();
     }
 
-    void Renderer::DrawScene(Scene& scene, const float* viewProjection, const float* cameraWorldPos) {
+    // ========================================================================
+    // RenderGeometryPrePass / RenderSSAOPass / RenderSSAOBlurPass
+    // Ver comentario grande em SSAO.h para o pipeline completo. Ordem de
+    // chamada fixa (imposta por DrawScene, nao pelos proprios metodos):
+    // geometria -> SSAO bruto -> blur.
+    // ========================================================================
+
+    GeometryBuffer* Renderer::RenderGeometryPrePass(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height) {
+        // Aloca sob demanda (mesma logica de s_ShadowMap, ver comentario
+        // em Renderer.h) - so na primeira vez que DrawScene decide usar
+        // SSAO (ver flag em DrawScene). Redimensiona se a resolucao da
+        // viewport mudou desde o ultimo frame (GeometryBuffer::Resize e
+        // no-op se o tamanho for igual).
+        if (!s_GeometryBuffer)
+            s_GeometryBuffer = CreateScope<GeometryBuffer>(width, height);
+        else
+            s_GeometryBuffer->Resize(width, height);
+
+        s_GeometryBuffer->BindForWriting();
+
+        s_GeometryPrePassShader->Bind();
+        glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
+        s_GeometryPrePassShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
+        s_GeometryPrePassShader->SetMat4("u_View", view);
+
+        auto meshView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+        for (auto entityHandle : meshView) {
+            auto& meshRenderer = meshView.get<MeshRendererComponent>(entityHandle);
+            glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
+            s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(model));
+
+            Mesh* mesh = s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
+            if (!mesh) continue;
+            mesh->BindForCurrentContext();
+            glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+        }
+
+        glBindVertexArray(0);
+        s_GeometryPrePassShader->Unbind();
+        s_GeometryBuffer->Unbind();
+
+        return s_GeometryBuffer.get();
+    }
+
+    SSAO* Renderer::RenderSSAOPass(GeometryBuffer& gBuffer, const float* projection, uint32_t width, uint32_t height) {
+        if (!s_SSAO)
+            s_SSAO = CreateScope<SSAO>(width, height);
+        else
+            s_SSAO->Resize(width, height);
+
+        glm::mat4 projectionMatrix = glm::make_mat4(projection);
+        glm::mat4 inverseProjection = glm::inverse(projectionMatrix);
+
+        s_SSAO->BindRawForWriting();
+
+        // Fullscreen quad roda SEM depth test (nao escreve/le profundidade
+        // nenhuma - e so um pass de calculo por pixel de tela inteira) e
+        // SEM blend (queremos SUBSTITUIR o texel, nao misturar com o que
+        // ja estava la, que e lixo de memoria/frame anterior de qualquer
+        // forma) - ambos habilitados globalmente em
+        // OpenGLContext::Init(), entao precisam ser desligados aqui e
+        // religados no fim (ver bloco simetrico no final desta funcao e
+        // em RenderSSAOBlurPass).
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+
+        s_SSAOShader->Bind();
+        s_SSAOShader->SetMat4("u_Projection", projection);
+        s_SSAOShader->SetMat4("u_InverseProjection", glm::value_ptr(inverseProjection));
+        s_SSAOShader->SetFloat2("u_ScreenSize", (float)width, (float)height);
+        s_SSAOShader->SetFloat2("u_NoiseScale", (float)width / 4.0f, (float)height / 4.0f);
+        s_SSAOShader->SetFloat3Array("u_Samples", glm::value_ptr(s_SSAO->GetKernel()[0]), SSAO::KernelSize);
+
+        gBuffer.BindNormalForReading(0);
+        s_SSAOShader->SetInt("u_ViewNormal", 0);
+        gBuffer.BindDepthForReading(1);
+        s_SSAOShader->SetInt("u_Depth", 1);
+        s_SSAO->BindNoiseForReading(2);
+        s_SSAOShader->SetInt("u_NoiseTexture", 2);
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext());
+        glDrawArrays(GL_TRIANGLES, 0, 3); // "big triangle" - ver comentario em s_FullscreenQuadVertexSrc
+        glBindVertexArray(0);
+
+        s_SSAOShader->Unbind();
+        s_SSAO->Unbind();
+
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+
+        return s_SSAO.get();
+    }
+
+    void Renderer::RenderSSAOBlurPass(SSAO& ssao) {
+        ssao.BindBlurredForWriting();
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+
+        s_SSAOBlurShader->Bind();
+        ssao.BindRawForReading(0);
+        s_SSAOBlurShader->SetInt("u_SSAOTexture", 0);
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext());
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        s_SSAOBlurShader->Unbind();
+        ssao.Unbind();
+
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+    }
+
+    void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos) {
         SetCameraPosition(cameraWorldPos);
+
+        glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
 
         // Coleta todas as luzes da cena UMA VEZ por frame (nao por
         // entidade desenhada) - reusada em todo DrawMesh abaixo, ja que a
@@ -729,33 +1100,20 @@ namespace Prism {
         // LightComponent -> GPULight.
         std::vector<GPULight> lights = CollectGPULights(scene);
 
-        // Shadow pass ANTES do pass de cor - ver comentario grande acima
-        // de RenderShadowPass para o pipeline completo. Note que isto MUDA
-        // tanto o FRAMEBUFFER quanto o VIEWPORT do OpenGL temporariamente
-        // (para dentro do ShadowMap, na resolucao dele, tipicamente
-        // diferente do framebuffer de cor que esta chamada de DrawScene
-        // esta desenhando) - por isso salvamos os dois ANTES de chamar
-        // RenderShadowPass e restauramos os dois explicitamente depois.
-        //
-        // BUG HISTORICO consertado aqui: uma versao anterior desta funcao
-        // so restaurava o viewport (glViewport), nao o framebuffer
-        // (glBindFramebuffer) - ShadowMap::Unbind() (chamado no fim de
-        // RenderShadowPass) faz glBindFramebuffer(GL_FRAMEBUFFER, 0), ou
-        // seja, volta para o framebuffer PADRAO DO SISTEMA (a janela do
-        // SO), NAO para o Framebuffer offscreen da viewport
-        // (m_ViewportFramebuffer, ja bindado pelo chamador antes de
-        // chamar DrawScene - ver EditorLayer::RenderScene). Sem restaurar
-        // o bind certo aqui, todo o pass de cor abaixo desenhava no
-        // framebuffer errado - o painel Viewport (que so le a textura de
-        // m_ViewportFramebuffer) ficava preto, MESMO SEM NENHUMA luz
-        // projetando sombra ficar visivel, porque a cena inteira parava
-        // de ser desenhada no lugar certo assim que qualquer luz da cena
-        // tivesse CastShadows=true (o que faz RenderShadowPass entrar
-        // neste caminho pela primeira vez).
+        // Salva framebuffer + viewport ATUAIS antes de qualquer sub-pass
+        // que desenhe em outro lugar (shadow map, G-buffer, SSAO) - todos
+        // eles mudam framebuffer/viewport temporariamente e sao
+        // restaurados ao final de cada um deles aqui, nunca implicitamente
+        // (ver comentario grande sobre o bug historico do shadow pass, um
+        // pouco acima em RenderShadowPass/versoes anteriores desta
+        // funcao, que motivou fazer isso de forma explicita e centralizada
+        // aqui em vez de espalhado em cada sub-pass).
         GLint previousFramebuffer = 0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
         GLint previousViewport[4];
         glGetIntegerv(GL_VIEWPORT, previousViewport);
+        uint32_t viewportWidth = (uint32_t)previousViewport[2];
+        uint32_t viewportHeight = (uint32_t)previousViewport[3];
 
         ShadowMap* shadowMap = RenderShadowPass(scene);
 
@@ -779,15 +1137,43 @@ namespace Prism {
             }
         }
 
+        // --- SSAO: pre-pass de geometria (camera principal) + calculo +
+        // blur - ver comentario grande em SSAO.h. So roda quando a
+        // viewport tem tamanho valido (largura/altura > 0) - pode ser 0
+        // por um frame quando o painel esta sendo redimensionado/oculto.
+        //
+        // TODO(toggle): hoje SSAO esta SEMPRE ativo (sem uma opcao de
+        // liga/desliga no editor, ao contrario de CastShadows por luz) -
+        // e candidato natural para uma configuracao de qualidade grafica
+        // futura (ex: um painel de "Render Settings" por cena/projeto),
+        // mas fica fora do escopo desta etapa.
+        SSAO* ssao = nullptr;
+        if (viewportWidth > 0 && viewportHeight > 0) {
+            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight);
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+
+            ssao = RenderSSAOPass(*gBuffer, projection, viewportWidth, viewportHeight);
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+
+            RenderSSAOBlurPass(*ssao);
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        }
+
         // Mesmo loop que EditorLayer::RenderSceneEntities fazia antes desta
         // funcao existir (ver comentario em Renderer.h) - toda entidade com
         // TransformComponent + MeshRendererComponent, usando a transform de
         // MUNDO (Scene::GetWorldTransform, ancestrais/parenting inclusos).
-        auto view = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
-        for (auto entityHandle : view) {
-            auto& meshRenderer = view.get<MeshRendererComponent>(entityHandle);
+        //
+        // Nome 'meshRendererView' (nao so 'view') para nao colidir com o
+        // parametro 'view' (matriz de camera) desta funcao.
+        auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+        for (auto entityHandle : meshRendererView) {
+            auto& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-            DrawMesh(meshRenderer.Mesh, viewProjection, glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex);
+            DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao);
         }
     }
 
