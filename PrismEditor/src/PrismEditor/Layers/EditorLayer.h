@@ -80,6 +80,11 @@ namespace PrismEditor {
         //   (o popup com a lista de components disponiveis) para nao
         //   poluir o corpo principal da funcao.
         void RenderAddComponentButton();
+
+        // Ver comentario grande na implementacao (EditorLayer.cpp) sobre
+        // por que este mapeamento String -> Command<T> vive aqui e nao
+        // dentro de Prism::ComponentRegistry.
+        void AddComponentByRegistryName(const std::string& displayName);
         void RenderConsolePanel();
         // ^ RenderConsolePanel() so delega para m_ConsolePanel.OnImGuiRender()
         //   - ver EditorLayer.cpp. O painel de verdade vive em

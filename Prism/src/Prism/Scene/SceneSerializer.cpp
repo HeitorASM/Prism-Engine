@@ -1,6 +1,7 @@
 #include "SceneSerializer.h"
 #include "Scene.h"
 #include "Entity.h"
+#include "ComponentRegistry.h"
 #include "../Core/Log.h"
 
 #include <fstream>
@@ -83,51 +84,45 @@ namespace Prism {
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
 
     // --- helpers de escrita/leitura binaria -----------------------------
-    // Pequenos o suficiente para nao valer a pena um header separado ainda;
-    // se outros serializers binarios aparecerem (ex: para Materiais), vale
-    // extrair isso para um BinaryWriter/BinaryReader compartilhado.
-
+    // Migrados para ComponentRegistry (ver ComponentRegistry.h) - agora
+    // compartilhados com os blocos de Serialize/Deserialize de cada
+    // Component (ComponentRegistration.cpp), que precisam exatamente das
+    // mesmas rotinas. ComponentRegistry::WriteRaw/ReadRaw/WriteString/ReadString
+    // sao METODOS ESTATICOS DE CLASSE, nao funcoes livres em namespace -
+    // 'using Class::member' so e valido dentro de outra classe (para
+    // herança), nao em escopo de namespace solto como este arquivo - por
+    // isso usamos wrappers finos (chamando o metodo da classe) em vez de
+    // 'using', para nao precisar prefixar ComponentRegistry:: em toda
+    // chamada existente abaixo.
     static void WriteString(std::ofstream& out, const std::string& str) {
-        uint32_t length = (uint32_t)str.size();
-        out.write(reinterpret_cast<const char*>(&length), sizeof(length));
-        if (length > 0)
-            out.write(str.data(), length);
+        ComponentRegistry::WriteString(out, str);
     }
-
     static bool ReadString(std::ifstream& in, std::string& outStr) {
-        uint32_t length = 0;
-        in.read(reinterpret_cast<char*>(&length), sizeof(length));
-        if (!in) return false;
-
-        // Sanidade: um nome de entidade/cena gigante e sinal de arquivo
-        // corrompido ou lido com offset errado - nao alocamos as cegas.
-        if (length > (16 * 1024 * 1024)) {
-            PRISM_CORE_ERROR("SceneSerializer: string absurdamente grande (", length, " bytes) - arquivo provavelmente corrompido.");
-            return false;
-        }
-
-        outStr.resize(length);
-        if (length > 0)
-            in.read(outStr.data(), length);
-        return (bool)in;
+        return ComponentRegistry::ReadString(in, outStr);
     }
-
     template<typename T>
     static void WriteRaw(std::ofstream& out, const T& value) {
-        static_assert(std::is_trivially_copyable_v<T>, "WriteRaw so deve ser usado com tipos POD (floats, ints, glm::vec3, etc).");
-        out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+        ComponentRegistry::WriteRaw(out, value);
     }
-
     template<typename T>
     static bool ReadRaw(std::ifstream& in, T& value) {
-        static_assert(std::is_trivially_copyable_v<T>, "ReadRaw so deve ser usado com tipos POD (floats, ints, glm::vec3, etc).");
-        in.read(reinterpret_cast<char*>(&value), sizeof(T));
-        return (bool)in;
+        return ComponentRegistry::ReadRaw(in, value);
     }
 
     // --- Serialize --------------------------------------------------------
 
     bool SceneSerializer::Serialize(const std::filesystem::path& filepath) {
+        // Garante que ComponentRegistry::GetAll() (usado abaixo, ver
+        // ComponentRegistry.h/ComponentRegistration.cpp) ja esta populado
+        // - chamado aqui, e nao so uma vez no bootstrap do editor, para
+        // que Serialize/Deserialize funcionem corretamente mesmo se
+        // chamados antes de qualquer inicializacao explicita do editor
+        // rodar (ex: um futuro teste automatizado que so cria uma Scene e
+        // salva, sem passar por EditorLayer::OnAttach) - RegisterAll() e
+        // idempotente (ver comentario la), entao chamar aqui em toda
+        // Serialize/Deserialize e barato e seguro.
+        ComponentRegistry::RegisterAll();
+
         std::ofstream out(filepath, std::ios::binary | std::ios::trunc);
         if (!out.is_open()) {
             PRISM_CORE_ERROR("SceneSerializer: nao foi possivel criar o arquivo de cena: ", filepath.string());
@@ -165,91 +160,21 @@ namespace Prism {
             WriteRaw(out, transform.Rotation);
             WriteRaw(out, transform.Scale);
 
-            // MeshRendererComponent e opcional - flag de 1 byte diz se os
-            // campos seguintes existem no stream ou nao.
-            bool hasMesh = entity.HasComponent<MeshRendererComponent>();
-            WriteRaw(out, hasMesh);
-            if (hasMesh) {
-                auto& meshRenderer = entity.GetComponent<MeshRendererComponent>();
-                WriteRaw(out, meshRenderer.Mesh);
-                WriteRaw(out, meshRenderer.Color);
-            }
-
-            // Os quatro components abaixo seguem o mesmo padrao de flag de
-            // presenca + campos - adicionados na v2 do formato (ver
-            // kSceneFormatVersion).
-            bool hasLight = entity.HasComponent<LightComponent>();
-            WriteRaw(out, hasLight);
-            if (hasLight) {
-                auto& light = entity.GetComponent<LightComponent>();
-                WriteRaw(out, light.Type);
-                WriteRaw(out, light.Color);
-                WriteRaw(out, light.Intensity);
-                WriteRaw(out, light.Range);
-                WriteRaw(out, light.SpotAngle);
-                WriteRaw(out, light.InnerSpotAngle);
-                WriteRaw(out, light.CastShadows);
-            }
-
-            bool hasCollider = entity.HasComponent<ColliderComponent>();
-            WriteRaw(out, hasCollider);
-            if (hasCollider) {
-                auto& collider = entity.GetComponent<ColliderComponent>();
-                WriteRaw(out, collider.Shape);
-                WriteRaw(out, collider.Size);
-                WriteRaw(out, collider.IsTrigger);
-            }
-
-            bool hasRigidBody = entity.HasComponent<RigidBodyComponent>();
-            WriteRaw(out, hasRigidBody);
-            if (hasRigidBody) {
-                auto& rigidBody = entity.GetComponent<RigidBodyComponent>();
-                WriteRaw(out, rigidBody.Type);
-                WriteRaw(out, rigidBody.Mass);
-                WriteRaw(out, rigidBody.UseGravity);
-                WriteRaw(out, rigidBody.ContinuousCollisionDetection);
-                WriteRaw(out, rigidBody.FixedRotation); // v6+ (ver kSceneFormatVersion)
-                WriteRaw(out, rigidBody.Friction);      // v8+ (ver kSceneFormatVersion)
-                WriteRaw(out, rigidBody.Restitution);   // v8+
-                WriteRaw(out, rigidBody.LinearDamping); // v8+
-                WriteRaw(out, rigidBody.AngularDamping);// v8+
-            }
-
-            bool hasScript = entity.HasComponent<ScriptComponent>();
-            WriteRaw(out, hasScript);
-            if (hasScript) {
-                auto& script = entity.GetComponent<ScriptComponent>();
-                WriteString(out, script.ScriptPath);
-            }
-
-            // CameraComponent - adicionado na v3 do formato (ver
-            // kSceneFormatVersion). Mesmo padrao de flag de presenca dos
-            // outros components opcionais acima.
-            bool hasCamera = entity.HasComponent<CameraComponent>();
-            WriteRaw(out, hasCamera);
-            if (hasCamera) {
-                auto& camera = entity.GetComponent<CameraComponent>();
-                WriteRaw(out, camera.ProjectionType);
-                WriteRaw(out, camera.FOV);
-                WriteRaw(out, camera.OrthoSize);
-                WriteRaw(out, camera.NearClip);
-                WriteRaw(out, camera.FarClip);
-                WriteRaw(out, camera.Primary);
-            }
-
-            // RaycastComponent - adicionado na v7 do formato (ver
-            // kSceneFormatVersion). So TargetPosition/Enabled sao gravados -
-            // Hit/HitEntity/HitPoint/HitNormal/HitDistance sao resultado
-            // TRANSIENTE de runtime (recalculado todo frame por
-            // Scene::UpdateRaycastComponents enquanto a Scene esta
-            // rodando, ver Components.h), gravar isso no mapa seria so
-            // lixo que nunca reflete a realidade no proximo carregamento.
-            bool hasRaycast = entity.HasComponent<RaycastComponent>();
-            WriteRaw(out, hasRaycast);
-            if (hasRaycast) {
-                auto& raycast = entity.GetComponent<RaycastComponent>();
-                WriteRaw(out, raycast.TargetPosition);
-                WriteRaw(out, raycast.Enabled);
+            // MeshRendererComponent, LightComponent, ColliderComponent,
+            // RigidBodyComponent, ScriptComponent, CameraComponent,
+            // RaycastComponent - todos "Components opcionais" com o mesmo
+            // padrao (flag de presenca de 1 byte + campos), agora
+            // escritos via ComponentRegistry em vez de um bloco manual
+            // por Component aqui (ver comentario grande em
+            // ComponentRegistry.h/ComponentRegistration.cpp sobre o
+            // motivo desta mudanca - o FORMATO BINARIO GERADO E IDENTICO
+            // ao de antes, byte a byte, so o CODIGO que gera cada bloco
+            // mudou de lugar).
+            for (auto& info : ComponentRegistry::GetAll()) {
+                bool has = info.Has(entity);
+                WriteRaw(out, has);
+                if (has)
+                    info.Serialize(out, entity);
             }
 
             // RelationshipComponent - adicionado na v4 do formato. So o
@@ -284,6 +209,8 @@ namespace Prism {
     // --- Deserialize --------------------------------------------------------
 
     bool SceneSerializer::Deserialize(const std::filesystem::path& filepath) {
+        ComponentRegistry::RegisterAll(); // ver comentario equivalente em Serialize()
+
         std::ifstream in(filepath, std::ios::binary);
         if (!in.is_open()) {
             PRISM_CORE_ERROR("SceneSerializer: nao foi possivel abrir o arquivo de cena: ", filepath.string());
@@ -371,146 +298,21 @@ namespace Prism {
                 return false;
             }
 
-            bool hasMesh = false;
-            if (!ReadRaw(in, hasMesh)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de mesh da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasMesh) {
-                auto& meshRenderer = entity.AddComponent<MeshRendererComponent>();
-                bool meshOk = ReadRaw(in, meshRenderer.Mesh) && ReadRaw(in, meshRenderer.Color);
-                if (!meshOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (mesh renderer da entidade ", i, "): ", filepath.string());
+            // MeshRendererComponent, LightComponent, ColliderComponent,
+            // RigidBodyComponent, ScriptComponent, CameraComponent,
+            // RaycastComponent - lidos via ComponentRegistry, na MESMA
+            // ordem em que Serialize() os escreveu acima (ComponentRegistry::GetAll()
+            // retorna sempre a mesma ordem de registro, ver
+            // ComponentRegistration.cpp) - ver comentario grande no bloco
+            // correspondente de Serialize() sobre o motivo desta mudanca.
+            for (auto& info : ComponentRegistry::GetAll()) {
+                bool has = false;
+                if (!ReadRaw(in, has)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de '", info.DisplayName, "' da entidade ", i, "): ", filepath.string());
                     return false;
                 }
-                // Validacao do enum: um valor fora do range conhecido e
-                // sinal de arquivo corrompido (ou de uma versao futura do
-                // formato com mais primitivas). Sem checar isto, um
-                // PrimitiveMesh invalido seguiria para dentro da Scene e
-                // so falharia (silenciosamente, sem desenhar nada) la na
-                // frente em Renderer::DrawMesh.
-                if (meshRenderer.Mesh != PrimitiveMesh::Cube && meshRenderer.Mesh != PrimitiveMesh::Sphere
-                    && meshRenderer.Mesh != PrimitiveMesh::Capsule && meshRenderer.Mesh != PrimitiveMesh::Cylinder
-                    && meshRenderer.Mesh != PrimitiveMesh::Plane) {
-                    PRISM_CORE_ERROR("SceneSerializer: PrimitiveMesh invalido na entidade ", i, " de '", filepath.string(), "'.");
-                    return false;
-                }
-            }
-
-            bool hasLight = false;
-            if (!ReadRaw(in, hasLight)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de light da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasLight) {
-                auto& light = entity.AddComponent<LightComponent>();
-                bool lightOk = ReadRaw(in, light.Type) && ReadRaw(in, light.Color)
-                            && ReadRaw(in, light.Intensity) && ReadRaw(in, light.Range) && ReadRaw(in, light.SpotAngle)
-                            && ReadRaw(in, light.InnerSpotAngle) && ReadRaw(in, light.CastShadows);
-                if (!lightOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (light da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-                if (light.Type != LightType::Point && light.Type != LightType::Spot && light.Type != LightType::Directional) {
-                    PRISM_CORE_ERROR("SceneSerializer: LightType invalido na entidade ", i, " de '", filepath.string(), "'.");
-                    return false;
-                }
-            }
-
-            bool hasCollider = false;
-            if (!ReadRaw(in, hasCollider)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de collider da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasCollider) {
-                auto& collider = entity.AddComponent<ColliderComponent>();
-                bool colliderOk = ReadRaw(in, collider.Shape) && ReadRaw(in, collider.Size) && ReadRaw(in, collider.IsTrigger);
-                if (!colliderOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (collider da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-                if (collider.Shape != ColliderShape::Box && collider.Shape != ColliderShape::Sphere && collider.Shape != ColliderShape::Capsule) {
-                    PRISM_CORE_ERROR("SceneSerializer: ColliderShape invalido na entidade ", i, " de '", filepath.string(), "'.");
-                    return false;
-                }
-            }
-
-            bool hasRigidBody = false;
-            if (!ReadRaw(in, hasRigidBody)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de rigidbody da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasRigidBody) {
-                auto& rigidBody = entity.AddComponent<RigidBodyComponent>();
-                bool rigidBodyOk = ReadRaw(in, rigidBody.Type) && ReadRaw(in, rigidBody.Mass)
-                                && ReadRaw(in, rigidBody.UseGravity) && ReadRaw(in, rigidBody.ContinuousCollisionDetection)
-                                && ReadRaw(in, rigidBody.FixedRotation)   // v6+ (ver kSceneFormatVersion)
-                                && ReadRaw(in, rigidBody.Friction)        // v8+
-                                && ReadRaw(in, rigidBody.Restitution)     // v8+
-                                && ReadRaw(in, rigidBody.LinearDamping)   // v8+
-                                && ReadRaw(in, rigidBody.AngularDamping); // v8+
-                if (!rigidBodyOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (rigidbody da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-                if (rigidBody.Type != BodyType::Static && rigidBody.Type != BodyType::Kinematic && rigidBody.Type != BodyType::Dynamic) {
-                    PRISM_CORE_ERROR("SceneSerializer: BodyType invalido na entidade ", i, " de '", filepath.string(), "'.");
-                    return false;
-                }
-            }
-
-            bool hasScript = false;
-            if (!ReadRaw(in, hasScript)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de script da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasScript) {
-                auto& script = entity.AddComponent<ScriptComponent>();
-                if (!ReadString(in, script.ScriptPath)) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-            }
-
-            bool hasCamera = false;
-            if (!ReadRaw(in, hasCamera)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de camera da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasCamera) {
-                auto& camera = entity.AddComponent<CameraComponent>();
-                bool cameraOk = ReadRaw(in, camera.ProjectionType) && ReadRaw(in, camera.FOV)
-                             && ReadRaw(in, camera.OrthoSize) && ReadRaw(in, camera.NearClip)
-                             && ReadRaw(in, camera.FarClip) && ReadRaw(in, camera.Primary);
-                if (!cameraOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-                if (camera.ProjectionType != CameraProjectionType::Perspective && camera.ProjectionType != CameraProjectionType::Orthographic) {
-                    PRISM_CORE_ERROR("SceneSerializer: CameraProjectionType invalido na entidade ", i, " de '", filepath.string(), "'.");
-                    return false;
-                }
-            }
-
-            // RaycastComponent - adicionado na v7 do formato (ver
-            // kSceneFormatVersion). So TargetPosition/Enabled sao lidos -
-            // Hit/HitEntity/HitPoint/HitNormal/HitDistance ficam nos
-            // defaults de RaycastComponent (Hit=false etc), ja que nunca
-            // foram gravados (ver comentario no bloco de Serialize acima)
-            // - o primeiro frame do modo Play recalcula tudo de qualquer
-            // forma (ver Scene::UpdateRaycastComponents).
-            bool hasRaycast = false;
-            if (!ReadRaw(in, hasRaycast)) {
-                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de raycast da entidade ", i, "): ", filepath.string());
-                return false;
-            }
-            if (hasRaycast) {
-                auto& raycast = entity.AddComponent<RaycastComponent>();
-                bool raycastOk = ReadRaw(in, raycast.TargetPosition) && ReadRaw(in, raycast.Enabled);
-                if (!raycastOk) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (raycast da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
+                if (has && !info.Deserialize(in, entity, i))
+                    return false; // mensagem de erro especifica ja foi logada dentro do proprio Deserialize (ver ComponentRegistration.cpp)
             }
 
             // RelationshipComponent - so o indice do pai (ver comentario

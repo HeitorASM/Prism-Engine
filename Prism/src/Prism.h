@@ -23,6 +23,7 @@
 #include "Prism/Scene/Scene.h"
 #include "Prism/Scene/Entity.h"
 #include "Prism/Scene/Components.h"
+#include "Prism/Scene/ComponentRegistry.h"
 #include "Prism/Scene/Raycast.h"
 #include "Prism/Scene/SceneSerializer.h"
 #include "Prism/Scripting/ScriptEngine.h"

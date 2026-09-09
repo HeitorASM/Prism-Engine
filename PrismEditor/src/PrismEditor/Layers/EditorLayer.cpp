@@ -2002,17 +2002,91 @@ namespace PrismEditor {
         ImGui::End();
     }
 
+    // Instancia o AddComponentCommand<T> certo a partir do DisplayName
+    // registrado em ComponentRegistry (ver ComponentRegistration.cpp) e
+    // executa via m_CommandHistory (preservando Undo/Redo, exatamente
+    // como cada bloco manual fazia antes desta mudanca).
+    //
+    // POR QUE ISTO NAO VIVE DENTRO DE ComponentRegistry (Prism::): porque
+    // AddComponentCommand<T> e Command (Prism::Core::Command) sao dois
+    // conceitos DIFERENTES - Command fica em Prism (o motor), mas
+    // AddComponentCommand/RemoveComponentCommand especificamente ficam em
+    // PrismEditor (EditorCommands.h), ja que "ter undo/redo ao adicionar
+    // um component" e uma preocupacao do EDITOR, nao do motor em si (um
+    // jogo em modo Runtime, sem editor, nunca precisaria disso). Colocar
+    // esta comparacao de string aqui (em vez de um std::function dentro
+    // de ComponentTypeInfo) evita que Prism::ComponentRegistry precise
+    // #include EditorCommands.h - Prism nunca deveria depender de codigo
+    // do Editor.
+    //
+    // Isto tambem e o UNICO lugar que ainda precisa saber, um por um,
+    // quais Components existem - mas apenas para a etapa de "criar o
+    // Command certo", nao mais para decidir SE o component deve aparecer
+    // no menu ou como serializa-lo (isso already vem do registro). Um
+    // Component novo que nao seja adicionado aqui simplesmente nao tera
+    // Undo ao ser adicionado - ainda funciona (AddDefault do registro e
+    // usado como fallback abaixo), so sem desfazer.
+    void EditorLayer::AddComponentByRegistryName(const std::string& displayName) {
+        Prism::Entity entity = m_SelectedEntity;
+
+        if (displayName == "Mesh Renderer")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::MeshRendererComponent>>(entity, displayName));
+        else if (displayName == "Light")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::LightComponent>>(entity, displayName));
+        else if (displayName == "Collider")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ColliderComponent>>(entity, displayName));
+        else if (displayName == "Rigid Body")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(entity, displayName));
+        else if (displayName == "Raycast")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RaycastComponent>>(entity, displayName));
+        else if (displayName == "Script")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(entity, displayName));
+        else if (displayName == "Camera")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(entity, displayName));
+        else {
+            // Fallback generico SEM Undo - usado so se um Component for
+            // registrado em ComponentRegistration.cpp mas esquecido aqui
+            // (ver comentario grande acima) - melhor funcionar sem
+            // desfazer do que nao adicionar nada.
+            PRISM_CORE_WARN("EditorLayer::AddComponentByRegistryName: '", displayName, "' nao tem um AddComponentCommand mapeado - adicionando sem Undo.");
+            for (auto& info : Prism::ComponentRegistry::GetAll()) {
+                if (info.DisplayName == displayName) {
+                    info.AddDefault(entity);
+                    break;
+                }
+            }
+        }
+
+        // OnAfterAddInEditor (ver ComponentRegistry.h) - cobre ajustes de
+        // consistencia que dependem do RESTO da cena, como o caso de
+        // CameraComponent::Primary (ver ComponentRegistration.cpp) - FORA
+        // do historico de Undo, igual o comportamento original.
+        for (auto& info : Prism::ComponentRegistry::GetAll()) {
+            if (info.DisplayName == displayName && info.OnAfterAddInEditor) {
+                info.OnAfterAddInEditor(entity, *m_ActiveScene);
+                break;
+            }
+        }
+    }
+
     void EditorLayer::RenderAddComponentButton() {
+        // Garante que o registro esta populado - ver comentario
+        // equivalente em SceneSerializer::Serialize/Deserialize
+        // (ComponentRegistry::RegisterAll e idempotente).
+        Prism::ComponentRegistry::RegisterAll();
+        const auto& registry = Prism::ComponentRegistry::GetAll();
+
         // So mostra o botao se sobrar pelo menos um component que a
         // entidade ainda nao tem - evita um popup vazio (a entidade ja
-        // tem TransformComponent sempre, entao esse nunca entra na lista).
-        bool hasAnyMissing = !m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::LightComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::ColliderComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::RaycastComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::ScriptComponent>()
-            || !m_SelectedEntity.HasComponent<Prism::CameraComponent>();
+        // tem TransformComponent sempre, que nunca esta neste registro -
+        // ver comentario em ComponentRegistration.cpp sobre o motivo).
+        bool hasAnyMissing = false;
+        for (auto& info : registry) {
+            if (!info.Has(m_SelectedEntity)) {
+                hasAnyMissing = true;
+                break;
+            }
+        }
 
         if (!hasAnyMissing) {
             ImGui::TextDisabled("(todos os components ja adicionados)");
@@ -2023,50 +2097,22 @@ namespace PrismEditor {
             ImGui::OpenPopup("AddComponentPopup");
 
         if (ImGui::BeginPopup("AddComponentPopup")) {
-            if (!m_SelectedEntity.HasComponent<Prism::MeshRendererComponent>() && ImGui::MenuItem("Mesh Renderer")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::MeshRendererComponent>>(m_SelectedEntity, "Mesh Renderer"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::LightComponent>() && ImGui::MenuItem("Light")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::LightComponent>>(m_SelectedEntity, "Light"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::ColliderComponent>() && ImGui::MenuItem("Collider")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ColliderComponent>>(m_SelectedEntity, "Collider"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::RigidBodyComponent>() && ImGui::MenuItem("Rigid Body")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(m_SelectedEntity, "Rigid Body"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::RaycastComponent>() && ImGui::MenuItem("Raycast")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::RaycastComponent>>(m_SelectedEntity, "Raycast"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::ScriptComponent>() && ImGui::MenuItem("Script")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(m_SelectedEntity, "Script"));
-                ImGui::CloseCurrentPopup();
-            }
-            if (!m_SelectedEntity.HasComponent<Prism::CameraComponent>() && ImGui::MenuItem("Camera")) {
-                m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(m_SelectedEntity, "Camera"));
-                // CameraComponent nasce com Primary=true por padrao (ver
-                // Components.h) - se ja existir outra camera Primary na
-                // cena, isso violaria a regra de "no maximo uma" ate o
-                // usuario mexer manualmente no checkbox. Corrige aqui na
-                // hora, fora do historico de undo (e so um ajuste de
-                // consistencia, nao uma edicao que o usuario pediu).
-                bool anyOtherPrimary = false;
-                auto view = m_ActiveScene->GetRegistry().view<Prism::CameraComponent>();
-                for (auto entityHandle : view) {
-                    Prism::Entity entity(entityHandle, m_ActiveScene.get());
-                    if (entity != m_SelectedEntity && entity.GetComponent<Prism::CameraComponent>().Primary) {
-                        anyOtherPrimary = true;
-                        break;
-                    }
+            // Loop generico sobre TODO Component registrado (ver
+            // ComponentRegistry.h/ComponentRegistration.cpp) - antes desta
+            // mudanca, este popup tinha um bloco copiado manualmente por
+            // Component (HasComponent + MenuItem + AddComponentCommand),
+            // exatamente o tipo de duplicacao que motivou este registro
+            // existir. O Command real (com Undo/Redo, ver
+            // AddComponentCommand<T>/EditorCommands.h) ainda e criado por
+            // TIPO (nao generico) via AddComponentByRegistryName abaixo,
+            // ja que o registro em si (Prism::ComponentRegistry) nao
+            // conhece EditorCommands (que vive em PrismEditor, nao em
+            // Prism) - ver comentario la sobre essa separacao proposital.
+            for (auto& info : registry) {
+                if (!info.Has(m_SelectedEntity) && ImGui::MenuItem(info.DisplayName.c_str())) {
+                    AddComponentByRegistryName(info.DisplayName);
+                    ImGui::CloseCurrentPopup();
                 }
-                if (anyOtherPrimary)
-                    m_SelectedEntity.GetComponent<Prism::CameraComponent>().Primary = false;
-                ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
