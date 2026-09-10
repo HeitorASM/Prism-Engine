@@ -10,11 +10,14 @@
 
 #include "Application.h"
 #include "Log.h"
+#include "CrashHandler.h"
 
 #include <exception>
 #include <cstdlib>
 
 int main(int argc, char** argv) {
+    Prism::InstallCrashHandler();
+
     // Sem isso, qualquer excecao C++ nao capturada em algum lugar da engine
     // (std::filesystem::filesystem_error, std::out_of_range, etc.) sobe ate
     // aqui, o runtime chama std::terminate() -> abort(), e tudo que aparece
