@@ -377,6 +377,64 @@ namespace Prism {
         // compartilhada entre varios corpos identicos; nao fazemos isso
         // aqui ainda, cada entidade tem seu proprio Shape, mas a API ja
         // permite otimizar isso no futuro se necessario).
+        //
+        // Tamanho minimo: o Jolt tem asserts internos (USE_ASSERTS, ver
+        // vendor/CMakeLists.txt - habilitados em builds Debug) que
+        // ENCERRAM O PROCESSO se uma dimensao de shape for pequena
+        // demais - um Collider::Size editado para algo como 0.01 ou
+        // menor no editor disparava esse assert e derrubava a engine
+        // inteira, sem nenhuma mensagem amigavel. A partir daqui,
+        // qualquer dimensao abaixo de kMinShapeDimension e PRESA
+        // (clamped) a esse minimo antes de chegar no Jolt, com um aviso
+        // no log explicando o porque - a entidade continua com o
+        // Collider visualmente pequeno que o usuario pediu (ver
+        // MeshRendererComponent/TransformComponent::Scale, que nao tem
+        // essa limitacao - so a FISICA impoe um minimo, o visual pode
+        // ficar arbitrariamente pequeno), so a fisica trata como um
+        // pouco maior para nao crashar.
+        //
+        // kMinShapeDimension = 0.05, NAO 0.01: BoxShape/CapsuleShape/
+        // SphereShape do Jolt usam um "convex radius" default
+        // (JPH::cDefaultConvexRadius = 0.05) para arredondar levemente
+        // os cantos da shape (melhora estabilidade do solver de
+        // colisao). Internamente, o Jolt calcula
+        // mConvexRadius = min(convexRadius, halfExtent.ReduceMin()) - se
+        // uma dimensao (ex: a "espessura" de uma caixa achatada tipo
+        // plano/piso, Half-Extents (5, 0.01, 5)) for MENOR que o dobro
+        // do proprio raio convexo, a shape fica degenerada (mais fina
+        // que o arredondamento que deveria ter) e o Jolt entra em
+        // caminhos de codigo instaveis/assertivos mais adiante na
+        // criacao da malha de colisao - o sintoma exato reportado: Y do
+        // collider igual a 0.01 (dimensao TOTAL de half-extent, entao
+        // ainda menor que cDefaultConvexRadius) crashava mesmo com o
+        // clamp anterior (que usava 0.01 como piso - pequeno demais).
+        // 0.05 aqui bate exatamente com cDefaultConvexRadius, e o
+        // ConvexRadius EXPLICITO abaixo (kSafeConvexRadius) garante que
+        // nunca excede metade da menor dimensao, evitando o caso
+        // degenerado por completo.
+        constexpr float kMinShapeDimension = 0.05f;
+        glm::vec3 safeSize = collider.Size;
+        bool sizeWasClamped = false;
+        for (int axis = 0; axis < 3; axis++) {
+            if (safeSize[axis] < kMinShapeDimension) {
+                safeSize[axis] = kMinShapeDimension;
+                sizeWasClamped = true;
+            }
+        }
+        if (sizeWasClamped) {
+            PRISM_CORE_WARN("PhysicsEngine: ColliderComponent::Size da entidade '", entity.GetComponent<TagComponent>().Tag,
+                             "' tem dimensao menor que ", kMinShapeDimension, " - presa a esse minimo para a fisica (o Jolt nao aceita shapes proximas de zero/degeneradas). O visual (mesh) nao e afetado por este limite.");
+        }
+
+        // ConvexRadius explicito (nao o default do Jolt, cDefaultConvexRadius
+        // = 0.05) para BoxShape - nunca maior que METADE da menor
+        // dimensao de safeSize, o que evita o caso degenerado descrito
+        // acima mesmo para caixas legitimamente finas (ex: um "papel"
+        // fino de 0.05 a 0.1 de espessura, que o usuario pode querer de
+        // verdade, nao so um erro de digitacao) sem precisar prender a
+        // espessura num valor maior so por causa do raio convexo.
+        float safeConvexRadius = glm::min(0.05f, glm::min(safeSize.x, glm::min(safeSize.y, safeSize.z)) * 0.5f);
+
         JPH::RefConst<JPH::Shape> shape;
         switch (collider.Shape) {
             case ColliderShape::Box: {
@@ -385,12 +443,14 @@ namespace Prism {
                 // ColliderComponent::Size em Components.h) - bate
                 // exatamente com o que JPH::BoxShape espera (tambem
                 // recebe half-extents no construtor, ver Jolt docs
-                // "BoxShape").
-                shape = new JPH::BoxShape(ToJolt(collider.Size));
+                // "BoxShape"). ConvexRadius explicito (ver
+                // safeConvexRadius acima) em vez do default do
+                // construtor, para caixas finas nao ficarem degeneradas.
+                shape = new JPH::BoxShape(ToJolt(safeSize), safeConvexRadius);
                 break;
             }
             case ColliderShape::Sphere: {
-                shape = new JPH::SphereShape(collider.Size.x);
+                shape = new JPH::SphereShape(safeSize.x);
                 break;
             }
             case ColliderShape::Capsule: {
@@ -402,8 +462,8 @@ namespace Prism {
                 // TOTAL da parte cilindrica, sem contar as tampas
                 // hemisfericas - por isso dividimos por 2 aqui, igual a
                 // versao Box3D dividia para achar halfHeight).
-                float halfHeight = collider.Size.y * 0.5f;
-                shape = new JPH::CapsuleShape(halfHeight, collider.Size.x);
+                float halfHeight = safeSize.y * 0.5f;
+                shape = new JPH::CapsuleShape(halfHeight, safeSize.x);
                 break;
             }
         }

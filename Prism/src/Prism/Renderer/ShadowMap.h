@@ -80,11 +80,25 @@ namespace Prism {
         const glm::mat4& GetLightSpaceMatrix() const { return m_LightSpaceMatrix; }
         void SetLightSpaceMatrix(const glm::mat4& matrix) { m_LightSpaceMatrix = matrix; }
 
+        // Raio (metade do lado) do frustum ORTHO usado para desenhar
+        // este shadow map neste frame - mesmo 'sceneRadius' que
+        // RenderShadowPass calculou a partir do bounding box da cena
+        // (ver Renderer.cpp). Usado pelo shader de cor principal
+        // (u_ShadowFrustumRadius, ver CalculateShadow/texelWorldSize) para
+        // escalar o normal-offset-bias proporcionalmente ao tamanho real
+        // de um texel deste shadow map em unidades de mundo - sem isto,
+        // o offset ficaria certo so para UM tamanho de cena especifico
+        // (grande demais em cenas pequenas = sombra "descolada", pequeno
+        // demais em cenas grandes = acne de volta).
+        float GetFrustumRadius() const { return m_FrustumRadius; }
+        void SetFrustumRadius(float radius) { m_FrustumRadius = radius; }
+
     private:
         uint32_t m_FBO = 0;
         uint32_t m_DepthTexture = 0;
         uint32_t m_Resolution;
         glm::mat4 m_LightSpaceMatrix{ 1.0f };
+        float m_FrustumRadius = 1.0f;
     };
 
 }

@@ -337,6 +337,11 @@ namespace Prism {
         uniform sampler2D u_ShadowMap;
         uniform mat4 u_LightSpaceMatrix;
         uniform bool u_HasShadow;
+        // Raio do frustum ortho da luz (ver comentario em
+        // texelWorldSize, CalculateShadow abaixo) - so tem valor
+        // significativo quando u_HasShadow=true (RenderShadowPass e
+        // quem calcula e propaga isto, ver Renderer.cpp).
+        uniform float u_ShadowFrustumRadius;
         // Indice dentro de u_Lights[] da UNICA luz que gerou u_ShadowMap
         // neste frame (-1 = nenhuma, embora u_HasShadow=false ja cubra
         // esse caso) - ver Renderer::RenderShadowPass/UploadLights, que
@@ -350,7 +355,40 @@ namespace Prism {
         // ATUAL (espaco de mundo); a funcao mesma faz a projecao para o
         // espaco da luz via u_LightSpaceMatrix.
         float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
-            vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(worldPos, 1.0);
+            // Normal offset bias: desloca o PONTO DE MUNDO ao longo da
+            // normal (nao so a profundidade comparada, como uma versao
+            // anterior desta funcao fazia) antes de projetar para o
+            // espaco da luz - tecnica mais robusta que um bias de
+            // profundidade simples para superficies CURVAS (esferas,
+            // capsulas, cilindros): num cubo/plano a normal e constante
+            // por face inteira, entao um bias fixo por pixel funciona
+            // bem; numa capsula a normal varia suavemente vertice a
+            // vertice, e o bias de profundidade sozinho deixava um
+            // padrao visivel de faixas/listras na sombra da propria
+            // superficie curva (shadow acne mais pronunciado em
+            // geometria arredondada). Deslocar a AMOSTRA (nao so o
+            // limiar de comparacao) ao longo da normal empurra o ponto
+            // testado para fora da superficie de forma proporcional a
+            // "largura" de um texel do shadow map em unidades de mundo,
+            // o que se adapta melhor a curvatura continua. Ver
+            // "Normal Offset Shadows" (tecnica classica, usada por
+            // engines como Unity) para a referencia desta abordagem.
+            // texelWorldSize: quanto (em unidades de mundo) um texel do
+            // shadow map cobre, usado para escalar o normal offset acima
+            // de forma proporcional - um shadow map de resolucao fixa
+            // (ver ShadowMap::ShadowMap) cobrindo um frustum GRANDE
+            // (cena com objetos espalhados) tem texels fisicamente
+            // maiores que o mesmo shadow map cobrindo uma cena pequena;
+            // sem escalar por u_ShadowFrustumRadius, um offset fixo
+            // ficaria exagerado (sombra "descolada" do objeto, peter-
+            // panning) em cenas pequenas ou insuficiente (acne de volta)
+            // em cenas grandes. u_ShadowFrustumRadius e o mesmo
+            // 'sceneRadius' que RenderShadowPass calculou para
+            // dimensionar o frustum ortho da luz (ver Renderer.cpp).
+            float texelWorldSize = (2.0 * u_ShadowFrustumRadius) / float(textureSize(u_ShadowMap, 0).x);
+            vec3 offsetWorldPos = worldPos + normal * texelWorldSize * 1.5;
+
+            vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(offsetWorldPos, 1.0);
 
             // Perspective divide (sem efeito real aqui ja que a projecao
             // da luz e ORTHO - ver RenderShadowPass - mas mantido pelo
@@ -369,16 +407,13 @@ namespace Prism {
             if (projCoords.z > 1.0)
                 return 0.0;
 
-            // Bias inclinado pela normal (maior quase-paralelo a luz,
-            // menor de frente) - sem isso, a comparacao de profundidade
-            // sofre de "shadow acne" (listras/moire na propria superficie
-            // iluminada, causadas por precisao limitada do depth buffer).
-            // Constantes escolhidas empiricamente (padrao comum em
-            // implementacoes de shadow mapping, ex: LearnOpenGL) - ajustar
-            // aqui se alguma cena especifica mostrar peter-panning (sombra
-            // "descolada" do objeto, bias grande demais) ou acne (bias
-            // pequeno demais).
-            float bias = max(0.0025 * (1.0 - dot(normal, lightDir)), 0.0006);
+            // Bias de profundidade AINDA existe, mas bem menor que antes -
+            // o normal offset acima ja faz a maior parte do trabalho de
+            // evitar acne; este bias residual cobre erro de precisao de
+            // ponto flutuante remanescente, nao mais a inclinacao inteira
+            // da superficie sozinho (por isso os valores sao bem menores
+            // que a versao anterior desta funcao).
+            float bias = max(0.0006 * (1.0 - dot(normal, lightDir)), 0.00015);
 
             // PCF (Percentage-Closer Filtering) 3x3: amostra a vizinhanca
             // do texel em vez de um unico texel, e faz a MEDIA do
@@ -672,6 +707,7 @@ namespace Prism {
             shadowMap->BindForReading(0);
             s_BasicShader->SetInt("u_ShadowMap", 0);
             s_BasicShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(shadowMap->GetLightSpaceMatrix()));
+            s_BasicShader->SetFloat("u_ShadowFrustumRadius", shadowMap->GetFrustumRadius());
             s_BasicShader->SetInt("u_HasShadow", 1);
         } else {
             s_BasicShader->SetInt("u_HasShadow", 0);
@@ -948,6 +984,7 @@ namespace Prism {
         glm::mat4 lightSpaceMatrix = lightProjection * lightView_;
 
         s_ShadowMap->SetLightSpaceMatrix(lightSpaceMatrix);
+        s_ShadowMap->SetFrustumRadius(sceneRadius);
 
         // --- Pass de profundidade: mesmo loop de entidades de DrawScene,
         // shader/framebuffer diferentes.
