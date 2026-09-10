@@ -358,8 +358,31 @@ namespace Prism {
             // mesmo comportamento do RayCast3D da Godot: o alcance E a
             // distancia ate o ponto configurado, nao um valor separado).
             float maxDistance = glm::length(worldDirection);
+
+            // Monta a lista de entidades a ignorar (ver
+            // RaycastComponent::IgnoreParentAndSiblings, Components.h) -
+            // recalculada a cada frame (barato: so percorre pai + filhos
+            // diretos do pai, nao a arvore inteira) porque a hierarquia
+            // pode mudar em runtime (SetParent via script/editor).
+            // Nota: a propria 'entity' (dona deste RaycastComponent) acaba
+            // entrando na lista tambem, ja que ela e uma das "irmas" dela
+            // mesma sob o mesmo pai - isso e inofensivo (nao muda o
+            // resultado), so redundante.
+            std::vector<entt::entity> ignoreEntities;
+            if (raycast.IgnoreParentAndSiblings) {
+                Entity parent = entity.GetParent();
+                if (parent.IsValid()) {
+                    ignoreEntities.push_back(parent.GetHandle());
+                    for (size_t i = 0; i < parent.GetChildCount(); i++) {
+                        Entity sibling = parent.GetChildAt(i);
+                        if (sibling.IsValid())
+                            ignoreEntities.push_back(sibling.GetHandle());
+                    }
+                }
+            }
+
             RaycastHit hit = (maxDistance > 0.0001f)
-                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance)
+                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance, ignoreEntities)
                 : RaycastHit{}; // TargetPosition na origem (raio de comprimento zero) - nunca acerta nada
 
             raycast.Hit = hit.Hit;

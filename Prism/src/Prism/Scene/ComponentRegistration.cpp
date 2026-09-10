@@ -227,9 +227,10 @@ namespace Prism {
         Register<RaycastComponent>(
             "Raycast",
             [](std::ofstream& out, Entity e) {
-                // So TargetPosition/Enabled sao gravados - os campos de
-                // resultado (Hit/HitEntity/HitPoint/HitNormal/HitDistance)
-                // sao TRANSIENTES de runtime (recalculados todo frame por
+                // So TargetPosition/Enabled/IgnoreParentAndSiblings sao
+                // gravados - os campos de resultado
+                // (Hit/HitEntity/HitPoint/HitNormal/HitDistance) sao
+                // TRANSIENTES de runtime (recalculados todo frame por
                 // Scene::UpdateRaycastComponents enquanto a Scene esta
                 // rodando, ver Components.h) - gravar isso no mapa seria
                 // so lixo que nunca reflete a realidade no proximo
@@ -237,6 +238,7 @@ namespace Prism {
                 auto& c = e.GetComponent<RaycastComponent>();
                 WriteRaw(out, c.TargetPosition);
                 WriteRaw(out, c.Enabled);
+                WriteRaw(out, c.IgnoreParentAndSiblings); // v9+ (ver kSceneFormatVersion, SceneSerializer.cpp)
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 // Hit/HitEntity/HitPoint/HitNormal/HitDistance ficam nos
@@ -244,7 +246,7 @@ namespace Prism {
                 // primeiro frame do modo Play recalcula tudo de qualquer
                 // forma (ver Scene::UpdateRaycastComponents).
                 auto& c = e.AddComponent<RaycastComponent>();
-                if (!(ReadRaw(in, c.TargetPosition) && ReadRaw(in, c.Enabled))) {
+                if (!(ReadRaw(in, c.TargetPosition) && ReadRaw(in, c.Enabled) && ReadRaw(in, c.IgnoreParentAndSiblings))) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (raycast da entidade ", entityIndex, ").");
                     return false;
                 }

@@ -36,6 +36,7 @@
 #include <unordered_map>
 #include <memory>
 #include <cstdint>
+#include <vector>
 
 // Jolt exige varios headers "de infraestrutura" (job system, allocator,
 // broad phase layers) alem do header principal - isolados aqui para nao
@@ -142,17 +143,28 @@ namespace Prism {
         // ate 'maxDistance' unidades de mundo, e retorna o hit MAIS
         // PROXIMO (equivalente ao antigo b3World_CastRayClosest - convem
         // para o uso mais comum: "o que esta na minha frente?", "aponte a
-        // arma para X", "o personagem esta tocando o chao?"). Nao ha
-        // suporte a filtro de camada/mascara ainda - mesma limitacao que
-        // ja existia na versao Box3D, preservada aqui de proposito para
-        // manter o escopo desta migracao contido so a troca de motor
-        // fisico (nao adicionar feature nova).
+        // arma para X"). Nao ha suporte a filtro de camada/mascara ainda -
+        // mesma limitacao que ja existia na versao Box3D, preservada aqui
+        // de proposito para manter o escopo desta migracao contido so a
+        // troca de motor fisico (nao adicionar feature nova).
+        //
+        // 'ignoreEntities' (opcional, vazio por padrao) - corpos DESSAS
+        // entidades nunca sao considerados um "hit", mesmo que o raio
+        // atravesse eles geometricamente. Existe para o caso classico de
+        // "o personagem esta tocando o chao?"/"o que esta na minha
+        // frente?" NAO deveria acertar o proprio corpo do personagem -
+        // ver RaycastComponent::IgnoreParentAndSiblings (Components.h) e
+        // Scene::UpdateRaycastComponents, que monta esta lista
+        // automaticamente a partir da hierarquia (Entity::GetParent()).
+        // Entidades sem corpo fisico ativo neste 'ignoreEntities' sao
+        // simplesmente ignoradas (nao e erro).
         //
         // Retorna um RaycastHit com Hit=false (sem crash/excecao) se: a
         // Scene nao estiver rodando fisica (fora do modo Play), ou o raio
-        // simplesmente nao acertar nada dentro de maxDistance - chamador
-        // sempre deve checar .Hit antes de usar os outros campos.
-        static RaycastHit Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 1000.0f);
+        // simplesmente nao acertar nada dentro de maxDistance (ou so
+        // acertar corpos em 'ignoreEntities') - chamador sempre deve
+        // checar .Hit antes de usar os outros campos.
+        static RaycastHit Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 1000.0f, const std::vector<entt::entity>& ignoreEntities = {});
 
     private:
         // Estado de fisica de UMA Scene "rodando" - guardado fora da Scene

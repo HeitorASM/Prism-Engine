@@ -418,6 +418,23 @@ namespace Prism {
         // remover/recriar o component inteiro.
         bool Enabled = true;
 
+        // Se true (default), o raio IGNORA a entidade PAI desta (se
+        // houver) e todas as entidades IRMAS (que compartilham o mesmo
+        // pai) - alem da propria entidade dona deste RaycastComponent,
+        // que o Jolt ja nunca reporta como hit de si mesma. Existe para
+        // o caso classico de sensor de personagem: um RaycastComponent
+        // que "olha para frente" a partir de uma entidade FILHA do corpo
+        // (ex: a mesma "Camera" usada por
+        // example_player_input_raycast.lua) nao deveria acertar o
+        // proprio corpo (pai) nem outros colliders filhos do mesmo corpo
+        // (ex: um capacete/arma tambem filhos) - sem isso, o sensor
+        // ficaria "cego", sempre acertando o proprio personagem a
+        // distancia zero. Ver Scene::UpdateRaycastComponents, que monta
+        // a lista de entidades a ignorar a partir da hierarquia
+        // (Entity::GetParent/RelationshipComponent::Children) toda vez
+        // que o raio e testado.
+        bool IgnoreParentAndSiblings = true;
+
         // --- Resultado do ultimo teste (somente leitura pela UI/scripts;
         // escrito exclusivamente por Scene::UpdateRaycastComponents) ---
         // Mesmos campos de PhysicsEngine::RaycastHit, copiados aqui para

@@ -8,6 +8,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace Prism {
 
@@ -117,6 +118,31 @@ namespace Prism {
                 glm::mat3 rotation = glm::mat3(e.GetComponent<TransformComponent>().GetTransform());
                 return glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f));
             },
+            // --- Variantes de MUNDO (com hierarquia) ---------------------
+            // GetForward/GetRight/GetTransform acima sao LOCAIS (ignoram
+            // rotacao/posicao acumulada de qualquer pai - ver comentario
+            // acima) - para uma entidade FILHA (ex: uma camera de player,
+            // ver Entity:GetChild()), isso da a direcao/posicao ERRADA
+            // sempre que o pai tiver rotacao/posicao propria (ex: o corpo
+            // de um player girando em yaw - a camera filha, com so pitch
+            // local, "perderia" o yaw do pai se usasse GetForward comum).
+            // Estas 3 funcoes usam Scene::GetWorldTransform (mesma logica
+            // que o Renderer usa para desenhar a entidade no lugar certo -
+            // ver Renderer::DrawScene) para uma direcao/posicao que ja
+            // inclui TODOS os ancestrais, correta em qualquer profundidade
+            // de hierarquia.
+            "GetWorldPosition", [](Entity& e) -> glm::vec3 {
+                glm::mat4 world = e.GetScene()->GetWorldTransform(e);
+                return glm::vec3(world[3]);
+            },
+            "GetWorldForward", [](Entity& e) -> glm::vec3 {
+                glm::mat3 rotation = glm::mat3(e.GetScene()->GetWorldTransform(e));
+                return glm::normalize(rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+            },
+            "GetWorldRight", [](Entity& e) -> glm::vec3 {
+                glm::mat3 rotation = glm::mat3(e.GetScene()->GetWorldTransform(e));
+                return glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f));
+            },
             "SetPosition", [](Entity& e, float x, float y, float z) {
                 e.GetComponent<TransformComponent>().Translation = { x, y, z };
             },
@@ -135,6 +161,23 @@ namespace Prism {
             "SetVelocity", [](Entity& e, float x, float y, float z) {
                 PhysicsEngine::SetLinearVelocity(*e.GetScene(), e, glm::vec3(x, y, z));
             },
+            // --- Hierarquia (pai/filhos) -------------------------------
+            // Ver comentario grande em Entity::GetParent/GetChild
+            // (Entity.h) - motivado por example_player_input_raycast.lua
+            // precisar de um "corpo" (gira so em Y/yaw) e uma "camera"
+            // filha (gira so em X/pitch) para nao quebrar o movimento ao
+            // olhar para cima/baixo (ver esse script para o uso completo).
+            // ATENCAO no Lua: um Entity "nao encontrado" NAO vira nil (e
+            // um usertype de verdade, sol2 nunca o transforma em nil so
+            // por ser invalido) - "if child then" e SEMPRE true aqui,
+            // mesmo para uma Entity invalida. Scripts devem checar
+            // 'child:IsValid()' explicitamente antes de usar o resultado
+            // de GetParent/GetChild/GetChildAt.
+            "GetParent", [](Entity& e) -> Entity { return e.GetParent(); },
+            "GetChildCount", [](Entity& e) -> size_t { return e.GetChildCount(); },
+            "GetChildAt", [](Entity& e, size_t index) -> Entity { return e.GetChildAt(index); },
+            "GetChild", [](Entity& e, const std::string& name) -> Entity { return e.GetChild(name); },
+            "IsValid", [](Entity& e) -> bool { return e.IsValid(); },
             // Compara pelo handle+Scene (ver Entity::operator==,
             // Entity.h) - necessario para um script poder checar
             // "hit:GetEntity() == entity" (ver RaycastHit:GetEntity()
@@ -167,7 +210,7 @@ namespace Prism {
         // PhysicsEngine::Raycast no C++) - sol2 resolve isso via
         // sol::optional aqui.
         sol::table physicsTable = lua.create_table();
-        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance) -> sol::table {
+        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance, sol::optional<Entity> ignoreEntity) -> sol::table {
             // sol::this_environment injeta o sol::environment de QUEM
             // CHAMOU esta funcao (o environment isolado do script, ver
             // LoadScript - "entity" e uma variavel local a ELE, nunca uma
@@ -189,7 +232,19 @@ namespace Prism {
                 return result;
             }
 
-            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f));
+            // 'ignoreEntity' (opcional, ver assinatura acima) - um unico
+            // atalho comum para "nao acerte esta entidade especifica" (ex:
+            // um script disparando um raio a partir de uma arma/mao que
+            // nao deveria acertar a si mesma) - para excluir mais de uma
+            // entidade de uma vez, ver RaycastComponent::IgnoreParentAndSiblings
+            // (Components.h), que ja resolve o caso de hierarquia
+            // pai/irmas automaticamente sem o script precisar montar essa
+            // lista manualmente.
+            std::vector<entt::entity> ignoreEntities;
+            if (ignoreEntity.has_value() && ignoreEntity->IsValid())
+                ignoreEntities.push_back(ignoreEntity->GetHandle());
+
+            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f), ignoreEntities);
             result["Hit"] = hit.Hit;
             result["Point"] = hit.Point;
             result["Normal"] = hit.Normal;

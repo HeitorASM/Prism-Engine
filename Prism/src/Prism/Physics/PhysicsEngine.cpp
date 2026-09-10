@@ -24,6 +24,7 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Body/BodyFilter.h> // JPH::IgnoreMultipleBodiesFilter (PhysicsEngine::Raycast, ignoreEntities)
 
 #include <thread>
 
@@ -677,7 +678,7 @@ namespace Prism {
         state->PhysicsSystem->GetBodyInterface().SetLinearVelocity(it->second, ToJolt(velocity));
     }
 
-    RaycastHit PhysicsEngine::Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance) {
+    RaycastHit PhysicsEngine::Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance, const std::vector<entt::entity>& ignoreEntities) {
         RaycastHit result; // Hit=false por padrao (ver RaycastHit, PhysicsEngine.h)
 
         SceneState* state = GetState(scene);
@@ -712,7 +713,26 @@ namespace Prism {
         // SpecifiedBroadPhaseLayerFilter com operator| - que nao existe
         // na API do Jolt para esse tipo; nao e necessario de qualquer
         // forma, já que omitir o filtro já cobre "aceita tudo".)
-        bool hit = state->PhysicsSystem->GetNarrowPhaseQuery().CastRay(ray, rayResult);
+        //
+        // 'ignoreEntities' (ver comentario no .h) vira um BodyFilter via
+        // JPH::IgnoreMultipleBodiesFilter - classe utilitaria que o
+        // proprio Jolt fornece exatamente para "aceita qualquer corpo,
+        // EXCETO esta lista de BodyIDs" (ver Jolt/Physics/Body/
+        // BodyFilter.h e exemplos oficiais do Jolt, Samples/RayCast) -
+        // preferido a escrever uma subclasse de JPH::BodyFilter do zero.
+        // BodyIDs resolvidos via SceneState::EntityToBody (mesmo mapa que
+        // CreateBodyForEntity preenche) - entidades sem corpo fisico
+        // ativo (SEM RigidBody+Collider, ou fora do modo Play - mas aqui
+        // ja sabemos que esta rodando, ver GetState acima) sao
+        // simplesmente omitidas da lista, sem erro.
+        JPH::IgnoreMultipleBodiesFilter ignoreFilter;
+        for (entt::entity ignored : ignoreEntities) {
+            auto it = state->EntityToBody.find((uint32_t)ignored);
+            if (it != state->EntityToBody.end())
+                ignoreFilter.IgnoreBody(it->second);
+        }
+
+        bool hit = state->PhysicsSystem->GetNarrowPhaseQuery().CastRay(ray, rayResult, {}, {}, ignoreFilter);
 
         if (!hit)
             return result; // Hit=false - nao acertou nada dentro de maxDistance

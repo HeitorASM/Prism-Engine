@@ -49,6 +49,66 @@ namespace Prism {
         bool IsValid() const { return m_Scene && m_Scene->GetRegistry().valid(m_EntityHandle); }
         explicit operator bool() const { return IsValid(); }
 
+        // --- Hierarquia (pai/filhos) --------------------------------------
+        // Metodos de conveniencia sobre RelationshipComponent (ver
+        // Components.h) - nao sao o unico jeito de navegar a hierarquia
+        // (Scene::SetParent/GetRegistry ja bastam para o editor, ver
+        // EditorLayer::RenderHierarchyPanel), mas evitam scripts Lua
+        // (ScriptEngine.cpp) precisarem manipular RelationshipComponent
+        // cru so para "achar minha camera filha" - ver
+        // example_player_input_raycast.lua para o caso de uso que
+        // motivou isto.
+
+        // entt::null (Entity invalida, ver IsValid()) se esta entidade nao
+        // tiver RelationshipComponent ou nao tiver pai (raiz da cena).
+        Entity GetParent() {
+            if (!HasComponent<RelationshipComponent>())
+                return Entity();
+            entt::entity parent = GetComponent<RelationshipComponent>().Parent;
+            return (parent == entt::null) ? Entity() : Entity(parent, m_Scene);
+        }
+
+        size_t GetChildCount() {
+            if (!HasComponent<RelationshipComponent>())
+                return 0;
+            return GetComponent<RelationshipComponent>().Children.size();
+        }
+
+        // Entity invalida se 'index' estiver fora do range - retornar uma
+        // Entity invalida (em vez de PRISM_ASSERT) e proposital aqui: um
+        // script Lua iterando 0..GetChildCount()-1 nunca deveria bater
+        // nisso, mas um indice invalido vindo de um script com bug nao
+        // deveria derrubar o programa inteiro (ver mesma filosofia em
+        // ScriptEngine::RegisterAPI sobre erros de script serem
+        // reportados, nao crashes).
+        Entity GetChildAt(size_t index) {
+            if (!HasComponent<RelationshipComponent>())
+                return Entity();
+            auto& children = GetComponent<RelationshipComponent>().Children;
+            if (index >= children.size())
+                return Entity();
+            return Entity(children[index], m_Scene);
+        }
+
+        // Busca um filho DIRETO (nao neto/bisneto) por TagComponent::Tag,
+        // igual Transform.Find() da Unity ou get_node() da Godot quando
+        // usado com um nome simples. Entity invalida se nao encontrar.
+        // Comparacao exata de string (sem case-insensitive, sem wildcard/
+        // path com "/") - suficiente para o caso de uso atual (um script
+        // de player achando "Camera" ou similar entre poucos filhos
+        // diretos); um sistema de path completo tipo Godot
+        // ("Body/Camera/Gun") fica para se/quando a necessidade aparecer.
+        Entity GetChild(const std::string& name) {
+            if (!HasComponent<RelationshipComponent>())
+                return Entity();
+            for (entt::entity childHandle : GetComponent<RelationshipComponent>().Children) {
+                Entity child(childHandle, m_Scene);
+                if (child.HasComponent<TagComponent>() && child.GetComponent<TagComponent>().Tag == name)
+                    return child;
+            }
+            return Entity();
+        }
+
         bool operator==(const Entity& other) const {
             return m_EntityHandle == other.m_EntityHandle && m_Scene == other.m_Scene;
         }

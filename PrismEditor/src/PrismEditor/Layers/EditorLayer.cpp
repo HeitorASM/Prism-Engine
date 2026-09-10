@@ -1825,6 +1825,10 @@ namespace PrismEditor {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Ponto ate onde o raio vai, em espaco LOCAL da entidade (gira/translada junto com ela).\nEx: (0,0,-3) = para frente, 3 unidades. (0,-2,0) = para baixo, 2 unidades (sensor de chao).");
 
+                ImGui::Checkbox("Ignorar Pai/Irmas", &raycast.IgnoreParentAndSiblings);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Se marcado, o raio ignora a entidade PAI (se houver) e todas as entidades IRMAS (que compartilham o mesmo pai) - util para um sensor filho do corpo do personagem nao acertar o proprio corpo/outros colliders do mesmo personagem.");
+
                 ImGui::Separator();
                 ImGui::TextDisabled("Resultado (fisico - so atualiza durante o modo Play):");
                 if (!m_ActiveScene->IsRunning()) {
