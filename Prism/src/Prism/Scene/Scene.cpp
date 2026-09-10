@@ -1,5 +1,6 @@
 #include "Scene.h"
 #include "Entity.h"
+#include "ComponentRegistry.h"
 #include "../Scripting/ScriptEngine.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Project/Project.h"
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <limits>
 #include <cmath>
+#include <unordered_map>
 
 namespace Prism {
 
@@ -23,6 +25,77 @@ namespace Prism {
         entity.AddComponent<TransformComponent>();
         entity.AddComponent<TagComponent>(name.empty() ? std::string("Entity") : name);
         return entity;
+    }
+
+    Ref<Scene> Scene::Clone() {
+        ComponentRegistry::RegisterAll(); // ver comentario equivalente em SceneSerializer - idempotente
+
+        Ref<Scene> cloned = Scene::Create(m_Name);
+
+        // Mapa handle-no-original -> handle-no-clone, preenchido durante a
+        // primeira passada abaixo e usado na segunda (RelationshipComponent)
+        // para remapear Parent/Children - mesma necessidade que
+        // SceneSerializer::Deserialize ja tem (ver comentario la sobre
+        // "pai pode aparecer depois do filho"), so que aqui o mapa e por
+        // HANDLE diretamente (nao por indice posicional), ja que ambas as
+        // Scenes (original e clone) existem ao mesmo tempo em memoria -
+        // nao ha necessidade do truque de indice que a serializacao usa
+        // para persistir em disco.
+        std::unordered_map<entt::entity, entt::entity> handleMap;
+
+        ForEachEntity([&](entt::entity originalHandle, TagComponent& tag) {
+            Entity original(originalHandle, this);
+            Entity copy = cloned->CreateEntity(tag.Tag);
+            handleMap[originalHandle] = copy.GetHandle();
+
+            // TransformComponent: toda entidade ja tem (CreateEntity acima
+            // ja adicionou um default) - so precisa SOBRESCREVER com os
+            // valores reais, nao AddComponent de novo (que faria
+            // PRISM_ASSERT falhar - ver Entity::AddComponent). Nao passa
+            // por ComponentRegistry porque TransformComponent nunca esta
+            // la (toda entidade tem por definicao - ver comentario em
+            // ComponentRegistration.cpp).
+            copy.GetComponent<TransformComponent>() = original.GetComponent<TransformComponent>();
+
+            // Todo Component OPCIONAL (ver ComponentRegistry.h) - cobre
+            // MeshRenderer/Light/Collider/RigidBody/Script/Camera/Raycast
+            // hoje, e qualquer Component futuro que se registre em
+            // ComponentRegistration.cpp, sem precisar tocar em Clone()
+            // de novo.
+            //
+            // DIFERENCA INTENCIONAL vs SceneSerializer: ComponentTypeInfo::Copy
+            // copia o Component INTEIRO (todos os campos, incluindo os
+            // transientes de runtime como RaycastComponent::Hit/HitEntity/
+            // HitPoint - ver ComponentRegistration.cpp), enquanto
+            // Serialize/Deserialize propositalmente OMITE esses campos (nao
+            // fazem sentido persistir em disco). Aqui faz sentido copiar
+            // tudo: Clone() duplica o estado EXATO de agora, nao "reseta
+            // para o que seria salvo em disco".
+            for (auto& info : ComponentRegistry::GetAll()) {
+                if (info.Has(original))
+                    info.Copy(original, copy);
+            }
+        });
+
+        // Segunda passada: RelationshipComponent - so depois que TODAS as
+        // entidades do clone existem (handleMap completo), mesmo motivo
+        // que SceneSerializer::Deserialize ja documenta (o pai de uma
+        // entidade pode ter sido criado DEPOIS dela nesta iteracao).
+        ForEachEntity([&](entt::entity originalHandle, TagComponent&) {
+            auto* rel = m_Registry.try_get<RelationshipComponent>(originalHandle);
+            if (!rel || rel->Parent == entt::null)
+                return;
+
+            auto it = handleMap.find(rel->Parent);
+            if (it == handleMap.end())
+                return; // pai fora desta Scene (nao deveria acontecer) - clone fica sem pai em vez de crashar
+
+            Entity clonedChild(handleMap[originalHandle], cloned.get());
+            Entity clonedParent(it->second, cloned.get());
+            cloned->SetParent(clonedChild, clonedParent);
+        });
+
+        return cloned;
     }
 
     void Scene::DestroyEntity(Entity entity) {

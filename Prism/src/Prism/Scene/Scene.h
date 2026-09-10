@@ -34,6 +34,29 @@ namespace Prism {
         // Cria uma entidade nova, ja com TagComponent + TransformComponent
         // (toda entidade da engine tem essas duas por definicao - ver
         // Components.h). O nome e so um rotulo de exibicao, pode repetir.
+        // Cria uma COPIA INDEPENDENTE desta Scene inteira, em memoria - toda
+        // entidade, todo Component (via ComponentRegistry::GetAll(), ver
+        // ComponentRegistry.h) e a arvore de parenting (RelationshipComponent)
+        // sao duplicados; nada e compartilhado com o original (editar a
+        // copia nunca afeta a Scene original, e vice-versa).
+        //
+        // SUBSTITUI o antigo mecanismo de "clonagem via disco" que
+        // PlayWindow::Open usava (serializar para um .prismmap temporario e
+        // desserializar de volta) - aquele existia porque, antes do
+        // ComponentRegistry existir, nao havia um jeito centralizado de
+        // saber "como copiar cada tipo de Component" sem duplicar esse
+        // conhecimento numa segunda funcao; agora ComponentRegistry ja tem
+        // exatamente essa informacao (ComponentTypeInfo::Copy), entao clonar
+        // em memoria e mais simples E mais barato (sem I/O de disco) que o
+        // caminho antigo. Ver PlayWindow::Open para o uso.
+        //
+        // Nao clona estado de RUNTIME (m_IsRunning fica false na copia,
+        // mesmo que a Scene original esteja rodando - Clone() e pensado
+        // para clonar o estado EDITADO de uma Scene antes de iniciar uma
+        // simulacao nova e independente, nao para duplicar uma simulacao
+        // ja em andamento).
+        Ref<Scene> Clone();
+
         Entity CreateEntity(const std::string& name = "Entity");
 
         // Destroi a entidade E toda a sua subarvore de filhos (recursivo) -

@@ -10,9 +10,9 @@
 // abordagem antiga (Play dentro da propria viewport do editor, com
 // snapshot/restore - ver README) exigia:
 //
-// 1) A Scene rodada aqui e uma COPIA (clonada via SceneSerializer, o mesmo
-//    formato .prismmap - ver PlayWindow::Open) da Scene de edicao, NUNCA a
-//    mesma instancia. Isso elimina de vez a necessidade de snapshot/
+// 1) A Scene rodada aqui e uma COPIA (Scene::Clone(), em memoria - ver
+//    Scene.h/.cpp e PlayWindow::Open) da Scene de edicao, NUNCA a mesma
+//    instancia. Isso elimina de vez a necessidade de snapshot/
 //    restore e do popup "salvar antes de rodar?": a Scene do editor jamais
 //    e tocada por scripts/fisica, entao nao ha nada para desfazer ao
 //    fechar a PlayWindow.
@@ -60,10 +60,9 @@ namespace PrismEditor {
         // arquivo sobre contexto compartilhado). Nao faz nada (retorna
         // false) se ja houver uma PlayWindow aberta nesta instancia - use
         // IsOpen() para checar antes, ou Close() + Open() para reiniciar.
-        // Recebe um Ref<Scene> (nao Scene&) de proposito - SceneSerializer
-        // exige um Ref<Scene> no construtor (ver SceneSerializer.h);
-        // receber a mesma forma aqui evita ter que fabricar um Ref
-        // temporario com deleter vazio so para chamar o serializer.
+        // Recebe um Ref<Scene> (nao Scene&) de proposito - Scene::Clone()
+        // e um metodo de instancia de Scene, que so faz sentido chamado
+        // a partir de um Ref<Scene> ja existente (ver uso em Open()).
         bool Open(Prism::Ref<Prism::Scene> editorScene, GLFWwindow* sharedContextWindow);
 
         // Para scripts/fisica da Scene clonada (Scene::OnScriptsStop()) e

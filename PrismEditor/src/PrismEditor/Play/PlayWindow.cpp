@@ -6,7 +6,6 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <filesystem>
 
 namespace PrismEditor {
 
@@ -21,38 +20,22 @@ namespace PrismEditor {
         }
 
         // --- Clona a Scene (nao roda a instancia de edicao diretamente) ---
-        // Reaproveita o SceneSerializer/formato .prismmap: serializa a
-        // Scene de edicao para um arquivo temporario e desserializa de
-        // volta numa Scene NOVA - mesmo mecanismo que o antigo snapshot/
-        // restore de Play-dentro-da-viewport usava (ver historico), so que
-        // aqui o resultado e usado como uma COPIA independente, nunca
-        // reescrito de volta na Scene de edicao. E o jeito mais simples de
-        // "clonar" corretamente todos os components (incluindo os que tem
-        // logica de serializacao propria) sem duplicar esse conhecimento
-        // numa segunda funcao de clonagem separada.
-        std::error_code ec;
-        std::filesystem::path tempDir = std::filesystem::temp_directory_path(ec);
-        if (ec) {
-            PRISM_CORE_ERROR("PlayWindow::Open: nao foi possivel acessar a pasta temporaria do sistema: ", ec.message());
+        // Ate esta mudanca, isso era feito serializando a Scene de edicao
+        // para um arquivo .prismmap TEMPORARIO em disco e desserializando
+        // de volta (ver historico) - existia porque, antes de
+        // Prism::ComponentRegistry existir, nao havia um jeito centralizado
+        // de saber "como copiar cada tipo de Component" sem duplicar esse
+        // conhecimento numa segunda funcao de clonagem. Com
+        // ComponentRegistry ja centralizando isso (ver Scene::Clone(),
+        // Scene.cpp), clonar em memoria e mais simples e mais barato (sem
+        // I/O de disco, sem arquivo temporario para limpar) - Scene::Clone()
+        // e o novo mecanismo canonico de "copia independente de uma Scene".
+        Prism::Ref<Prism::Scene> clonedScene = editorScene->Clone();
+        if (!clonedScene) {
+            PRISM_CORE_ERROR("PlayWindow::Open: falha ao clonar a Scene de edicao.");
             return false;
         }
-        std::filesystem::path clonePath = tempDir / ("prism_play_window_clone_" + std::to_string(reinterpret_cast<uintptr_t>(editorScene.get())) + ".prismmap");
-
-        Prism::SceneSerializer writeSerializer(editorScene);
-        if (!writeSerializer.Serialize(clonePath)) {
-            PRISM_CORE_ERROR("PlayWindow::Open: falha ao clonar a Scene (escrita): ", clonePath.string());
-            return false;
-        }
-
-        Prism::SceneSerializer readSerializer(Prism::Scene::Create());
-        if (!readSerializer.Deserialize(clonePath)) {
-            PRISM_CORE_ERROR("PlayWindow::Open: falha ao clonar a Scene (leitura): ", clonePath.string());
-            std::filesystem::remove(clonePath, ec);
-            return false;
-        }
-        m_PlayScene = readSerializer.GetScene();
-
-        std::filesystem::remove(clonePath, ec); // nao critico se falhar - arquivo temporario, SO limpa eventualmente
+        m_PlayScene = clonedScene;
 
         // --- Cria a janela do SO, com contexto OpenGL COMPARTILHADO ---
         // O ultimo parametro de glfwCreateWindow (sharedContextWindow) e o

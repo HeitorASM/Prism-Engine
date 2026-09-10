@@ -404,14 +404,21 @@ snapshot/restore via arquivo temporario) - a Scene de edicao (`m_ActiveScene`)
 **nunca** e tocada por scripts/fisica agora, entao nao ha mais nada para
 restaurar nem por que perguntar sobre salvar antes de rodar.
 
-**Como funciona**: apertar Play clona `m_ActiveScene` (serializa para um
-arquivo `.prismmap` temporario e desserializa de volta numa `Scene` nova -
-reaproveitando o `SceneSerializer` ja existente, mesmo mecanismo que o
-snapshot antigo usava, agora para "clonar" em vez de "salvar e restaurar")
-e abre a janela do SO rodando essa copia com `Scene::OnScriptsStart()` ja
-chamado. Apertar Parar (ou fechar a janela pelo X, ou apertar Esc dentro
-dela) chama `Scene::OnScriptsStop()` na copia e destroi a janela - a copia
-inteira e descartada, a Scene de edicao nunca foi tocada.
+**Como funciona**: apertar Play clona `m_ActiveScene` em memoria via
+`Scene::Clone()` (ver `Prism/src/Prism/Scene/Scene.h/.cpp`) e abre a janela
+do SO rodando essa copia com `Scene::OnScriptsStart()` ja chamado. Apertar
+Parar (ou fechar a janela pelo X, ou apertar Esc dentro dela) chama
+`Scene::OnScriptsStop()` na copia e destroi a janela - a copia inteira e
+descartada, a Scene de edicao nunca foi tocada.
+
+`Scene::Clone()` percorre `Prism::ComponentRegistry::GetAll()` (ver nota
+"Registro Central de Components" abaixo) para copiar cada Component
+opcional presente em cada entidade, tudo em memoria - substituiu uma
+versao anterior desta feature que serializava a Scene de edicao para um
+arquivo `.prismmap` temporario e desserializava de volta (existia porque,
+antes do ComponentRegistry, nao havia um jeito centralizado de saber "como
+copiar cada tipo de Component" sem duplicar esse conhecimento numa segunda
+funcao). Clonar em memoria e mais simples e mais barato (sem I/O de disco).
 
 **Contexto OpenGL compartilhado**: a `PlayWindow` cria sua `GLFWwindow`
 com o ultimo parametro de `glfwCreateWindow` (contexto a compartilhar)
@@ -438,8 +445,9 @@ lugares.
   Scene de edicao, ainda que correspondentes), nao ha como "recarregar"
   remotamente um script individual a partir da Properties panel do editor
   enquanto o Play esta rodando - editar o `.lua` e ver o efeito exige
-  Parar e apertar Play de novo (a proxima clonagem ja pega o arquivo
-  atualizado do disco).
+  Parar e apertar Play de novo (o proximo `Scene::Clone()` copia o
+  `ScriptComponent::ScriptPath` de novo, e o Lua em si e recarregado do
+  disco por `ScriptEngine`/`Scene::OnScriptsStart()` nesse momento).
 - **Sem redimensionamento configuravel pela UI** ainda - a `PlayWindow`
   abre num tamanho fixo (1280x720); o usuario pode redimensionar a janela
   do SO manualmente como qualquer outra janela, mas nao ha um campo na UI
@@ -928,18 +936,41 @@ não há suporte a múltiplos mapas por projeto nem uma janela "Salvar como"
 `Scene`/`Entity` usam [EnTT](https://github.com/skypjack/entt) por baixo
 (header-only, baixado via `FetchContent` — não precisa instalar nada à
 parte). `Entity` é só um par (ID, `Scene*`); todo dado real vive em
-*components* (`Prism/src/Prism/Scene/Components.h`): `TagComponent`,
-`TransformComponent`, `MeshRendererComponent`, e um `CameraComponent` ainda
-não usado (reservado para quando existir um modo "Play" com câmera de jogo,
-distinta da câmera de órbita do editor).
+*components* (`Prism/src/Prism/Scene/Components.h`).
 
-Toda entidade nasce com `TagComponent` + `TransformComponent` (ver
-`Scene::CreateEntity`). O "sistema" que desenha a cena é só uma função que
-itera `registry.view<TransformComponent, MeshRendererComponent>()` — ver
-`EditorLayer::RenderScene()`. Adicionar um novo tipo de mesh primitivo
-(esfera, plano) é: adicionar ao `enum PrimitiveMesh`, ensinar `Renderer` a
-desenhar essa geometria, e adicionar um `case` no `switch` de
-`RenderScene()`.
+**Esta nota está parcialmente desatualizada** (ela ainda descreve um
+estado inicial da engine, sem `RigidBody`/`Collider`/`Light`/`Camera`/
+`Script`/`Raycast`, e sem o `Renderer::DrawScene` que hoje centraliza o
+loop de desenho - ver nota "Shadow Mapping" acima e a nota "Registro
+Central de Components" logo abaixo para o estado mais atual).
+
+## Nota sobre Registro Central de Components (estado atual)
+
+`Prism/src/Prism/Scene/ComponentRegistry.h` + `ComponentRegistration.cpp`
+centralizam, num só lugar, tudo que antes precisava ser editado
+manualmente em 3 arquivos toda vez que um Component "opcional" novo era
+adicionado (`SceneSerializer.cpp`, e o menu "Add Component" +
+`hasAnyMissing` em `EditorLayer.cpp`). Cada Component se registra uma vez
+em `ComponentRegistration.cpp` com como ter presença checada
+(`Has`), adicionado com valores default (`AddDefault`), removido
+(`Remove`), serializado/desserializado (`Serialize`/`Deserialize`, layout
+binário idêntico ao de antes desta mudança) e copiado em memória (`Copy`,
+gerado automaticamente a partir do `operator=` do próprio tipo).
+
+`Scene::Clone()` (`Scene.h/.cpp`) usa esse registro para clonar uma `Scene`
+inteira **em memória**, sem ir a disco - é o mecanismo que `PlayWindow`
+usa hoje para rodar uma cópia independente da Scene de edição (ver nota
+"Play Window" acima), substituindo uma versão anterior que serializava
+para um `.prismmap` temporário e desserializava de volta.
+
+**Não incluído neste registro (de propósito)**: a UI do Properties panel
+(`EditorLayer.cpp`) continua sendo escrita à mão por Component - cada um
+tem lógica própria demais (previews ao vivo como o de `CameraComponent`,
+campos condicionais por enum, avisos contextuais) para generalizar sem
+perder fidelidade; ver discussão de arquitetura que motivou essa decisão.
+`RelationshipComponent` (parenting) também não entra aqui - usa um esquema
+de serialização fundamentalmente diferente (índice posicional do pai) e
+nunca aparece no menu "Add Component".
 
 ## Nota sobre a Viewport (estado atual do renderer)
 

@@ -85,6 +85,18 @@ namespace Prism {
         // existia antes deste registro).
         std::function<bool(std::ifstream&, Entity, uint32_t)> Deserialize;
 
+        // Copia os campos do Component de 'source' para 'destination' (que
+        // ainda NAO deve ter este Component - AddComponent<T> dentro
+        // desta funcao falharia via PRISM_ASSERT se ja tivesse). Gerado
+        // automaticamente por Register<T> (ver ComponentRegistry.h) a
+        // partir do operator= copia implicito de T - nao precisa ser
+        // escrito a mao por Component em ComponentRegistration.cpp, ao
+        // contrario de Serialize/Deserialize (que dependem do FORMATO DE
+        // ARQUIVO, nao so da copia de memoria). Usado por Scene::Clone()
+        // (ver Scene.h/.cpp) para clonar uma cena inteira SEM ir a disco -
+        // ver comentario grande la sobre o que isto substitui.
+        std::function<void(Entity source, Entity destination)> Copy;
+
         // Hook OPCIONAL (nullptr = nao faz nada extra), chamado pelo
         // EditorLayer depois de adicionar o Component via
         // AddComponentCommand - cobre ajustes de consistencia que nao sao
@@ -150,6 +162,9 @@ namespace Prism {
             info.Remove = [](Entity e) { e.RemoveComponent<T>(); };
             info.Serialize = std::move(serialize);
             info.Deserialize = std::move(deserialize);
+            info.Copy = [](Entity source, Entity destination) {
+                destination.AddComponent<T>(source.GetComponent<T>());
+            };
             info.OnAfterAddInEditor = std::move(onAfterAddInEditor);
             s_Registry.push_back(std::move(info));
         }
