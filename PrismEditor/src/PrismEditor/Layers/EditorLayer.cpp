@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <vector>
 #include <fstream>
+#include <filesystem>
 
 namespace PrismEditor {
 
@@ -1697,62 +1698,122 @@ namespace PrismEditor {
             auto& material = m_SelectedEntity.GetComponent<Prism::MaterialComponent>();
             bool keepOpen = true;
             if (ImGui::CollapsingHeader("Material", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
-                // Um slot de textura = path (InputText editavel) + preview
-                // (miniatura) + status. Path digitado e RELATIVO a pasta do
-                // projeto ativo (mesma convencao do resto do editor - ver
-                // ContentBrowserPanel/Project::GetProjectDirectory) - mais
-                // simples que um file dialog nativo (inexistente ainda
-                // nesta engine) e consistente com o dado bruto que
-                // MaterialComponent::AlbedoPath ja guarda (ver Components.h).
+                // Cada slot de textura vira um "cartao": preview GRANDE
+                // (96x96, arrastavel/solta-vel) a esquerda, nome do
+                // arquivo + botoes (limpar/editar path manualmente) a
+                // direita - layout em duas colunas fixas, nao um
+                // InputText inteiro em cima do preview como na versao
+                // anterior (mais dificil de escanear com 3 slots
+                // seguidos). O path completo (nem sempre curto) fica so
+                // no tooltip, nao ocupando espaco de tela permanente.
                 //
                 // 'isSRGB' passado para GetOrLoadTexture deve bater
-                // EXATAMENTE com o que Renderer::DrawMesh usa para o mesmo
-                // campo (Albedo=true, Normal/RoughnessMetallic=false) -
-                // ver comentario grande em Texture.h sobre por que isso
-                // importa para PBR correto.
-                auto renderTextureSlot = [&](const char* label, std::string& path, bool isSRGB) {
+                // EXATAMENTE com o que Renderer::DrawMesh usa para o
+                // mesmo campo (Albedo=true, Normal/RoughnessMetallic=
+                // false) - ver comentario grande em Texture.h sobre por
+                // que isso importa para PBR correto.
+                constexpr float previewSize = 96.0f;
+
+                auto renderTextureSlot = [&](const char* label, const char* hint, std::string& path, bool isSRGB) {
                     ImGui::PushID(label);
-                    ImGui::TextUnformatted(label);
 
-                    char buffer[256];
-                    strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
-                    buffer[sizeof(buffer) - 1] = '\0';
-                    ImGui::SetNextItemWidth(-1);
-                    if (ImGui::InputText("##Path", buffer, sizeof(buffer)))
-                        path = buffer;
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Caminho relativo a pasta do projeto (ex: Assets/Textures/parede_albedo.png).\nDeixe vazio para nao usar textura neste canal - o fator/tint abaixo passa a valer sozinho.");
+                    Prism::Texture2D* texture = path.empty() ? nullptr : Prism::Renderer::GetOrLoadTexture(path, isSRGB);
+                    bool hasValidTexture = texture && texture->IsValid();
+                    bool hasBrokenPath = !path.empty() && !hasValidTexture;
 
-                    if (!path.empty()) {
-                        // GetOrLoadTexture ja resolve 'path' (relativo a
-                        // pasta do projeto) para absoluto internamente -
-                        // ver comentario grande em Renderer.h.
-                        Prism::Texture2D* texture = Prism::Renderer::GetOrLoadTexture(path, isSRGB);
-                        if (texture && texture->IsValid()) {
-                            ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(64, 64));
-                            ImGui::SameLine();
-                            ImGui::BeginGroup();
-                            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Carregada");
-                            ImGui::Text("%u x %u", texture->GetWidth(), texture->GetHeight());
-                            ImGui::EndGroup();
-                        } else {
-                            ImGui::TextColored(ImVec4(0.9f, 0.35f, 0.35f, 1.0f), "Falha ao carregar - confira o caminho");
-                        }
+                    // --- Preview / drop target (coluna esquerda) --------
+                    ImGui::BeginGroup();
+                    if (hasValidTexture) {
+                        ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(previewSize, previewSize));
+                    } else {
+                        // Sem textura (ou path quebrado): um botao vazio
+                        // do mesmo tamanho do preview, so para servir de
+                        // area de drop e dar feedback visual claro de
+                        // "solte uma imagem aqui" - cor vermelha se o
+                        // path atual esta quebrado, cinza neutro se
+                        // realmente vazio.
+                        ImVec4 emptyColor = hasBrokenPath ? ImVec4(0.35f, 0.18f, 0.18f, 1.0f) : ImVec4(0.2f, 0.2f, 0.22f, 1.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Button, emptyColor);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, emptyColor);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, emptyColor);
+                        ImGui::Button(hasBrokenPath ? "Path\nquebrado" : "Arraste uma\nimagem aqui", ImVec2(previewSize, previewSize));
+                        ImGui::PopStyleColor(3);
                     }
+
+                    // Drop target: aceita CONTENT_BROWSER_IMAGE_PATH (ver
+                    // ContentBrowserPanel::RenderGrid) sobre o preview
+                    // INTEIRO (funciona igual solte numa textura ja
+                    // carregada ou no botao vazio acima).
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_IMAGE_PATH")) {
+                            std::filesystem::path droppedPath((const char*)payload->Data);
+                            // ContentBrowserPanel manda o path ABSOLUTO
+                            // (ver comentario la) - convertemos de volta
+                            // para relativo a pasta do projeto antes de
+                            // salvar em MaterialComponent, mesma
+                            // convencao que o campo de texto manual usa
+                            // (ver comentario grande em Renderer.h sobre
+                            // GetOrLoadTexture resolvendo o inverso).
+                            if (auto project = Prism::Project::GetActive()) {
+                                std::error_code ec;
+                                auto relativePath = std::filesystem::relative(droppedPath, project->GetProjectDirectory(), ec);
+                                path = !ec ? relativePath.generic_string() : droppedPath.generic_string();
+                            } else {
+                                path = droppedPath.generic_string();
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", path.empty() ? "Arraste uma imagem do painel Conteudo do Projeto, ou edite o caminho ao lado." : path.c_str());
+                    ImGui::EndGroup();
+
+                    // --- Nome + status + acoes (coluna direita) ---------
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(label);
+                    ImGui::TextDisabled("%s", hint);
+
+                    std::string fileName = path.empty() ? "(nenhuma)" : std::filesystem::path(path).filename().string();
+                    ImGui::TextWrapped("%s", fileName.c_str());
+
+                    if (hasValidTexture)
+                        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "%u x %u", texture->GetWidth(), texture->GetHeight());
+                    else if (hasBrokenPath)
+                        ImGui::TextColored(ImVec4(0.9f, 0.35f, 0.35f, 1.0f), "Nao encontrada");
+
+                    if (!path.empty() && ImGui::SmallButton("Limpar"))
+                        path.clear();
+
+                    // Edicao manual do path continua disponivel (colapsada
+                    // atras de um CollapsingHeader pequeno) - drag & drop
+                    // e o fluxo principal agora, mas digitar/colar ainda
+                    // e util (ex: corrigir um path quebrado sem precisar
+                    // achar o arquivo de novo no Content Browser).
+                    if (ImGui::TreeNodeEx("Editar caminho manualmente", ImGuiTreeNodeFlags_None)) {
+                        char buffer[256];
+                        strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
+                        buffer[sizeof(buffer) - 1] = '\0';
+                        ImGui::SetNextItemWidth(-1);
+                        if (ImGui::InputText("##Path", buffer, sizeof(buffer)))
+                            path = buffer;
+                        ImGui::TreePop();
+                    }
+                    ImGui::EndGroup();
+
                     ImGui::PopID();
                 };
 
-                renderTextureSlot("Albedo (cor base)", material.AlbedoPath, /*isSRGB*/ true);
+                renderTextureSlot("Albedo", "Cor base (RGB)", material.AlbedoPath, /*isSRGB*/ true);
                 ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint));
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Multiplica a textura de Albedo (ou serve como cor solida, se nenhuma textura estiver configurada acima).");
 
                 ImGui::Separator();
-                renderTextureSlot("Normal Map", material.NormalPath, /*isSRGB*/ false);
+                renderTextureSlot("Normal Map", "Tangent-space", material.NormalPath, /*isSRGB*/ false);
 
                 ImGui::Separator();
-                renderTextureSlot("Roughness/Metallic", material.RoughnessMetallicPath, /*isSRGB*/ false);
-                ImGui::TextDisabled("Convencao glTF: canal G = roughness, canal B = metallic.");
+                renderTextureSlot("Roughness/Metallic", "G=roughness, B=metallic (glTF)", material.RoughnessMetallicPath, /*isSRGB*/ false);
                 ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f);
                 ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f);
                 ImGui::TextDisabled("(?) Os dois fatores acima ainda nao afetam a iluminacao (shader atual e Lambert difuso puro, sem termo especular/PBR) - ja ficam salvos no Material para quando esse calculo for adicionado.");

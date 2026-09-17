@@ -1,6 +1,7 @@
 #include "ContentBrowserPanel.h"
 #include <imgui.h>
 #include <algorithm>
+#include <cctype>
 
 namespace PrismEditor {
 
@@ -127,26 +128,100 @@ namespace PrismEditor {
             bool isMapFile = !entry.IsDirectory && entry.Path.extension() == ".prismmap";
             bool isProjectFile = !entry.IsDirectory && entry.Path.extension() == ".prismproj";
 
-            // Cor do "icone" (por enquanto so um retangulo colorido - um
-            // icone de verdade por tipo de arquivo e um candidato natural
-            // quando o sistema de import de assets/texturas existir) -
-            // pasta em azul claro, mapa em laranja (combina com a cor do
-            // cubo de teste da viewport), projeto em roxo, resto em cinza.
-            ImVec4 iconColor = entry.IsDirectory ? ImVec4(0.45f, 0.65f, 0.90f, 1.0f)
-                              : isMapFile        ? ImVec4(0.85f, 0.55f, 0.20f, 1.0f)
-                              : isProjectFile    ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
-                                                 : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+            // Extensoes que stb_image decodifica (ver Texture.cpp) -
+            // calculado ANTES de desenhar o botao (nao so depois, como
+            // antes) porque agora decide se o botao vira uma miniatura de
+            // verdade (ImageButton) ou o retangulo colorido generico.
+            std::string ext = entry.Path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            bool isImage = !entry.IsDirectory && (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".psd" || ext == ".gif");
 
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(iconColor.x, iconColor.y, iconColor.z, isSelected ? 0.55f : 0.25f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(iconColor.x, iconColor.y, iconColor.z, 0.45f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(iconColor.x, iconColor.y, iconColor.z, 0.65f));
+            // Para imagens, tenta carregar via o MESMO cache do Renderer
+            // usado pelo painel de Material (Renderer::GetOrLoadTexture) -
+            // nao um carregamento separado so para thumbnail: a textura
+            // fica compartilhada/cacheada de qualquer forma, entao ja
+            // pre-carregar aqui so adianta o trabalho que o Material
+            // faria de qualquer jeito ao configurar esse path depois.
+            // isSRGB=true (mesma convencao de Albedo) e so uma escolha
+            // razoavel para PREVIEW - a miniatura nao faz iluminacao/PBR
+            // nenhuma, entao a diferenca sRGB-vs-linear aqui e cosmetica
+            // (cores um pouco mais claras/escuras que o "real"), nunca
+            // incorreta a ponto de importar para so mostrar um icone.
+            Prism::Texture2D* thumbnail = isImage ? Prism::Renderer::GetOrLoadTexture(entry.Path.string(), /*isSRGB*/ true) : nullptr;
+            bool hasThumbnail = thumbnail && thumbnail->IsValid();
 
-            const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : "[Arq]";
-            std::string buttonLabel = std::string(icon) + "\n" + entry.Name;
+            bool clicked = false;
+            if (hasThumbnail) {
+                // ImageButton sozinho nao mostra o NOME do arquivo (so a
+                // imagem) - desenhamos a textura como botao e o nome
+                // como texto quebrado logo abaixo, dentro da mesma
+                // celula (BeginGroup para os dois ficarem juntos na
+                // grade de colunas).
+                ImGui::BeginGroup();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.15f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.25f));
+                if (isSelected)
+                    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.85f, 0.55f, 0.20f, 1.0f));
+                clicked = ImGui::ImageButton("##thumb", (ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(cellSize - 8.0f, cellSize - 8.0f));
+                if (isSelected)
+                    ImGui::PopStyleColor();
+                ImGui::PopStyleColor(3);
+                ImGui::TextWrapped("%s", entry.Name.c_str());
+                ImGui::EndGroup();
+            } else {
+                // Cor do "icone" (retangulo colorido) - usado para tudo
+                // que NAO tem thumbnail de verdade ainda (pastas, mapas,
+                // projeto, imagens com path quebrado, qualquer outro
+                // arquivo) - pasta em azul claro, mapa em laranja (combina
+                // com a cor do cubo de teste da viewport), projeto em
+                // roxo, resto em cinza.
+                ImVec4 iconColor = entry.IsDirectory ? ImVec4(0.45f, 0.65f, 0.90f, 1.0f)
+                                  : isMapFile        ? ImVec4(0.85f, 0.55f, 0.20f, 1.0f)
+                                  : isProjectFile    ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
+                                                     : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
 
-            if (ImGui::Button(buttonLabel.c_str(), ImVec2(cellSize, cellSize))) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(iconColor.x, iconColor.y, iconColor.z, isSelected ? 0.55f : 0.25f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(iconColor.x, iconColor.y, iconColor.z, 0.45f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(iconColor.x, iconColor.y, iconColor.z, 0.65f));
+
+                // Imagem com path quebrado (raro - arquivo corrompido ou
+                // formato que stb_image nao decodifica apesar da
+                // extensao) ganha um icone proprio, para distinguir de
+                // "so nao tentamos gerar thumbnail para este tipo".
+                const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : isImage ? "[Img?]" : "[Arq]";
+                std::string buttonLabel = std::string(icon) + "\n" + entry.Name;
+
+                clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(cellSize, cellSize));
+                ImGui::PopStyleColor(3);
+            }
+
+            if (clicked) {
                 m_SelectedPath = entry.Path;
             }
+
+            // Fonte de drag & drop: arquivos de IMAGEM (extensoes que
+            // stb_image decodifica - ver Texture.cpp) podem ser
+            // arrastados para os slots de textura do painel Material
+            // (ver EditorLayer::RenderPropertiesPanel, PayloadID
+            // "CONTENT_BROWSER_IMAGE_PATH"). Path absoluto no payload
+            // (nao relativo) - quem recebe (o slot de Material) e quem
+            // decide como/se relativizar para a pasta do projeto antes
+            // de salvar, mesmo padrao ja usado por
+            // MaterialComponent::AlbedoPath.
+            // BeginDragDropSource pode assert se o item atual nao tiver um
+            // ID unico (caso raro). Passamos a flag
+            // ImGuiDragDropFlags_SourceAllowNullID para permitir operar
+            // mesmo quando LastItemData.ID for 0 (fallback seguro).
+            if (isImage && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                std::string pathString = entry.Path.string();
+                ImGui::SetDragDropPayload("CONTENT_BROWSER_IMAGE_PATH", pathString.c_str(), pathString.size() + 1);
+                if (hasThumbnail)
+                    ImGui::Image((ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(48, 48));
+                ImGui::Text("%s", entry.Name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (entry.IsDirectory) {
                     NavigateTo(entry.Path);
@@ -158,7 +233,6 @@ namespace PrismEditor {
                 ImGui::SetTooltip("%s", entry.Path.string().c_str());
             }
 
-            ImGui::PopStyleColor(3);
             ImGui::PopID();
 
             ImGui::NextColumn();

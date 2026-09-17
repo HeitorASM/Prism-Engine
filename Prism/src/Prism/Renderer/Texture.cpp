@@ -42,8 +42,17 @@ namespace Prism {
         m_Width = (uint32_t)width;
         m_Height = (uint32_t)height;
 
-        glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
-        glBindTexture(GL_TEXTURE_2D, m_RendererID);
+        // glCreateTextures is only available on newer GL (4.5+). Fallback
+        // para glGenTextures/glBindTexture quando a funcao nao existir
+        // (drivers/HW mais antigos). Usar diretamente glCreateTextures
+        // sem checar pode levar a ponteiro nulo e crash.
+        if (glCreateTextures) {
+            glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
+            glBindTexture(GL_TEXTURE_2D, m_RendererID);
+        } else {
+            glGenTextures(1, &m_RendererID);
+            glBindTexture(GL_TEXTURE_2D, m_RendererID);
+        }
 
         // Ver comentario grande em Texture.h (parametro 'isSRGB') sobre a
         // diferenca entre GL_SRGB8_ALPHA8 (albedo/cor) e GL_RGBA8 (dados
