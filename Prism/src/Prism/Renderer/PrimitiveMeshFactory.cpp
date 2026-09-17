@@ -1,9 +1,65 @@
 #include "PrimitiveMeshFactory.h"
 #include <cmath>
+#include <glm/glm.hpp>
 
 namespace Prism {
 
     static constexpr float kPi = 3.14159265358979323846f;
+
+    void PrimitiveMeshFactory::CalculateTangents(GeneratedMesh& mesh) {
+        std::vector<glm::vec3> accumulatedTangents(mesh.Vertices.size(), glm::vec3(0.0f));
+
+        for (size_t i = 0; i + 2 < mesh.Indices.size(); i += 3) {
+            uint32_t i0 = mesh.Indices[i + 0];
+            uint32_t i1 = mesh.Indices[i + 1];
+            uint32_t i2 = mesh.Indices[i + 2];
+
+            const MeshVertex& v0 = mesh.Vertices[i0];
+            const MeshVertex& v1 = mesh.Vertices[i1];
+            const MeshVertex& v2 = mesh.Vertices[i2];
+
+            glm::vec3 pos0(v0.Position[0], v0.Position[1], v0.Position[2]);
+            glm::vec3 pos1(v1.Position[0], v1.Position[1], v1.Position[2]);
+            glm::vec3 pos2(v2.Position[0], v2.Position[1], v2.Position[2]);
+
+            glm::vec2 uv0(v0.UV[0], v0.UV[1]);
+            glm::vec2 uv1(v1.UV[0], v1.UV[1]);
+            glm::vec2 uv2(v2.UV[0], v2.UV[1]);
+
+            glm::vec3 edge1 = pos1 - pos0;
+            glm::vec3 edge2 = pos2 - pos0;
+            glm::vec2 deltaUV1 = uv1 - uv0;
+            glm::vec2 deltaUV2 = uv2 - uv0;
+
+            float denom = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+
+            glm::vec3 tangent(1.0f, 0.0f, 0.0f);
+            if (std::fabs(denom) > 1e-8f) {
+                float invDenom = 1.0f / denom;
+                tangent = invDenom * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
+            }
+
+            accumulatedTangents[i0] += tangent;
+            accumulatedTangents[i1] += tangent;
+            accumulatedTangents[i2] += tangent;
+        }
+
+        for (size_t i = 0; i < mesh.Vertices.size(); i++) {
+            glm::vec3 normal(mesh.Vertices[i].Normal[0], mesh.Vertices[i].Normal[1], mesh.Vertices[i].Normal[2]);
+            glm::vec3 tangent = accumulatedTangents[i];
+
+            if (glm::length(tangent) > 1e-8f) {
+                tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
+            } else {
+                glm::vec3 arbitrary = (std::fabs(normal.y) < 0.99f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+                tangent = glm::normalize(glm::cross(normal, arbitrary));
+            }
+
+            mesh.Vertices[i].Tangent[0] = tangent.x;
+            mesh.Vertices[i].Tangent[1] = tangent.y;
+            mesh.Vertices[i].Tangent[2] = tangent.z;
+        }
+    }
 
     GeneratedMesh PrimitiveMeshFactory::CreateCube() {
         GeneratedMesh mesh;
@@ -30,6 +86,12 @@ namespace Prism {
             MeshVertex v;
             v.Position[0] = raw[i * 6 + 0]; v.Position[1] = raw[i * 6 + 1]; v.Position[2] = raw[i * 6 + 2];
             v.Normal[0]   = raw[i * 6 + 3]; v.Normal[1]   = raw[i * 6 + 4]; v.Normal[2]   = raw[i * 6 + 5];
+
+            static const float faceUVs[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
+            int cornerInFace = i % 4;
+            v.UV[0] = faceUVs[cornerInFace][0];
+            v.UV[1] = faceUVs[cornerInFace][1];
+
             mesh.Vertices.push_back(v);
         }
 
@@ -42,6 +104,7 @@ namespace Prism {
             20,21,22, 20,22,23,       // -Z
         };
 
+        CalculateTangents(mesh);
         return mesh;
     }
 
@@ -66,14 +129,16 @@ namespace Prism {
                 float nx = cosPhi * sinTheta, ny = cosTheta, nz = sinPhi * sinTheta;
                 v.Normal[0] = nx; v.Normal[1] = ny; v.Normal[2] = nz;
                 v.Position[0] = nx * radius; v.Position[1] = ny * radius; v.Position[2] = nz * radius;
+                v.UV[0] = (float)lon / (float)lonSegments;
+                v.UV[1] = (float)lat / (float)latSegments;
                 mesh.Vertices.push_back(v);
             }
         }
 
         // Cada "quad" entre duas linhas de latitude/longitude vira 2
         // triangulos - (lonSegments+1) vertices por linha por causa do
-        // vertice duplicado no lon=0/lon=2PI (necessario para UV/costura
-        // correta - mesmo sem UV ainda hoje, mantem a topologia pronta).
+        // vertice duplicado no lon=0/lon=2PI (necessario para a costura de
+        // UV ficar correta).
         uint32_t vertsPerRow = lonSegments + 1;
         for (uint32_t lat = 0; lat < latSegments; lat++) {
             for (uint32_t lon = 0; lon < lonSegments; lon++) {
@@ -89,6 +154,7 @@ namespace Prism {
             }
         }
 
+        CalculateTangents(mesh);
         return mesh;
     }
 
@@ -126,6 +192,11 @@ namespace Prism {
                 v.Position[0] = nx * radius;
                 v.Position[1] = ny * radius + yOffset;
                 v.Position[2] = nz * radius;
+
+                float totalHalfHeight = halfHeight + radius;
+                v.UV[0] = (float)lon / (float)segments;
+                v.UV[1] = (v.Position[1] + totalHalfHeight) / (2.0f * totalHalfHeight);
+
                 mesh.Vertices.push_back(v);
             }
         }
@@ -144,6 +215,7 @@ namespace Prism {
             }
         }
 
+        CalculateTangents(mesh);
         return mesh;
     }
 
@@ -163,6 +235,8 @@ namespace Prism {
                 MeshVertex v;
                 v.Position[0] = cosPhi * radius; v.Position[1] = y; v.Position[2] = sinPhi * radius;
                 v.Normal[0] = cosPhi; v.Normal[1] = 0.0f; v.Normal[2] = sinPhi;
+                v.UV[0] = (float)i / (float)segments;
+                v.UV[1] = (float)ring;
                 mesh.Vertices.push_back(v);
             }
         }
@@ -191,6 +265,7 @@ namespace Prism {
             MeshVertex center;
             center.Position[0] = 0.0f; center.Position[1] = y; center.Position[2] = 0.0f;
             center.Normal[0] = 0.0f; center.Normal[1] = normalY; center.Normal[2] = 0.0f;
+            center.UV[0] = 0.5f; center.UV[1] = 0.5f;
             mesh.Vertices.push_back(center);
 
             uint32_t ringStart = (uint32_t)mesh.Vertices.size();
@@ -199,6 +274,8 @@ namespace Prism {
                 MeshVertex v;
                 v.Position[0] = cosf(phi) * radius; v.Position[1] = y; v.Position[2] = sinf(phi) * radius;
                 v.Normal[0] = 0.0f; v.Normal[1] = normalY; v.Normal[2] = 0.0f;
+                v.UV[0] = 0.5f + cosf(phi) * 0.5f;
+                v.UV[1] = 0.5f + sinf(phi) * 0.5f;
                 mesh.Vertices.push_back(v);
             }
 
@@ -219,6 +296,7 @@ namespace Prism {
         addCap(-halfHeight, -1.0f, true);  // base - vista de baixo, winding invertido para continuar culling-friendly
         addCap(halfHeight, 1.0f, false);   // topo
 
+        CalculateTangents(mesh);
         return mesh;
     }
 
@@ -227,13 +305,14 @@ namespace Prism {
         constexpr float half = 0.5f;
 
         mesh.Vertices = {
-            { { -half, 0.0f, -half }, { 0, 1, 0 } },
-            { {  half, 0.0f, -half }, { 0, 1, 0 } },
-            { {  half, 0.0f,  half }, { 0, 1, 0 } },
-            { { -half, 0.0f,  half }, { 0, 1, 0 } },
+            { { -half, 0.0f, -half }, { 0, 1, 0 }, { 0.0f, 0.0f } },
+            { {  half, 0.0f, -half }, { 0, 1, 0 }, { 1.0f, 0.0f } },
+            { {  half, 0.0f,  half }, { 0, 1, 0 }, { 1.0f, 1.0f } },
+            { { -half, 0.0f,  half }, { 0, 1, 0 }, { 0.0f, 1.0f } },
         };
         mesh.Indices = { 0, 1, 2, 0, 2, 3 };
 
+        CalculateTangents(mesh);
         return mesh;
     }
 

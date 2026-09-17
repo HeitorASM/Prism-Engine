@@ -1693,6 +1693,74 @@ namespace PrismEditor {
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MeshRendererComponent>>(m_SelectedEntity, "Mesh Renderer"));
         }
 
+        if (m_SelectedEntity.HasComponent<Prism::MaterialComponent>()) {
+            auto& material = m_SelectedEntity.GetComponent<Prism::MaterialComponent>();
+            bool keepOpen = true;
+            if (ImGui::CollapsingHeader("Material", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Um slot de textura = path (InputText editavel) + preview
+                // (miniatura) + status. Path digitado e RELATIVO a pasta do
+                // projeto ativo (mesma convencao do resto do editor - ver
+                // ContentBrowserPanel/Project::GetProjectDirectory) - mais
+                // simples que um file dialog nativo (inexistente ainda
+                // nesta engine) e consistente com o dado bruto que
+                // MaterialComponent::AlbedoPath ja guarda (ver Components.h).
+                //
+                // 'isSRGB' passado para GetOrLoadTexture deve bater
+                // EXATAMENTE com o que Renderer::DrawMesh usa para o mesmo
+                // campo (Albedo=true, Normal/RoughnessMetallic=false) -
+                // ver comentario grande em Texture.h sobre por que isso
+                // importa para PBR correto.
+                auto renderTextureSlot = [&](const char* label, std::string& path, bool isSRGB) {
+                    ImGui::PushID(label);
+                    ImGui::TextUnformatted(label);
+
+                    char buffer[256];
+                    strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
+                    buffer[sizeof(buffer) - 1] = '\0';
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputText("##Path", buffer, sizeof(buffer)))
+                        path = buffer;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Caminho relativo a pasta do projeto (ex: Assets/Textures/parede_albedo.png).\nDeixe vazio para nao usar textura neste canal - o fator/tint abaixo passa a valer sozinho.");
+
+                    if (!path.empty()) {
+                        // GetOrLoadTexture ja resolve 'path' (relativo a
+                        // pasta do projeto) para absoluto internamente -
+                        // ver comentario grande em Renderer.h.
+                        Prism::Texture2D* texture = Prism::Renderer::GetOrLoadTexture(path, isSRGB);
+                        if (texture && texture->IsValid()) {
+                            ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(64, 64));
+                            ImGui::SameLine();
+                            ImGui::BeginGroup();
+                            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Carregada");
+                            ImGui::Text("%u x %u", texture->GetWidth(), texture->GetHeight());
+                            ImGui::EndGroup();
+                        } else {
+                            ImGui::TextColored(ImVec4(0.9f, 0.35f, 0.35f, 1.0f), "Falha ao carregar - confira o caminho");
+                        }
+                    }
+                    ImGui::PopID();
+                };
+
+                renderTextureSlot("Albedo (cor base)", material.AlbedoPath, /*isSRGB*/ true);
+                ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Multiplica a textura de Albedo (ou serve como cor solida, se nenhuma textura estiver configurada acima).");
+
+                ImGui::Separator();
+                renderTextureSlot("Normal Map", material.NormalPath, /*isSRGB*/ false);
+
+                ImGui::Separator();
+                renderTextureSlot("Roughness/Metallic", material.RoughnessMetallicPath, /*isSRGB*/ false);
+                ImGui::TextDisabled("Convencao glTF: canal G = roughness, canal B = metallic.");
+                ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f);
+                ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f);
+                ImGui::TextDisabled("(?) Os dois fatores acima ainda nao afetam a iluminacao (shader atual e Lambert difuso puro, sem termo especular/PBR) - ja ficam salvos no Material para quando esse calculo for adicionado.");
+            }
+            if (!keepOpen)
+                m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MaterialComponent>>(m_SelectedEntity, "Material"));
+        }
+
         if (m_SelectedEntity.HasComponent<Prism::LightComponent>()) {
             auto& light = m_SelectedEntity.GetComponent<Prism::LightComponent>();
             bool keepOpen = true;
@@ -2047,6 +2115,8 @@ namespace PrismEditor {
             m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(entity, displayName));
         else if (displayName == "Camera")
             m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(entity, displayName));
+        else if (displayName == "Material")
+            m_CommandHistory.Execute(Prism::CreateScope<AddComponentCommand<Prism::MaterialComponent>>(entity, displayName));
         else {
             // Fallback generico SEM Undo - usado so se um Component for
             // registrado em ComponentRegistration.cpp mas esquecido aqui

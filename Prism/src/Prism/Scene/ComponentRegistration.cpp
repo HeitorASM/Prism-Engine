@@ -70,6 +70,31 @@ namespace Prism {
             }
         );
 
+        // --- MaterialComponent -------------------------------------------------
+        Register<MaterialComponent>(
+            "Material",
+            [](std::ofstream& out, Entity e) {
+                auto& c = e.GetComponent<MaterialComponent>();
+                WriteString(out, c.AlbedoPath);
+                WriteString(out, c.NormalPath);
+                WriteString(out, c.RoughnessMetallicPath);
+                WriteRaw(out, c.AlbedoTint);
+                WriteRaw(out, c.RoughnessFactor);
+                WriteRaw(out, c.MetallicFactor);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<MaterialComponent>();
+                bool ok = ReadString(in, c.AlbedoPath) && ReadString(in, c.NormalPath)
+                       && ReadString(in, c.RoughnessMetallicPath) && ReadRaw(in, c.AlbedoTint)
+                       && ReadRaw(in, c.RoughnessFactor) && ReadRaw(in, c.MetallicFactor);
+                if (!ok) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(
             "Light",

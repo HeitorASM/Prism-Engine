@@ -66,15 +66,57 @@ namespace Prism {
         Plane
     };
 
-    // Marca a entidade como algo visivel na viewport 3D. Ainda nao tem
-    // Material de verdade (so uma cor solida) - isso e o proximo ponto de
-    // extensao natural quando o sistema de assets/materiais existir.
+    // Marca a entidade como algo visivel na viewport 3D. A COR aqui
+    // (Color) e sempre o FALLBACK: se a entidade tiver um
+    // MaterialComponent (ver abaixo) com AlbedoPath configurado, a
+    // textura de albedo substitui esta cor solida; sem MaterialComponent
+    // (ou com AlbedoPath vazio), Color continua sendo usada exatamente
+    // como antes do sistema de Material existir - manter
+    // MeshRendererComponent funcionando sozinho, sem exigir um
+    // MaterialComponent obrigatorio em toda entidade, evita quebrar
+    // qualquer cena/prefab salvo antes desta mudanca.
     struct MeshRendererComponent {
         PrimitiveMesh Mesh = PrimitiveMesh::Cube;
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
 
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;
+    };
+
+    // Material PBR (Physically Based Rendering) opcional de uma entidade -
+    // ver Renderer::DrawMesh/s_FragmentSrc (Renderer.cpp) para o shader
+    // Cook-Torrance que consome estes dados. Component SEPARADO de
+    // MeshRendererComponent (nao um campo a mais nele) de proposito: nem
+    // toda entidade visivel precisa de controle fino de material (a
+    // maioria dos objetos de prototipo/bloqueio de nivel fica bem so com
+    // MeshRendererComponent::Color) - manter os dois components
+    // independentes deixa o caso simples simples, e o caso avancado
+    // opcional.
+    //
+    // *Path sao caminhos de arquivo RELATIVOS a pasta Assets do projeto
+    // (mesma convencao ja usada por ScriptComponent::ScriptPath,
+    // Components.h) - vazio significa "sem esta textura", nao um erro
+    // (ver Renderer::DrawMesh, que usa os fatores/tint como fallback
+    // quando o path correspondente esta vazio ou a textura falhou ao
+    // carregar).
+    struct MaterialComponent {
+        std::string AlbedoPath;              // cor base (RGB) - textura sRGB (ver Texture2D)
+        std::string NormalPath;              // normal map em tangent-space - textura LINEAR (nao sRGB)
+        std::string RoughnessMetallicPath;   // convencao glTF: canal G = roughness, canal B = metallic - textura LINEAR
+
+        // Multiplicadores/fallbacks - sempre aplicados, MESMO com uma
+        // textura carregada (ex: AlbedoTint multiplica o resultado da
+        // amostragem de AlbedoPath, permitindo reusar a MESMA textura em
+        // varias entidades com tons ligeiramente diferentes, sem
+        // duplicar o arquivo de imagem). Sem a textura correspondente
+        // (path vazio ou falha ao carregar), o fator/tint sozinho VIRA o
+        // valor usado (equivalente a uma "textura" solida daquela cor).
+        glm::vec3 AlbedoTint = { 1.0f, 1.0f, 1.0f };
+        float RoughnessFactor = 0.5f; // 0 = espelhado, 1 = totalmente difuso/fosco
+        float MetallicFactor = 0.0f;  // 0 = dieletrico (plastico/madeira/pedra), 1 = metal puro
+
+        MaterialComponent() = default;
+        MaterialComponent(const MaterialComponent&) = default;
     };
 
     // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS - ver

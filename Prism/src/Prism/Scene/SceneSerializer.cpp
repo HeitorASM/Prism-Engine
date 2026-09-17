@@ -78,7 +78,35 @@ namespace Prism {
     // silenciosamente para os defaults. Arquivos v7 nao sao lidos por
     // este parser - mapas salvos antes desta mudanca precisam ser
     // resalvos uma vez (mesmo padrao de todo bump anterior).
-    static constexpr uint32_t kSceneFormatVersion = 8;
+    //
+    // v8 -> v9: RaycastComponent ganhou IgnoreParentAndSiblings (ver
+    // Components.h) - controla se o raio ignora a entidade pai e as
+    // entidades irmas ao testar colisao (Scene::UpdateRaycastComponents).
+    // Arquivos v8 nao sao lidos por este parser - mapas salvos antes
+    // desta mudanca precisam ser resalvos uma vez (mesmo padrao de todo
+    // bump anterior).
+    //
+    // CORRECAO: esta constante estava incorretamente travada em 8 apos
+    // IgnoreParentAndSiblings ja ter sido adicionado ao formato binario
+    // (ver ComponentRegistration.cpp, bloco RaycastComponent, que ja
+    // gravava/lia o campo novo com um comentario "v9+" mesmo com
+    // kSceneFormatVersion ainda em 8) - uma inconsistencia real que
+    // significava que um .prismmap salvo DEPOIS de
+    // IgnoreParentAndSiblings existir ainda se identificava como v8 no
+    // cabecalho, apesar de ja ter o campo extra no corpo do arquivo.
+    // Corrigido aqui para o valor que deveria ter sido usado desde que
+    // aquele campo foi adicionado.
+    //
+    // v9 -> v10: novo MaterialComponent (ver Components.h/
+    // ComponentRegistration.cpp) - registrado no ComponentRegistry entre
+    // MeshRendererComponent e LightComponent, entao toda entidade que
+    // tiver este component agora grava uma flag+campos a mais no stream
+    // (ver ComponentRegistry::GetAll(), a ordem de registro determina a
+    // ordem no arquivo). Arquivos v9 (e os v8 incorretamente rotulados,
+    // ver correcao acima) nao sao lidos por este parser - mapas salvos
+    // antes desta mudanca precisam ser resalvos uma vez (mesmo padrao de
+    // todo bump anterior).
+    static constexpr uint32_t kSceneFormatVersion = 10;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

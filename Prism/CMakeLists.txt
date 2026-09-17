@@ -25,6 +25,7 @@ target_link_libraries(Prism PUBLIC
     lua
     sol2
     Jolt
+    stb
 )
 
 target_compile_features(Prism PUBLIC cxx_std_20)

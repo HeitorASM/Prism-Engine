@@ -343,3 +343,25 @@ FetchContent_MakeAvailable(joltphysics)
 # FetchContent_MakeAvailable ja expoe o target "Jolt" (biblioteca estatica).
 # Diferente do Box3D, Jolt nao usa namespace de target tipo "jolt::jolt" -
 # e so "Jolt" mesmo, ver Build/CMakeLists.txt do repositorio oficial.
+
+# --- stb_image (carregamento de PNG/JPG/etc - sistema de Material/Textura) ---
+# Header-only, um UNICO arquivo (stb_image.h) - biblioteca de fato-padrao
+# do ecossistema C/C++ para decodificar imagens comuns (PNG, JPG, BMP, TGA,
+# HDR...) sem depender de libpng/libjpeg/zlib (que exigiriam compilar
+# varias bibliotecas C externas so para ler um arquivo de imagem). Usado
+# por Prism::Texture2D (ver Prism/src/Prism/Renderer/Texture.h/.cpp) para
+# ler o arquivo do disco e entregar os pixels crus, que o Texture2D entao
+# sobe para a GPU via glTexImage2D.
+#
+# stb_image.h NAO tem CMakeLists.txt (nem repositorio proprio de release -
+# faz parte da colecao "stb" de headers avulsos de Sean Barrett, todos no
+# mesmo repositorio). Em vez de usar FetchContent (que exige git clone do
+# repositorio "stb" inteiro toda vez que a pasta de build e recriada, e
+# ja causou problemas aqui por causa de um GIT_TAG invalido), o arquivo
+# fica vendorizado direto neste repositorio em vendor/stb/stb_image.h
+# (v2.30, dominio publico, baixado de nothings/stb commit 2c980bb598...).
+# Vantagens: build funciona offline, sem depender do GitHub estar no ar,
+# e sem risco de o commit "sumir"/mudar. Se precisar atualizar a versao
+# no futuro, e so substituir esse arquivo por uma versao mais nova.
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)

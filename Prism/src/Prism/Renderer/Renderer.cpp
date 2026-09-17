@@ -29,6 +29,7 @@ namespace Prism {
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
     float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
+    std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
     // (um unico dot product) so para as primitivas nao parecerem uma
@@ -63,15 +64,21 @@ namespace Prism {
         #version 450 core
         layout(location = 0) in vec3 a_Position;
         layout(location = 1) in vec3 a_Normal;
+        layout(location = 2) in vec2 a_UV;
+        layout(location = 3) in vec3 a_Tangent;
 
         uniform mat4 u_ViewProjection;
         uniform mat4 u_Model;
 
         out vec3 v_Normal;
         out vec3 v_WorldPos;
+        out vec2 v_UV;
+        out vec3 v_Tangent;
 
         void main() {
             v_Normal = mat3(u_Model) * a_Normal;
+            v_Tangent = mat3(u_Model) * a_Tangent;
+            v_UV = a_UV;
             vec4 worldPos = u_Model * vec4(a_Position, 1.0);
             v_WorldPos = worldPos.xyz;
             gl_Position = u_ViewProjection * worldPos;
@@ -304,10 +311,25 @@ namespace Prism {
         #version 450 core
         in vec3 v_Normal;
         in vec3 v_WorldPos;
+        in vec2 v_UV;
+        in vec3 v_Tangent;
         out vec4 o_Color;
 
         uniform vec3 u_BaseColor;
         uniform vec3 u_CameraWorldPos;
+
+        // --- Material (albedo/normal/roughness-metallic) -----------------
+        // u_Has*Map=false (o padrao) preserva o comportamento antigo
+        // exato: sem nenhuma amostragem de textura, so os fatores/tint
+        // (ver MaterialComponent, Components.h) - permite qualquer
+        // MeshRendererComponent SEM MaterialComponent continuar
+        // desenhando exatamente como antes desta feature existir.
+        uniform sampler2D u_AlbedoMap;
+        uniform bool u_HasAlbedoMap;
+        uniform sampler2D u_NormalMap;
+        uniform bool u_HasNormalMap;
+        uniform sampler2D u_RoughnessMetallicMap;
+        uniform bool u_HasRoughnessMetallicMap;
 
         #define MAX_LIGHTS 16
         #define LIGHT_TYPE_POINT       0
@@ -508,6 +530,21 @@ namespace Prism {
             if (dot(normal, viewDir) < 0.0)
                 discard;
 
+            // Normal mapping (TBN): so troca 'normal' se houver mapa -
+            // sem u_HasNormalMap, 'normal' continua sendo so a
+            // interpolada do vertex shader (comportamento antigo). O
+            // mapa vem em tangent-space (RGB 0..1 -> XYZ -1..1, Z =
+            // "para fora" da superficie lisa) - Bitangent calculada via
+            // cross (nao armazenada, ver comentario em MeshVertex).
+            if (u_HasNormalMap) {
+                vec3 tangent = normalize(v_Tangent - normal * dot(v_Tangent, normal)); // Gram-Schmidt: reortogonaliza contra a normal interpolada
+                vec3 bitangent = cross(normal, tangent);
+                mat3 TBN = mat3(tangent, bitangent, normal);
+
+                vec3 tangentNormal = texture(u_NormalMap, v_UV).rgb * 2.0 - 1.0;
+                normal = normalize(TBN * tangentNormal);
+            }
+
             // Ambiente fixo e pequeno - evita faces totalmente pretas em
             // areas sem nenhuma luz alcancando (nao ha GI/luz indireta
             // ainda). Mesmo valor (0.25) que o shader antigo usava, para
@@ -533,7 +570,17 @@ namespace Prism {
                 lightAccum += CalculateLight(u_Lights[i], normal, v_WorldPos, applyShadow);
             }
 
-            vec3 color = u_BaseColor * lightAccum;
+            // u_BaseColor ja chega pronto do lado C++ como AlbedoTint
+            // (MeshRendererComponent::Color OU MaterialComponent::AlbedoTint
+            // - ver Renderer::DrawMesh/DrawScene) - amostrar o mapa aqui e
+            // so MULTIPLICAR por cima, exatamente como a doc de
+            // MaterialComponent::AlbedoTint descreve (tint sozinho = cor
+            // solida; com textura, module o resultado da amostragem).
+            vec3 albedo = u_BaseColor;
+            if (u_HasAlbedoMap)
+                albedo *= texture(u_AlbedoMap, v_UV).rgb;
+
+            vec3 color = albedo * lightAccum;
             o_Color = vec4(color, 1.0);
         }
     )";
@@ -674,7 +721,52 @@ namespace Prism {
         glViewport(0, 0, (GLsizei)width, (GLsizei)height);
     }
 
-    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao) {
+    // Chave do cache combina path + isSRGB (ver comentario grande em
+    // GetOrLoadTexture, Renderer.h) - "\x01" e um separador que nunca
+    // aparece de verdade num path de arquivo, evitando colisao tipo
+    // ("a/b", true) vs ("a/btrue"... impossivel, mas mantido explicito
+    // por clareza) sem precisar de um struct/pair como chave de hash.
+    static std::string TextureCacheKey(const std::string& path, bool isSRGB) {
+        return path + '\x01' + (isSRGB ? '1' : '0');
+    }
+
+    Texture2D* Renderer::GetOrLoadTexture(const std::string& path, bool isSRGB) {
+        if (path.empty())
+            return nullptr; // "sem textura configurada" - ver comentario em Renderer.h, sem logar erro
+
+        // MaterialComponent::AlbedoPath/NormalPath/RoughnessMetallicPath
+        // sao salvos RELATIVOS a pasta do projeto (mesma convencao do
+        // resto da engine - ver ContentBrowserPanel/SceneSerializer), mas
+        // Texture2D/stb_image abrem o arquivo relativo ao diretorio de
+        // trabalho do PROCESSO - por isso resolvemos para um path
+        // absoluto aqui, no UNICO lugar que carrega texturas de fato
+        // (tanto o editor quanto uma futura PlayWindow/build standalone
+        // passam por aqui, entao os dois resolvem igual, sem duplicar
+        // essa logica). Sem projeto ativo (nao deveria acontecer na
+        // pratica - nenhuma Scene existe sem Project - mas por seguranca
+        // contra chamadores incomuns/testes), usa o path como veio.
+        std::string resolvedPath = path;
+        if (auto project = Project::GetActive())
+            resolvedPath = (project->GetProjectDirectory() / path).string();
+
+        std::string key = TextureCacheKey(resolvedPath, isSRGB);
+        auto it = s_TextureCache.find(key);
+        if (it != s_TextureCache.end())
+            return it->second.get();
+
+        // Texture2D::Texture2D ja loga PRISM_CORE_ERROR e marca
+        // IsValid()==false internamente se o arquivo nao existir/nao
+        // puder ser decodificado (ver Texture.h) - ainda guardamos o
+        // ponteiro no cache mesmo invalido, para nao tentar reler do
+        // disco a CADA frame enquanto o path continuar quebrado (ex:
+        // usuario digitou um path errado e ainda nao corrigiu).
+        auto texture = CreateScope<Texture2D>(resolvedPath, isSRGB);
+        Texture2D* result = texture.get();
+        s_TextureCache[key] = std::move(texture);
+        return result;
+    }
+
+    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
         if (!s_BasicShader) return;
 
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
@@ -684,10 +776,59 @@ namespace Prism {
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
         s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
-        if (color)
+
+        // Com 'material' fornecido, AlbedoTint manda (ver comentario em
+        // Renderer.h) - 'color' (MeshRendererComponent::Color) e ignorado
+        // nesse caso, exatamente como um Material substitui a cor solida
+        // antiga no editor (ver EditorLayer::RenderPropertiesPanel).
+        if (material)
+            s_BasicShader->SetFloat3("u_BaseColor", material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
+        else if (color)
             s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
         else
             s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
+
+        // --- Texturas do Material (slots 2/3/4 - 0/1 reservados para
+        // shadow map / AO map, ver comentarios abaixo) --------------------
+        // Sem 'material' (nullptr), os tres u_Has*Map ficam false e o
+        // fragment shader nunca amostra sampler nenhum - identico ao
+        // comportamento anterior a esta feature existir.
+        if (material) {
+            Texture2D* albedo = GetOrLoadTexture(material->AlbedoPath, /*isSRGB*/ true);
+            if (albedo && albedo->IsValid()) {
+                albedo->Bind(2);
+                s_BasicShader->SetInt("u_AlbedoMap", 2);
+                s_BasicShader->SetInt("u_HasAlbedoMap", 1);
+            } else {
+                s_BasicShader->SetInt("u_HasAlbedoMap", 0);
+            }
+
+            Texture2D* normalMap = GetOrLoadTexture(material->NormalPath, /*isSRGB*/ false);
+            if (normalMap && normalMap->IsValid()) {
+                normalMap->Bind(3);
+                s_BasicShader->SetInt("u_NormalMap", 3);
+                s_BasicShader->SetInt("u_HasNormalMap", 1);
+            } else {
+                s_BasicShader->SetInt("u_HasNormalMap", 0);
+            }
+
+            // RoughnessMetallicMap carregado/vinculado (slot 4) para
+            // manter o cache e os slots consistentes com Albedo/Normal
+            // acima, mas u_RoughnessMetallicMap/u_HasRoughnessMetallicMap
+            // AINDA NAO sao lidos por CalculateLight no fragment shader -
+            // o modelo de iluminacao atual e Lambert puro (difuso), sem
+            // termo especular/PBR que dependa de roughness/metallic (ver
+            // CalculateLight, s_FragmentSrc acima). RoughnessFactor/
+            // MetallicFactor (e este mapa) ficam PRONTOS no dado do
+            // Material para quando o shader ganhar um termo especular de
+            // verdade - ver TODO no guia do prototipo sobre PBR completo.
+            Texture2D* roughnessMetallic = GetOrLoadTexture(material->RoughnessMetallicPath, /*isSRGB*/ false);
+            if (roughnessMetallic && roughnessMetallic->IsValid())
+                roughnessMetallic->Bind(4);
+        } else {
+            s_BasicShader->SetInt("u_HasAlbedoMap", 0);
+            s_BasicShader->SetInt("u_HasNormalMap", 0);
+        }
 
         // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
         // desenha so com o ambiente fixo do shader (u_LightCount = 0).
@@ -1210,7 +1351,16 @@ namespace Prism {
         for (auto entityHandle : meshRendererView) {
             auto& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-            DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao);
+
+            // MaterialComponent e OPCIONAL (uma entidade pode ter so
+            // MeshRendererComponent, sem Material nenhum - ver comentario
+            // grande em Renderer::DrawMesh/Renderer.h) - quando presente,
+            // ganha prioridade sobre MeshRendererComponent::Color (a cor
+            // solida "legada" de antes do sistema de Material existir).
+            Entity entity(entityHandle, &scene);
+            const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
+
+            DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao, material);
         }
     }
 

@@ -28,10 +28,14 @@
 #include "ShadowMap.h"
 #include "GeometryBuffer.h"
 #include "SSAO.h"
+#include "Texture.h"
+#include "../Project/Project.h"
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <vector>
 #include <utility> 
+#include <string>
+#include <unordered_map>
 
 struct GLFWwindow;
 
@@ -133,7 +137,46 @@ namespace Prism {
         // u_AOMap/u_HasAO em s_FragmentSrc, Renderer.cpp). DrawScene()
         // preenche isto automaticamente a partir de RenderSSAOPass +
         // RenderSSAOBlurPass.
-        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr);
+        // 'material' e opcional (nullptr = comportamento antigo exato,
+        // sem nenhuma amostragem de textura, so 'color'/u_BaseColor solido)
+        // - ver comentario grande em MaterialComponent (Components.h).
+        // Quando fornecido, DrawMesh usa Renderer::GetOrLoadTexture (cache
+        // interno por path, ver Renderer.cpp) para obter/(re)carregar cada
+        // textura configurada (AlbedoPath/NormalPath/RoughnessMetallicPath)
+        // e faz bind nos slots de textura 2/3/4 (0 e 1 sao reservados para
+        // shadow map / AO, ver acima). 'color' continua sendo usado como
+        // ANTES caso 'material' seja nullptr (MeshRendererComponent sem
+        // MaterialComponent, ex: gizmos/previews) - quando 'material' E
+        // fornecido, 'color' e ignorado em favor de material->AlbedoTint.
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+
+        // Retorna a Texture2D correspondente a 'path' (isSRGB conforme o
+        // uso - ver comentario em Texture2D), carregando e colocando em
+        // cache na primeira chamada com aquele path exato; chamadas
+        // seguintes com o MESMO path retornam a mesma instancia sem
+        // reler o disco. Path vazio ("") retorna nullptr sempre (mesmo
+        // significado de "sem textura configurada" usado por
+        // MaterialComponent - ver Components.h) sem logar erro nenhum,
+        // ja que e o estado inicial normal de um Material novo.
+        //
+        // 'path' e RELATIVO a pasta do projeto ativo (mesma convencao de
+        // MaterialComponent::AlbedoPath/SceneSerializer/ContentBrowserPanel)
+        // - esta funcao resolve para absoluto internamente via
+        // Project::GetActive() antes de tocar o disco; chamadores (editor
+        // OU runtime) NUNCA devem resolver o path eles mesmos primeiro.
+        //
+        // Cache indexado por (path, isSRGB) - a MESMA imagem usada uma
+        // vez como Albedo (isSRGB=true) e outra vez (hipoteticamente) como
+        // mapa tecnico (isSRGB=false) precisa de DUAS Texture2D distintas
+        // na GPU (formatos internos diferentes, ver Texture2D::Texture2D),
+        // entao a chave do cache inclui isSRGB para nunca devolver a
+        // instancia errada nesse caso raro.
+        //
+        // Publica (nao so uso interno de DrawMesh) para o painel de
+        // Material no editor (EditorLayer::RenderPropertiesPanel) poder
+        // mostrar um preview/miniatura da textura carregada sem duplicar
+        // o cache.
+        static Texture2D* GetOrLoadTexture(const std::string& path, bool isSRGB);
 
         // Define a posicao (world space, 3 floats xyz) da camera usada
         // pelo teste de "face interna transparente" dentro de DrawMesh() -
@@ -333,6 +376,22 @@ namespace Prism {
         // enum PrimitiveMesh usado em MeshRendererComponent, entao
         // DrawMesh() so precisa de um lookup, sem switch gigante.
         static Scope<Mesh> s_Meshes[5];
+
+        // Cache de texturas carregadas, indexado por (path, isSRGB) - ver
+        // comentario grande em GetOrLoadTexture() acima. Mora aqui (nao
+        // dentro de MaterialComponent/Scene) porque duas entidades
+        // DIFERENTES (ou dois materiais na mesma cena) apontando para o
+        // MESMO arquivo de imagem devem compartilhar UMA unica Texture2D
+        // de GPU, nao recarregar/duplicar a imagem por entidade - o
+        // dedup e responsabilidade de quem CONSTROI Texture2D (ver
+        // comentario em Texture.h), que e exatamente esta funcao.
+        // Nunca invalidado/limpo hoje (mesma politica simples de
+        // s_ShadowMap/s_Meshes - vive pelo tempo de vida do processo);
+        // um projeto trocando de cena repetidamente pode acumular
+        // texturas de cenas antigas em memoria - aceitavel para o
+        // escopo atual, candidato a um Shutdown()/invalidação futura se
+        // isso virar problema real de VRAM.
+        static std::unordered_map<std::string, Scope<Texture2D>> s_TextureCache;
     };
 
 }

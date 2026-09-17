@@ -70,6 +70,15 @@ namespace Prism {
         // sempre que o raio for exatamente paralelo ao plano (ver
         // comentario la).
         static LocalBounds GetLocalBounds(PrimitiveMesh mesh);
+
+    private:
+        // Preenche MeshVertex::Tangent de cada vertice em 'mesh', a partir
+        // das UVs ja preenchidas (ver cada Create* acima) - chamada
+        // internamente no FIM de cada Create*, depois que Vertices/Indices
+        // estao completos. Ver PrimitiveMeshFactory.cpp para o algoritmo
+        // (media dos tangentes por-triangulo, ortogonalizada via
+        // Gram-Schmidt).
+        static void CalculateTangents(GeneratedMesh& mesh);
     };
 
 }

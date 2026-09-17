@@ -2,10 +2,12 @@
 
 // ============================================================================
 // Mesh.h
-// Wrapper generico de uma malha na GPU (VAO + VBO + EBO). Layout de vertice
-// FIXO por enquanto: posicao (3 floats) + normal (3 floats) - o suficiente
-// para o shader basico com iluminacao direcional fake que o Renderer usa
-// hoje (ver Renderer.cpp). UVs entram quando texturas existirem.
+// Wrapper generico de uma malha na GPU (VAO + VBO + EBO). Layout de vertice:
+// posicao (3 floats) + normal (3 floats) + UV (2 floats) + tangente (3
+// floats) - ver MeshVertex abaixo. UV/Tangente sao usados pelo sistema de
+// Material/PBR (MaterialComponent, Components.h) para amostrar texturas
+// (albedo/normal/roughness-metallic) e orientar normal mapping
+// corretamente em qualquer superficie, plana ou curva.
 //
 // Existe para o Renderer nao repetir a mesma sequencia de
 // glCreateVertexArrays/glCreateBuffers/glVertexAttribPointer uma vez por
@@ -26,6 +28,28 @@ namespace Prism {
     struct MeshVertex {
         float Position[3];
         float Normal[3];
+
+        // UV (coordenadas de textura, 0..1) - ate esta mudanca nao
+        // existia nenhum atributo de UV na engine (sem texturas, so cor
+        // solida - ver README/MeshRendererComponent::Color antes do
+        // MaterialComponent existir). Convencao padrao OpenGL: (0,0) e o
+        // canto inferior-esquerdo da textura, U cresce para a direita, V
+        // cresce para cima.
+        float UV[2];
+
+        // Tangente (espaco de MUNDO, apos transformacao pelo Model no
+        // vertex shader - aqui em espaco de OBJETO/local, igual Normal
+        // acima) - necessaria para NORMAL MAPPING: o valor lido de um
+        // mapa de normais esta em TANGENT SPACE (Z = "para fora" da
+        // superficie lisa, X/Y = variacao local) e precisa ser
+        // transformado de volta para world-space usando a base
+        // TBN (Tangent, Bitangent, Normal) antes de ser usado na
+        // iluminacao - Bitangent e calculado no shader via
+        // cross(Normal, Tangent), nao precisa ser armazenado aqui.
+        // Calculada uma vez, por triangulo, a partir das diferencas de
+        // Position/UV dos 3 vertices (ver
+        // PrimitiveMeshFactory::CalculateTangents) - nunca em runtime.
+        float Tangent[3];
     };
 
     class Mesh {
