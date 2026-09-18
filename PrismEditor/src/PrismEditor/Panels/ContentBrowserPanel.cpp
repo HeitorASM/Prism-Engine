@@ -45,7 +45,7 @@ namespace PrismEditor {
             if (a.IsDirectory != b.IsDirectory)
                 return a.IsDirectory > b.IsDirectory;
             return a.Name < b.Name;
-        });
+            });
     }
 
     void ContentBrowserPanel::OnImGuiRender() {
@@ -121,6 +121,10 @@ namespace PrismEditor {
 
         ImGui::Columns(columns, nullptr, false);
 
+        //Coreção de um erro em que por algum motivo ao fechar o editor ele crasha a engine sla
+        std::filesystem::path navigateToPath;
+        std::filesystem::path openMapPath;
+
         for (const auto& entry : m_CachedEntries) {
             ImGui::PushID(entry.Path.string().c_str());
 
@@ -169,7 +173,8 @@ namespace PrismEditor {
                 ImGui::PopStyleColor(3);
                 ImGui::TextWrapped("%s", entry.Name.c_str());
                 ImGui::EndGroup();
-            } else {
+            }
+            else {
                 // Cor do "icone" (retangulo colorido) - usado para tudo
                 // que NAO tem thumbnail de verdade ainda (pastas, mapas,
                 // projeto, imagens com path quebrado, qualquer outro
@@ -177,9 +182,9 @@ namespace PrismEditor {
                 // com a cor do cubo de teste da viewport), projeto em
                 // roxo, resto em cinza.
                 ImVec4 iconColor = entry.IsDirectory ? ImVec4(0.45f, 0.65f, 0.90f, 1.0f)
-                                  : isMapFile        ? ImVec4(0.85f, 0.55f, 0.20f, 1.0f)
-                                  : isProjectFile    ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
-                                                     : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                    : isMapFile ? ImVec4(0.85f, 0.55f, 0.20f, 1.0f)
+                    : isProjectFile ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
+                    : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(iconColor.x, iconColor.y, iconColor.z, isSelected ? 0.55f : 0.25f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(iconColor.x, iconColor.y, iconColor.z, 0.45f));
@@ -222,11 +227,18 @@ namespace PrismEditor {
                 ImGui::EndDragDropSource();
             }
 
+            // Duplo-clique: APENAS registra a INTENCAO de navegar/abrir
+            // mapa aqui - a execucao real acontece depois do loop, ver
+            // comentario grande no inicio da funcao. Chamar NavigateTo()
+            // ou m_OnMapDoubleClicked() diretamente dentro do loop era
+            // exatamente a causa do HEAP CORRUPTION (use-after-free no
+            // m_CachedEntries).
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (entry.IsDirectory) {
-                    NavigateTo(entry.Path);
-                } else if (isMapFile && m_OnMapDoubleClicked) {
-                    m_OnMapDoubleClicked(entry.Path);
+                    navigateToPath = entry.Path;
+                }
+                else if (isMapFile && m_OnMapDoubleClicked) {
+                    openMapPath = entry.Path;
                 }
             }
             if (ImGui::IsItemHovered()) {
@@ -239,6 +251,21 @@ namespace PrismEditor {
         }
 
         ImGui::Columns(1);
+
+        // Executa a acao adiada (se houver) FORA do loop - a essa altura o
+        // iterador do range-based for ja foi destruido, entao NavigateTo()
+        // pode mexer em m_CachedEntries sem invalidar nada em uso. So uma
+        // das duas pode estar setada (navegar e abrir mapa sao mutuamente
+        // exclusivos por tipo de entrada), mas checamos nesta ordem por
+        // clareza: navegar tem prioridade conceitual sobre abrir (se algum
+        // dia uma unica entrada puder disparar os dois - nao e o caso
+        // hoje - faz mais sentido priorizar a navegacao).
+        if (!navigateToPath.empty()) {
+            NavigateTo(navigateToPath);
+        }
+        else if (!openMapPath.empty() && m_OnMapDoubleClicked) {
+            m_OnMapDoubleClicked(openMapPath);
+        }
     }
 
 }

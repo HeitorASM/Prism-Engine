@@ -169,13 +169,26 @@ namespace PrismEditor {
         void LoadOrCreateScene();
 
         // Desenha todas as entidades da Scene com MeshRendererComponent
-        // dentro do m_ViewportFramebuffer, usando a camera de orbita do
-        // editor (m_CameraYaw/Pitch/Distance) - NAO usa nenhuma
-        // CameraComponent::Primary aqui, mesmo que exista uma na cena (ver
-        // nota em RenderCameraPreviewPanel() acima sobre o motivo). Chamado
-        // de OnUpdate, antes do ImGui - o resultado (uma textura de cor) e
+        // dentro do m_ViewportFramebuffer, usando a camera LIVRE do
+        // editor (m_CameraPosition + m_CameraYaw/m_CameraPitch - ver
+        // ComputeEditorViewMatrix) - NAO usa nenhuma CameraComponent::Primary
+        // aqui, mesmo que exista uma na cena (ver nota em
+        // RenderCameraPreview() abaixo sobre o motivo). Chamado de
+        // OnUpdate, antes do ImGui - o resultado (uma textura de cor) e
         // que aparece dentro do painel Viewport neste mesmo frame.
         void RenderScene(float deltaTime);
+
+        // Monta a matriz 'view' (lookAt) da camera livre do editor a
+        // partir de m_CameraPosition + m_CameraYaw/m_CameraPitch -
+        // compartilhado entre RenderScene() (que desenha a cena) e
+        // RenderViewportPanel() (que precisa das MESMAS matrizes para
+        // picking/ImGuizmo). Antes esta logica estava duplicada nas duas
+        // (a unica coisa em comum era o "target fixo na origem" que nao
+        // existe mais) - extraido para garantir que os dois nunca
+        // dessincronizem. 'const' porque so le o estado da camera, nao
+        // deveria modificar nada (e chamado de dentro de
+        // RenderViewportPanel antes do ImGuizmo).
+        glm::mat4 ComputeEditorViewMatrix() const;
 
         // Desenha a cena a partir do ponto de vista da entidade passada
         // (espera-se que tenha CameraComponent) dentro de
@@ -358,20 +371,80 @@ namespace PrismEditor {
         bool m_ShowNewScriptPopup = false;
         char m_NewScriptNameBuffer[128] = "";
 
-        // Camera de orbita da viewport principal do editor (nao e a camera
-        // FPS/TPS de jogo mencionada no guia). Controle: botao direito do
-        // mouse segurado sobre a viewport + arrastar orbita; scroll
-        // aproxima/afasta. Esta e SEMPRE a camera usada por RenderScene()/
-        // painel Viewport, mesmo quando a cena tem uma CameraComponent
-        // marcada como Primary - a camera de jogo tem sua propria preview
-        // separada (ver m_CameraPreviewFramebuffer / RenderCameraPreviewPanel
-        // acima), exatamente como Unity/Unreal/Godot fazem. Isso evita o
-        // problema de "ficar preso" dentro de um mesh (ex: camera de
-        // personagem posicionada dentro da capsula de colisao) sem visao de
-        // trabalho na viewport principal.
+        // ============================================================
+        // Camera LIVRE de voo da viewport principal do editor
+        // ============================================================
+        // Controles no estilo Godot (ver RenderViewportPanel):
+        //   - Segurar botao DIREITO do mouse sobre a viewport entra em
+        //     "modo voar": cursor e escondido e LOCKADO (GLFW_CURSOR_DISABLED
+        //     - mesmo modo que jogos FPS usam), movimento do mouse gira a
+        //     camera (yaw/pitch).
+        //   - Enquanto voa:
+        //       WASD = mover no plano (W frente, S tras, A esq, D dir)
+        //       Q/E  = descer/subir (no eixo Y do MUNDO, absoluto)
+        //       Shift = 3x boost;  Alt = 3x slow (ajuste fino)
+        //       Scroll = ajusta a velocidade BASE de movimento
+        //   - Soltar o RMB sai do modo voar (cursor volta ao normal).
+        //   - Fora do modo voar, scroll sobre a viewport faz DOLLY:
+        //     avanca/recua a camera ao longo da direcao que ela olha,
+        //     sem mudar a rotacao (mesma convencao da Godot para "zoom"
+        //     no editor).
+        //
+        // W/E/R SOZINHOS (sem RMB) continuam trocando a operacao do
+        // gizmo (ver RenderTransformGizmo) - sem conflito, porque o
+        // movimento exige o botao direito segurado.
+        //
+        // Esta e SEMPRE a camera usada por RenderScene()/painel Viewport,
+        // mesmo quando a cena tem uma CameraComponent marcada como Primary
+        // - a camera de jogo tem sua propria preview separada (ver
+        // m_CameraPreviewFramebuffer / RenderCameraPreview acima),
+        // exatamente como Unity/Unreal/Godot fazem. Isso evita o problema
+        // de "ficar preso" dentro de um mesh (ex: camera de personagem
+        // posicionada dentro da capsula de colisao) sem visao de trabalho
+        // na viewport principal.
+        //
+        // m_CameraPosition substituiu o antigo trio yaw/pitch/DISTANCE que
+        // forcava a camera a olhar sempre para a origem (0,0,0) - o usuario
+        // ficava restrito a uma "orbita curta" em volta da cena, sem
+        // conseguir entrar/se afastar de um objeto especifico. Agora a
+        // camera tem POSICAO livre; yaw/pitch so definem a direcao que ela
+        // olha, nunca um alvo fixo. Valores iniciais foram escolhidos para
+        // reproduzir exatamente a posicao que a antiga camera de orbita
+        // (yaw=-35, pitch=25, distance=6) ocupava no primeiro frame - a
+        // mudanca e visualmente transparente para quem so abriu o editor
+        // e nao mexeu em nada.
+        glm::vec3 m_CameraPosition = { 4.5f, 2.5f, -3.1f };
         float m_CameraYaw = -35.0f;   // graus
         float m_CameraPitch = 25.0f;  // graus
-        float m_CameraDistance = 6.0f;
+
+        // Velocidade base de movimento da camera livre (unidades/segundo) -
+        // ajustavel via scroll enquanto em modo voar (ver
+        // RenderViewportPanel). Shift multiplica isso por 3x enquanto
+        // segurado, Alt por 1/3. Comeca em 5.0 (valor confortavel para
+        // uma cena de escala "1 unidade = 1 metro" como os cubos de
+        // exemplo do editor).
+        float m_CameraMoveSpeed = 5.0f;
+
+        // Estado do "modo voar" da camera do editor (RMB segurado):
+        // verdadeiro enquanto o usuario esta segurando o botao direito
+        // sobre a viewport - ver RenderViewportPanel(). Enquanto ativo:
+        //   - o cursor e escondido/lockado via GLFW_CURSOR_DISABLED
+        //   - movimento do mouse gira a camera (yaw/pitch)
+        //   - WASD move no plano, Q/E sobe/desce, Shift=boost, Alt=slow
+        //   - scroll ajusta a velocidade base
+        // Ao soltar o RMB, o cursor volta ao normal e este flag vira
+        // false. Picking/gizmo do ImGuizmo ficam SUSPENSOS enquanto este
+        // flag e true (cursor esta invisivel - nao faz sentido clicar em
+        // nada).
+        bool m_CameraLookActive = false;
+
+        // Ignora o delta do mouse no primeiro frame apos entrar em modo
+        // voar - em algumas plataformas, o GLFW reseta a posicao virtual
+        // do cursor ao trocar para GLFW_CURSOR_DISABLED, o que geraria
+        // um "snap" grande e perceptivel na rotacao da camera num unico
+        // frame. Setado para true ao entrar em modo voar; consumido (e
+        // zerado) no frame seguinte.
+        bool m_CameraLookSkipNextDelta = false;
 
         // Estado do gizmo de manipulacao (ImGuizmo) - ver RenderTransformGizmo().
         // m_GizmoOperation troca com as teclas W (Translate) / E (Rotate) /

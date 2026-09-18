@@ -1,6 +1,7 @@
 #include "EditorLayer.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
+#include <GLFW/glfw3.h> 
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -412,7 +413,26 @@ namespace PrismEditor {
         m_PlayWindow.Close();
     }
 
-    void EditorLayer::OnDetach() {}
+    void EditorLayer::OnDetach() {
+        // Restaura o cursor ao normal caso o editor esteja sendo destruido
+        // com o modo voar ativo (RMB segurado). Sem isso, o cursor ficaria
+        // escondido/lockado (GLFW_CURSOR_DISABLED) por um instante ate o
+        // SO restaurar sozinho quando a janela sumir - nao e catastrofico,
+        // mas e feio.
+        //
+        // DEFENSIVO: nao acessa GetNativeWindow() se nao estamos em modo
+        // voar - durante o shutdown da Application, a janela do SO pode ja
+        // ter sido destruida antes deste OnDetach ser chamado, e chamar
+        // glfwSetInputMode num GLFWwindow* ja liberado seria use-after-free.
+        // Zerar m_CameraLookActive ANTES de tocar na janela garante que se
+        // algo falhar no meio, nao re-entramos nesse caminho depois.
+        if (m_CameraLookActive) {
+            m_CameraLookActive = false;
+            if (GLFWwindow* window = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow()) {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+        }
+    }
 
     void EditorLayer::OnUpdate(float deltaTime) {
         // Redimensiona o framebuffer se o painel Viewport mudou de tamanho
@@ -451,6 +471,32 @@ namespace PrismEditor {
         m_PlayWindow.OnUpdate(deltaTime, editorWindow);
     }
 
+    glm::mat4 EditorLayer::ComputeEditorViewMatrix() const {
+        // Direcao "frente" da camera a partir de yaw/pitch - mesma convencao
+        // de eixos que a antiga camera de orbita usava implicitamente (yaw
+        // gira em torno de Y, pitch em torno de X local). Antes este vetor
+        // era "da posicao da orbita para a origem"; agora e simplesmente a
+        // direcao que a camera olha a partir da posicao atual.
+        //
+        // -Z e a "frente" padrao de camera em OpenGL/glm (mesma convencao
+        // que CameraComponent usa via glm::inverse(worldTransform) em
+        // PlayWindow/RenderCameraPreview, e que o gizmo de camera em
+        // RenderCameraGizmos assume ao desenhar o frustum para -Z local).
+        // Os sinais negativos aqui seguem essa mesma convencao para que a
+        // camera do editor e a camera de jogo (Play) olhem "para o mesmo
+        // lado" dado o mesmo yaw/pitch.
+        float yawRad = glm::radians(m_CameraYaw);
+        float pitchRad = glm::radians(m_CameraPitch);
+
+        glm::vec3 forward(
+            -cosf(pitchRad) * cosf(yawRad),
+            -sinf(pitchRad),
+            -cosf(pitchRad) * sinf(yawRad)
+        );
+
+        return glm::lookAt(m_CameraPosition, m_CameraPosition + forward, glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
     void EditorLayer::RenderScene(float deltaTime) {
         m_ViewportFramebuffer->Bind();
         Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
@@ -458,24 +504,27 @@ namespace PrismEditor {
         const auto& spec = m_ViewportFramebuffer->GetSpecification();
         float aspect = spec.Height > 0 ? (float)spec.Width / (float)spec.Height : 1.0f;
 
-        // A viewport principal do editor usa SEMPRE a camera de orbita
-        // livre - nunca a CameraComponent::Primary da cena, mesmo que
-        // exista uma. Ver o comentario em m_CameraYaw (EditorLayer.h) e em
-        // RenderCameraPreviewPanel() para o motivo: substituir a viewport
+        // A viewport principal do editor usa SEMPRE a camera LIVRE do
+        // editor (m_CameraPosition + yaw/pitch) - nunca a
+        // CameraComponent::Primary da cena, mesmo que exista uma. Ver o
+        // comentario em m_CameraPosition (EditorLayer.h) e em
+        // RenderCameraPreview() para o motivo: substituir a viewport
         // principal pela camera de jogo te deixa "preso" dentro de
         // qualquer mesh onde a camera esteja posicionada (ex: dentro da
         // capsula de colisao de um character), sem visao de trabalho para
         // corrigir isso. A camera de jogo tem sua propria preview separada
         // (RenderCameraPreview/m_CameraPreviewFramebuffer).
-        float yawRad = glm::radians(m_CameraYaw);
-        float pitchRad = glm::radians(m_CameraPitch);
-        glm::vec3 cameraPos;
-        cameraPos.x = m_CameraDistance * cosf(pitchRad) * cosf(yawRad);
-        cameraPos.y = m_CameraDistance * sinf(pitchRad);
-        cameraPos.z = m_CameraDistance * cosf(pitchRad) * sinf(yawRad);
-
-        glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+        //
+        // ComputeEditorViewMatrix() e o unico lugar que sabe montar esta
+        // view (usado aqui E em RenderViewportPanel, para picking/ImGuizmo)
+        // - garantir que os dois usem exatamente a mesma matriz e o que
+        // impede a selecao com o mouse de dessincronizar da imagem.
+        glm::mat4 view = ComputeEditorViewMatrix();
+        // Far de 1000 (era 100): com movimento livre, o usuario pode se
+        // afastar bastante da cena antes de querer ver tudo - um far
+        // pequeno faria a geometria "sumir" do outro lado antes do usuario
+        // terminar de se posicionar.
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 1000.0f);
         glm::mat4 viewProjection = projection * view;
 
         // Renderer::DrawScene ja chama SetCameraPosition() internamente
@@ -487,7 +536,7 @@ namespace PrismEditor {
         // 'view'/'projection' passadas SEPARADAS (nao 'viewProjection'
         // combinada) desde que DrawScene ganhou SSAO - ver comentario na
         // assinatura de Renderer::DrawScene (Renderer.h).
-        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(cameraPos));
+        Prism::Renderer::DrawScene(*m_ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(m_CameraPosition));
         RenderCameraGizmos(viewProjection);
         RenderSelectedColliderGizmo(viewProjection);
         RenderLightGizmos(viewProjection);
@@ -1228,45 +1277,211 @@ namespace PrismEditor {
             ImGui::EndGroup();
         }
 
-        // Controle de camera minimo: segurar botao direito do mouse sobre a
-        // viewport e arrastar orbita a camera; scroll (com o mouse sobre a
-        // viewport) aproxima/afasta. Deliberadamente simples - vira a
-        // camera de editor "de verdade" (com pan, foco em objeto, etc)
-        // quando fizer falta na pratica. O gizmo de manipulacao (mover/
-        // rotacionar/escalar) ja existe - ver RenderTransformGizmo() logo
-        // abaixo. Nao checa ImGuizmo::IsOver() aqui porque o gizmo so
-        // responde ao botao ESQUERDO do mouse - orbitar com o botao
-        // DIREITO em cima dele nao teria conflito real mesmo que os dois
-        // "sobrepusessem" na tela.
-        if (m_ViewportHovered) {
+        // ============================================================
+        // Camera LIVRE do editor - estilo Godot
+        // ============================================================
+        // Diferente da versao anterior (que orbitava sempre em torno da
+        // origem, limitando o usuario a uma "orbita curta" ao redor da
+        // cena), esta camera tem POSICAO livre e usa a mesma convencao de
+        // controles do editor da Godot:
+        //
+        //   - Segurar o botao DIREITO do mouse sobre a viewport entra em
+        //     "modo voar": o cursor e escondido e LOCKADO via
+        //     GLFW_CURSOR_DISABLED (mesmo modo que jogos FPS usam para
+        //     mouse look - o cursor nao sai da janela, entao o usuario
+        //     nunca fica "travado na borda" no meio de um voo longo).
+        //   - Enquanto voa:
+        //       Mouse      = olhar (yaw/pitch)
+        //       WASD       = mover no plano (W frente, S tras, A esq, D dir)
+        //       Q/E        = descer/subir (eixo Y do MUNDO, absoluto)
+        //       Shift      = 3x boost;  Alt = 3x slow (ajuste fino)
+        //       Scroll     = ajusta a velocidade base de movimento
+        //   - Soltar o RMB sai do modo voar; o cursor volta ao normal.
+        //   - Fora do modo voar, scroll sobre a viewport faz DOLLY:
+        //     avanca/recua a camera ao longo da direcao que ela olha,
+        //     sem mudar a rotacao (mesma convencao da Godot para o
+        //     scroll do editor).
+        //
+        // W/E/R SOZINHOS (sem RMB) continuam trocando a operacao do
+        // gizmo (ver RenderTransformGizmo) - sem conflito, porque o
+        // movimento exige o botao direito segurado (com o RMB segurado,
+        // 'E' e "subir", nao "trocar para modo Rotate").
+        GLFWwindow* nativeWindow = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow();
+
+        // --- Entrada no modo voar (RMB sobre a viewport) ---------------
+        // So entra se o mouse estiver SOBRE a viewport no momento do
+        // clique com RMB - mesmo comportamento da Godot (RMB em outro
+        // painel faz o que aquele painel faz, nao entra em fly mode).
+        if (!m_CameraLookActive && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            m_CameraLookActive = true;
+            m_CameraLookSkipNextDelta = true; // ver comentario no header
+            glfwSetInputMode(nativeWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+
+        // --- Saida do modo voar (RMB solto) ----------------------------
+        // Nao usa m_ViewportHovered aqui: uma vez comecado a voar, o
+        // cursor virtual pode sair da area do painel e ainda queremos
+        // continuar em fly mode ate o usuario soltar o botao.
+        if (m_CameraLookActive && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            m_CameraLookActive = false;
+            glfwSetInputMode(nativeWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+
+        // --- Enquanto voa: olhar + mover ------------------------------
+        if (m_CameraLookActive) {
             ImGuiIO& io = ImGui::GetIO();
 
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
-                ImVec2 delta = io.MouseDelta;
-                m_CameraYaw += delta.x * 0.4f;
-                m_CameraPitch = std::clamp(m_CameraPitch - delta.y * 0.4f, -89.0f, 89.0f);
+            // Ignora o delta do mouse no primeiro frame apos entrar em
+            // fly mode: em algumas plataformas, o GLFW reseta a posicao
+            // virtual do cursor ao trocar para GLFW_CURSOR_DISABLED, o
+            // que geraria um "snap" grande de rotacao (delta enorme num
+            // unico frame). Depois desse primeiro frame, io.MouseDelta
+            // ja esta correto.
+            if (m_CameraLookSkipNextDelta) {
+                m_CameraLookSkipNextDelta = false;
+            }
+            else {
+                m_CameraYaw += io.MouseDelta.x * 0.15f;
+
+                // ============================================================
+                // Sinal do eixo Y do mouse look
+                // ============================================================
+                // O ImGui reporta MouseDelta.y em coordenadas de TELA, que
+                // crescem para BAIXO (mover o mouse fisicamente para baixo
+                // da um delta.y POSITIVO). No 'forward' da camera (ver
+                // ComputeEditorViewMatrix), pitch positivo olha para BAIXO
+                // (-sin(pitch) no componente Y).
+                //
+                // A conta correta e: mouse para CIMA (delta.y negativo) ->
+                // pitch DIMINUI (fica mais negativo) -> -sin(pitch) fica
+                // POSITIVO -> camera olha para CIMA. Isso exige '+', nao
+                // '-': quando delta.y e negativo, somar 'delta.y * k' a
+                // m_CameraPitch DIMINUI o pitch (que e o que queremos).
+                //
+                // A versao anterior usava '-', que inverte o eixo vertical
+                // inteiro (mouse para cima -> camera olha para baixo, e
+                // vice-versa). Bug reportado e corrigido.
+                m_CameraPitch = std::clamp(m_CameraPitch + io.MouseDelta.y * 0.15f, -89.0f, 89.0f);
             }
 
-            if (io.MouseWheel != 0.0f) {
-                m_CameraDistance = std::clamp(m_CameraDistance - io.MouseWheel * 0.5f, 1.0f, 25.0f);
+            // Scroll ajusta a velocidade BASE de movimento (nao mais
+            // "distancia de orbita" - a camera nao orbita mais nada).
+            // Ajuste multiplicativo para ter um "feel" logaritmico: cada
+            // tique do scroll multiplica a velocidade por um fator, entao
+            // ajustar para "bem devagar" ou "bem rapido" funciona
+            // igualmente bem, sem precisar de muitos cliques.
+            if (io.MouseWheel != 0.0f)
+                m_CameraMoveSpeed = std::clamp(m_CameraMoveSpeed * (1.0f + io.MouseWheel * 0.15f), 0.1f, 200.0f);
+
+            // WASD/QE - speed base, com boost/slow ao estilo Godot: Shift
+            // = 3x mais rapido, Alt = 3x mais lento (util para
+            // posicionamento fino sem precisar baixar a velocidade base
+            // no scroll).
+            float speed = m_CameraMoveSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift))
+                speed *= 3.0f;
+            if (ImGui::IsKeyDown(ImGuiKey_LeftAlt) || ImGui::IsKeyDown(ImGuiKey_RightAlt))
+                speed *= 0.33f;
+
+            // Mesma "frente" que ComputeEditorViewMatrix usa, para que
+            // "andar para frente" (W) mova exatamente na direcao que a
+            // camera esta olhando - sem isso, o movimento seria sempre no
+            // plano horizontal com "frente" fixa (0,0,-1), independente
+            // de onde o usuario esteja olhando.
+            float yawRad = glm::radians(m_CameraYaw);
+            float pitchRad = glm::radians(m_CameraPitch);
+            glm::vec3 forward(
+                -cosf(pitchRad) * cosf(yawRad),
+                -sinf(pitchRad),
+                -cosf(pitchRad) * sinf(yawRad)
+            );
+            // 'right' perpendicular a 'forward' NO PLANO HORIZONTAL -
+            // cross com o "up" do mundo (e nao com o up local da camera),
+            // o que da um "strafe" sempre paralelo ao chao (mesmo olhando
+            // para cima/baixo). Ordem (forward x up) e a que da "direita"
+            // no sistema destro do OpenGL (verificado: forward (0,0,-1) x
+            // up (0,1,0) = (1,0,0) = +X, que e "direita" quando olhamos
+            // para -Z, que e a convencao padrao de camera). Se a camera
+            // estiver olhando praticamente reto para cima/baixo (forward
+            // quase paralelo a up), o cross degenera - o normalize abaixo
+            // cai para um "right" arbitrario nesse caso (mesmo com o
+            // clamp de pitch em +/- 89, prefiro nao depender so disso
+            // aqui).
+            glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
+            if (glm::length(right) > 0.0001f)
+                right = glm::normalize(right);
+            else
+                right = glm::vec3(1.0f, 0.0f, 0.0f); // caso degenerado (olhando reto para cima/baixo) - right arbitrario, movimento horizontal continua funcional
+
+            glm::vec3 moveDir(0.0f);
+            if (ImGui::IsKeyDown(ImGuiKey_W)) moveDir += forward;
+            if (ImGui::IsKeyDown(ImGuiKey_S)) moveDir -= forward;
+            if (ImGui::IsKeyDown(ImGuiKey_D)) moveDir += right;
+            if (ImGui::IsKeyDown(ImGuiKey_A)) moveDir -= right;
+            // Q/E sempre no eixo Y do MUNDO (nao no up local da camera) -
+            // subir/descer deve ser sempre "para cima/para baixo" no
+            // sentido absoluto, mesmo se a camera estiver de cabeca para
+            // baixo.
+            if (ImGui::IsKeyDown(ImGuiKey_E)) moveDir += glm::vec3(0.0f, 1.0f, 0.0f);
+            if (ImGui::IsKeyDown(ImGuiKey_Q)) moveDir -= glm::vec3(0.0f, 1.0f, 0.0f);
+
+            // Normaliza antes de multiplicar por 'speed': sem isso, W+D
+            // moveria ~1.41x mais rapido que so W (diagonal mais longa
+            // que o lado) - "diagonal strafe" seria mais rapido que
+            // andar reto, o que e perceptivel e errado. Normalizando,
+            // todas as direcoes tem a mesma velocidade.
+            if (glm::length(moveDir) > 0.0001f) {
+                // io.DeltaTime (do ImGui) - RenderViewportPanel nao recebe
+                // 'deltaTime' do editor (so RenderScene recebe, vindo de
+                // OnUpdate), mas o ImGui ja rastreia o delta por frame do
+                // proprio NewFrame - usar isso e mais simples que passar
+                // o deltaTime por toda a cadeia de chamadas de UI so para
+                // este uso.
+                m_CameraPosition += glm::normalize(moveDir) * speed * io.DeltaTime;
             }
+        }
+        else if (m_ViewportHovered && ImGui::GetIO().MouseWheel != 0.0f) {
+            // --- Fora do modo voar: scroll faz DOLLY (zoom Godot-style)
+            // Move a camera para frente/tras ao longo da direcao que ela
+            // olha, sem mudar a rotacao - mesma convencao da Godot para
+            // o scroll do editor (nao e "orbitar mais perto/longe", e
+            // literalmente "andar um passo na direcao do olhar"). O
+            // passo de 0.5 unidades por tique e confortavel em cenas de
+            // escala "1 unidade = 1 metro".
+            float yawRad = glm::radians(m_CameraYaw);
+            float pitchRad = glm::radians(m_CameraPitch);
+            glm::vec3 forward(
+                -cosf(pitchRad) * cosf(yawRad),
+                -sinf(pitchRad),
+                -cosf(pitchRad) * sinf(yawRad)
+            );
+            m_CameraPosition += forward * ImGui::GetIO().MouseWheel * 0.5f;
         }
 
         // Recalcula as MESMAS matrizes view/projection que RenderScene() ja
         // montou este frame (baratas o bastante para nao valer a pena
         // cachear em membros so por isto) - tanto o picking abaixo quanto o
         // ImGuizmo (RenderTransformGizmo) precisam delas separadas (nao a
-        // viewProjection combinada).
-        {
+        // viewProjection combinada). ComputeEditorViewMatrix garante que
+        // sao IDENTICAS as usadas por RenderScene (nao uma segunda copia
+        // da formula que poderia dessincronizar).
+        //
+        // TODO O BLOCO DE PICKING/GIZMO E PULADO enquanto m_CameraLookActive
+        // e true: com o cursor "disabled" pelo GLFW, a posicao reportada
+        // e virtual (pode estar em qualquer lugar), entao clicar em LMB
+        // durante um voo selecionaria uma entidade aleatoria - e o
+        // ImGuizmo receberia um retangulo de hover baseado numa posicao
+        // de cursor que o usuario nem ve. Melhor suspender tudo durante o
+        // voo.
+        if (!m_CameraLookActive) {
             float aspect = m_ViewportSize[1] > 0.0f ? m_ViewportSize[0] / m_ViewportSize[1] : 1.0f;
-            float yawRad = glm::radians(m_CameraYaw);
-            float pitchRad = glm::radians(m_CameraPitch);
-            glm::vec3 cameraPos;
-            cameraPos.x = m_CameraDistance * cosf(pitchRad) * cosf(yawRad);
-            cameraPos.y = m_CameraDistance * sinf(pitchRad);
-            cameraPos.z = m_CameraDistance * cosf(pitchRad) * sinf(yawRad);
-            glm::mat4 view = glm::lookAt(cameraPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+            glm::mat4 view = ComputeEditorViewMatrix();
+            // Far de 1000 - tem que bater com o far de RenderScene(),
+            // senao o raio de picking nao corresponderia exatamente ao que
+            // a camera "ve" (na pratica o far de picking e so o limite
+            // superior de profundidade que o raio de mundo pode atingir;
+            // manter igual e so bom senso).
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 1000.0f);
 
             // Picking: clique ESQUERDO simples (sem arrastar - IsMouseClicked
             // dispara so no frame em que o botao desce) sobre a viewport
@@ -1413,7 +1628,17 @@ namespace PrismEditor {
         // Unity/Unreal/Godot. IsAnyItemActive cobre o caso de estar
         // digitando texto em outro painel (ex: campo "Nome") - nao rouba a
         // tecla 'e' de dentro de um InputText nesse caso.
-        if (m_ViewportFocused && !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive()) {
+        //
+        // !IsMouseDown(Right): com o RMB segurado, W/E/R pertencem a
+        // CAMERA do editor (ver RenderViewportPanel) - 'E' e "subir", nao
+        // "trocar o gizmo para Rotate". Sem essa checagem, um voo com E
+        // pressionado trocaria a operacao do gizmo silenciosamente.
+        // (Note que este bloco so roda quando !m_CameraLookActive, entao
+        // na pratica o RMB ja esta solto aqui - a checagem extra e
+        // defensiva, caso alguem chame RenderTransformGizmo de outro
+        // contexto no futuro.)
+        if (m_ViewportFocused && !ImGuizmo::IsUsing() && !ImGui::IsAnyItemActive() &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = ImGuizmo::TRANSLATE;
             if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = ImGuizmo::ROTATE;
             if (ImGui::IsKeyPressed(ImGuiKey_R, false)) m_GizmoOperation = ImGuizmo::SCALE;
@@ -2137,9 +2362,15 @@ namespace PrismEditor {
         RenderAddComponentButton();
 
         ImGui::Separator();
-        ImGui::TextDisabled("Camera do editor");
+        ImGui::TextDisabled("Camera do editor (livre)");
+        ImGui::Text("Posicao: (%.2f, %.2f, %.2f)", m_CameraPosition.x, m_CameraPosition.y, m_CameraPosition.z);
         ImGui::Text("Yaw: %.1f  Pitch: %.1f", m_CameraYaw, m_CameraPitch);
-        ImGui::Text("Distancia: %.2f", m_CameraDistance);
+        ImGui::Text("Velocidade: %.2f u/s", m_CameraMoveSpeed);
+        if (m_CameraLookActive)
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "MODO VOAR ATIVO (solte o RMB para sair)");
+        else
+            ImGui::TextDisabled("RMB: modo voar (WASD/QE, Shift=boost, Alt=slow, scroll=velocidade)");
+        ImGui::TextDisabled("Fora do voo: scroll sobre a viewport = dolly (avanca/recua)");
 
         ImGui::End();
     }

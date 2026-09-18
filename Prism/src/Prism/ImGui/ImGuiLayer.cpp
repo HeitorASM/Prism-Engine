@@ -1,4 +1,4 @@
-#include <glad/gl.h> // sempre primeiro - ver OpenGLContext.cpp
+#include <glad/gl.h> 
 #include "ImGuiLayer.h"
 
 #include "../Core/Application.h"
