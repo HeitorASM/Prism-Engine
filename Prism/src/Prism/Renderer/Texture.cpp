@@ -1,5 +1,3 @@
-// Lembrete da regra de ouro do projeto: glad SEMPRE antes de qualquer coisa
-// que toque OpenGL/GLFW (ver comentario completo em OpenGLContext.cpp).
 #include <glad/gl.h>
 #include "Texture.h"
 #include "../Core/Log.h"

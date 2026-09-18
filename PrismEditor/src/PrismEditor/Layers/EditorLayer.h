@@ -28,6 +28,7 @@
 
 #include <Prism.h>
 #include <imgui.h> // ImVec2 - usado na assinatura de RenderTransformGizmo (ver abaixo)
+#include <ImGuizmo.h> // ImGuizmo::OPERATION/MODE - usados como TIPO dos membros m_GizmoOperation/m_GizmoMode (ver abaixo)
 #include <glm/glm.hpp>
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
@@ -380,8 +381,16 @@ namespace PrismEditor {
         // painel. m_GizmoMode alterna Local/World (tecla nao mapeada
         // ainda - so o botao na toolbar da viewport, ver
         // RenderViewportPanel()).
-        int m_GizmoOperation = 0; // ImGuizmo::OPERATION::TRANSLATE (evita incluir ImGuizmo.h neste header)
-        int m_GizmoMode = 1;      // ImGuizmo::MODE::WORLD
+        //
+        // Usar os tipos de verdade do ImGuizmo (em vez de int com um
+        // comentario "isto e TRANSLATE") evita depender do VALOR NUMERICO
+        // por tras de cada enumeracao - era exatamente esse descompasso
+        // (int = 0 "achando" que era TRANSLATE) que fazia o gizmo nao
+        // aparecer por padrao ao selecionar uma entidade na viewport.
+        // Sem o tipo certo, ImGuizmo::Manipulate() recebia uma operacao
+        // invalida e simplesmente nao desenhava nada.
+        ImGuizmo::OPERATION m_GizmoOperation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE m_GizmoMode = ImGuizmo::WORLD;
 
         // Mesmo padrao de m_TransformBeforeEdit (ver acima), so que para o
         // gesto de arrastar o gizmo: capturado no frame em que

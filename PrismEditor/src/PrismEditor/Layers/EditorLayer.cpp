@@ -1438,9 +1438,16 @@ namespace PrismEditor {
             snapValues[0] = snapValues[1] = snapValues[2] = step;
         }
 
+        // m_GizmoOperation/m_GizmoMode ja sao dos tipos ImGuizmo::OPERATION
+        // / ImGuizmo::MODE (ver EditorLayer.h) - NAO sao mais int com um
+        // cast "por fora". Era exatamente esse cast de um int=0 assumindo
+        // TRANSLATE que fazia o gizmo nao aparecer por padrao ao
+        // selecionar uma entidade (dependendo do fork do ImGuizmo, 0 nao
+        // e necessariamente TRANSLATE, entao Manipulate() recebia uma
+        // operacao invalida e nao desenhava nada).
         ImGuizmo::Manipulate(
             glm::value_ptr(view), glm::value_ptr(projection),
-            (ImGuizmo::OPERATION)m_GizmoOperation, (ImGuizmo::MODE)m_GizmoMode,
+            m_GizmoOperation, m_GizmoMode,
             glm::value_ptr(worldMatrix), nullptr,
             snap ? snapValues : nullptr);
 
@@ -1725,7 +1732,8 @@ namespace PrismEditor {
                     ImGui::BeginGroup();
                     if (hasValidTexture) {
                         ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(previewSize, previewSize));
-                    } else {
+                    }
+                    else {
                         // Sem textura (ou path quebrado): um botao vazio
                         // do mesmo tamanho do preview, so para servir de
                         // area de drop e dar feedback visual claro de
@@ -1758,7 +1766,8 @@ namespace PrismEditor {
                                 std::error_code ec;
                                 auto relativePath = std::filesystem::relative(droppedPath, project->GetProjectDirectory(), ec);
                                 path = !ec ? relativePath.generic_string() : droppedPath.generic_string();
-                            } else {
+                            }
+                            else {
                                 path = droppedPath.generic_string();
                             }
                         }
@@ -1802,7 +1811,7 @@ namespace PrismEditor {
                     ImGui::EndGroup();
 
                     ImGui::PopID();
-                };
+                    };
 
                 renderTextureSlot("Albedo", "Cor base (RGB)", material.AlbedoPath, /*isSRGB*/ true);
                 ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint));
