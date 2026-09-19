@@ -39,6 +39,7 @@ namespace Prism {
             "Assets/Textures",
             "Assets/Audio",
             "Assets/Materials",
+            "Assets/Prefabs",
             "Scripts",
             "Maps",
             "Cache"     // dados derivados/importados - nao deve ir pro controle de versao
@@ -54,6 +55,28 @@ namespace Prism {
         std::filesystem::path GetAssetDirectory() const { return m_ProjectDirectory / m_Config.AssetDirectory; }
         std::filesystem::path GetScriptDirectory() const { return m_ProjectDirectory / m_Config.ScriptDirectory; }
         std::filesystem::path GetMapDirectory() const { return m_ProjectDirectory / m_Config.MapDirectory; }
+
+        // Pasta onde .prismprefab (entidades reutilizaveis) fica - ver
+        // PrefabSerializer.h. NAO tem uma entrada propria em ProjectConfig
+        // (ao contrario de AssetDirectory/ScriptDirectory/MapDirectory)
+        // porque e sempre uma subpasta FIXA dentro de Assets/ (ver
+        // GetDefaultProjectFolders acima, "Assets/Prefabs") - nao ha
+        // necessidade de configurar isso por projeto ainda. Projetos
+        // criados ANTES desta pasta existir na lista padrao simplesmente
+        // nao tem ela no disco ate a primeira vez que algo for salvo la
+        // (ver comentario em PrefabSerializer::Serialize sobre
+        // create_directories).
+        std::filesystem::path GetPrefabDirectory() const { return GetAssetDirectory() / "Prefabs"; }
+
+        // Pasta onde .prismmat (materiais reutilizaveis) fica - ver
+        // MaterialSerializer.h. Mesmo raciocinio de GetPrefabDirectory
+        // acima: subpasta fixa dentro de Assets/, "Assets/Materials" ja
+        // fazia parte de GetDefaultProjectFolders desde antes deste
+        // sistema existir (a pasta ja era usada para as TEXTURAS que um
+        // MaterialComponent referencia - AlbedoPath etc - agora tambem
+        // guarda os .prismmat que agrupam esses caminhos num asset
+        // reutilizavel).
+        std::filesystem::path GetMaterialDirectory() const { return GetAssetDirectory() / "Materials"; }
 
         static Ref<Project> GetActive() { return s_ActiveProject; }
 

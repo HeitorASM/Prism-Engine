@@ -22,6 +22,8 @@ namespace PrismEditor {
     // em RenderDockspace() (que precisa saber se ja esta aberto, para nao
     // tentar abrir de novo por cima de si mesmo).
     static constexpr const char* kSaveAsPopupId = "Salvar Mapa Como";
+    static constexpr const char* kCreatePrefabPopupId = "Criar Prefab";
+    static constexpr const char* kSaveMaterialPopupId = "Salvar Material Como";
     static constexpr const char* kNewScriptPopupId = "Novo Script";
 
     EditorLayer::EditorLayer() : Layer("EditorLayer") {}
@@ -38,6 +40,28 @@ namespace PrismEditor {
         m_ContentBrowser.ResetToProjectRoot();
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             LoadScene(mapPath);
+            });
+
+        // Liga o menu de contexto de entidade (ver Panels/EntityContextMenuPanel.h)
+        // as funcoes deste EditorLayer que de fato tem acesso a
+        // CommandHistory/Scene/popups - o painel em si nao conhece nada
+        // disso, so avisa QUAL acao foi escolhida e sobre QUAL entidade.
+        m_EntityContextMenu.SetOnDuplicate([this](Prism::Entity entity) {
+            DuplicateEntity(entity);
+            });
+        m_EntityContextMenu.SetOnDelete([this](Prism::Entity entity) {
+            DeleteEntity(entity);
+            });
+        m_EntityContextMenu.SetOnCreatePrefabRequested([this](Prism::Entity entity) {
+            m_PrefabToCreateFrom = entity;
+            m_ShowCreatePrefabPopup = true;
+            // Sugere o nome do arquivo a partir do Tag da entidade -
+            // usuario pode trocar no popup antes de confirmar (ver
+            // RenderCreatePrefabPopup).
+            std::string suggested = entity.HasComponent<Prism::TagComponent>()
+                ? entity.GetComponent<Prism::TagComponent>().Tag : std::string("Prefab");
+            strncpy(m_CreatePrefabNameBuffer, suggested.c_str(), sizeof(m_CreatePrefabNameBuffer) - 1);
+            m_CreatePrefabNameBuffer[sizeof(m_CreatePrefabNameBuffer) - 1] = '\0';
             });
 
         LoadOrCreateScene();
@@ -234,6 +258,166 @@ namespace PrismEditor {
                     std::filesystem::path relativeToMapDir = std::filesystem::relative(previewPath, project->GetMapDirectory());
                     Prism::Project::SetStartMap(relativeToMapDir);
                 }
+                ImGui::CloseCurrentPopup();
+            }
+            else if (cancelled) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void EditorLayer::RenderCreatePrefabPopup() {
+        if (m_ShowCreatePrefabPopup) {
+            ImGui::OpenPopup(kCreatePrefabPopupId);
+            m_ShowCreatePrefabPopup = false; // OpenPopup so precisa ser chamado uma vez, no frame em que o popup deve abrir
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kCreatePrefabPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            // A entidade pode ter sido excluida (por qualquer caminho -
+            // undo, outro popup, etc) entre o clique no menu de contexto e
+            // este frame - checagem defensiva antes de mexer nela.
+            if (!m_PrefabToCreateFrom) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "A entidade de origem nao existe mais.");
+                ImGui::Dummy(ImVec2(0, 8));
+                if (ImGui::Button("Fechar", ImVec2(120, 0)))
+                    ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                return;
+            }
+
+            ImGui::TextWrapped("Nome do prefab (a partir de '%s'):",
+                m_PrefabToCreateFrom.GetComponent<Prism::TagComponent>().Tag.c_str());
+            ImGui::SetNextItemWidth(-1);
+
+            bool confirmedByEnter = ImGui::InputText("##CreatePrefabName", m_CreatePrefabNameBuffer, sizeof(m_CreatePrefabNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            auto project = Prism::Project::GetActive();
+            std::string name = m_CreatePrefabNameBuffer;
+
+            // Mesma sanitizacao minima que RenderSaveAsPopup ja usa (ver
+            // comentario la) - caracteres proibidos em nomes de arquivo
+            // viram underscore.
+            static const std::string kForbiddenChars = "/\\:*?\"<>|";
+            for (auto& c : name)
+                if (kForbiddenChars.find(c) != std::string::npos)
+                    c = '_';
+
+            bool nameEmpty = name.empty();
+
+            std::filesystem::path previewPath = project->GetPrefabDirectory() / (name + ".prismprefab");
+            bool wouldOverwrite = !nameEmpty && std::filesystem::exists(previewPath);
+
+            // Conta quantas entidades vao para o arquivo (raiz + toda a
+            // subarvore) - so uma informacao a mais para o usuario
+            // perceber, ANTES de confirmar, que um prefab com filhos leva
+            // TUDO junto (nao so a entidade clicada) - mesmo espirito do
+            // preview de "sera sobrescrito" em RenderSaveAsPopup.
+            size_t childCount = m_PrefabToCreateFrom.GetChildCount();
+
+            ImGui::Dummy(ImVec2(0, 4));
+            if (nameEmpty) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o prefab.");
+            }
+            else if (wouldOverwrite) {
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Ja existe um prefab com este nome - sera sobrescrito.");
+            }
+            else {
+                ImGui::TextDisabled("%s", previewPath.filename().string().c_str());
+            }
+            if (childCount > 0)
+                ImGui::TextDisabled("Inclui %zu entidade(s) filha(s).", childCount);
+
+            ImGui::Dummy(ImVec2(0, 8));
+
+            bool confirmedByButton = ImGui::Button("Criar", ImVec2(120, 0));
+            ImGui::SameLine();
+            bool cancelled = ImGui::Button("Cancelar", ImVec2(120, 0));
+
+            bool confirmed = (confirmedByEnter || confirmedByButton) && !nameEmpty;
+
+            if (confirmed) {
+                if (!Prism::PrefabSerializer::Serialize(m_PrefabToCreateFrom, previewPath))
+                    PRISM_ERROR("Falha ao criar prefab '", name, "' - ver console para detalhes.");
+                m_PrefabToCreateFrom = {};
+                ImGui::CloseCurrentPopup();
+            }
+            else if (cancelled) {
+                m_PrefabToCreateFrom = {};
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void EditorLayer::InstantiatePrefab(const std::filesystem::path& prefabPath, Prism::Entity parent) {
+        auto command = Prism::CreateScope<InstantiatePrefabCommand>(m_ActiveScene, prefabPath);
+        InstantiatePrefabCommand* raw = command.get();
+        m_CommandHistory.Execute(std::move(command));
+        Prism::Entity instantiated = raw->GetInstantiatedEntity();
+
+        if (instantiated && parent)
+            m_CommandHistory.Execute(Prism::CreateScope<SetParentCommand>(m_ActiveScene, instantiated, Prism::Entity{}, parent));
+
+        m_SelectedEntity = instantiated;
+    }
+
+    void EditorLayer::RenderSaveMaterialPopup() {
+        if (m_ShowSaveMaterialPopup) {
+            ImGui::OpenPopup(kSaveMaterialPopupId);
+            m_ShowSaveMaterialPopup = false;
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kSaveMaterialPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (!m_SelectedEntity || !m_SelectedEntity.HasComponent<Prism::MaterialComponent>()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Nenhuma entidade com Material selecionada.");
+                ImGui::Dummy(ImVec2(0, 8));
+                if (ImGui::Button("Fechar", ImVec2(120, 0)))
+                    ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                return;
+            }
+
+            ImGui::TextWrapped("Nome do material:");
+            ImGui::SetNextItemWidth(-1);
+            bool confirmedByEnter = ImGui::InputText("##SaveMaterialName", m_SaveMaterialNameBuffer, sizeof(m_SaveMaterialNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            auto project = Prism::Project::GetActive();
+            std::string name = m_SaveMaterialNameBuffer;
+
+            static const std::string kForbiddenChars = "/\\:*?\"<>|";
+            for (auto& c : name)
+                if (kForbiddenChars.find(c) != std::string::npos)
+                    c = '_';
+
+            bool nameEmpty = name.empty();
+            std::filesystem::path previewPath = project->GetMaterialDirectory() / (name + ".prismmat");
+            bool wouldOverwrite = !nameEmpty && std::filesystem::exists(previewPath);
+
+            ImGui::Dummy(ImVec2(0, 4));
+            if (nameEmpty)
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Digite um nome para o material.");
+            else if (wouldOverwrite)
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Ja existe um material com este nome - sera sobrescrito.");
+            else
+                ImGui::TextDisabled("%s", previewPath.filename().string().c_str());
+
+            ImGui::Dummy(ImVec2(0, 8));
+
+            bool confirmedByButton = ImGui::Button("Salvar", ImVec2(120, 0));
+            ImGui::SameLine();
+            bool cancelled = ImGui::Button("Cancelar", ImVec2(120, 0));
+
+            bool confirmed = (confirmedByEnter || confirmedByButton) && !nameEmpty;
+
+            if (confirmed) {
+                auto& material = m_SelectedEntity.GetComponent<Prism::MaterialComponent>();
+                if (!Prism::MaterialSerializer::Serialize(material, previewPath))
+                    PRISM_ERROR("Falha ao salvar material '", name, "' - ver console para detalhes.");
                 ImGui::CloseCurrentPopup();
             }
             else if (cancelled) {
@@ -1049,7 +1233,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !ImGui::IsPopupOpen(kSaveAsPopupId)) {
+        if (!io.WantTextInput && !ImGui::IsPopupOpen(kSaveAsPopupId) && !ImGui::IsPopupOpen(kCreatePrefabPopupId) && !ImGui::IsPopupOpen(kSaveMaterialPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_CommandHistory.Undo();
@@ -1059,11 +1243,22 @@ namespace PrismEditor {
                 SaveActiveSceneAs();
             else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
                 SaveActiveScene();
+            // Ctrl+D duplica a entidade selecionada - mesma tecla que
+            // Unity/Blender usam para "Duplicate". Delete/Backspace exclui -
+            // convencao de Unity (Delete) e Blender (X/Delete); cobrimos os
+            // dois para nao depender de um teclado especifico (alguns
+            // notebooks nao tem uma tecla Delete dedicada facil de achar).
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && m_SelectedEntity)
+                DuplicateEntity(m_SelectedEntity);
+            else if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && m_SelectedEntity)
+                DeleteEntity(m_SelectedEntity);
         }
 
         RenderMenuBar();
         RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
         RenderNewScriptPopup(); // idem - popup modal do botao "Novo..." do ScriptComponent
+        RenderCreatePrefabPopup(); // idem - popup modal do item "Criar Prefab..." do menu de contexto
+        RenderSaveMaterialPopup(); // idem - popup modal do botao "Salvar como Asset..." do painel Material
 
         ImGui::End();
 
@@ -1170,10 +1365,10 @@ namespace PrismEditor {
                     m_SelectedEntity = raw->GetCreatedEntity();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Excluir selecionada", nullptr, false, (bool)m_SelectedEntity)) {
-                    m_CommandHistory.Execute(Prism::CreateScope<DeleteEntityCommand>(m_ActiveScene, m_SelectedEntity));
-                    m_SelectedEntity = {};
-                }
+                if (ImGui::MenuItem("Duplicar selecionada", "Ctrl+D", false, (bool)m_SelectedEntity))
+                    DuplicateEntity(m_SelectedEntity);
+                if (ImGui::MenuItem("Excluir selecionada", "Delete", false, (bool)m_SelectedEntity))
+                    DeleteEntity(m_SelectedEntity);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Janela")) {
@@ -1249,6 +1444,23 @@ namespace PrismEditor {
         // de so dentro de RenderTransformGizmo) porque a toolbar abaixo
         // tambem precisa saber onde a imagem comeca.
         ImVec2 imageMin = ImGui::GetItemRectMin();
+
+        // Soltar um .prismprefab do Content Browser sobre a Viewport
+        // instancia ele na cena ativa - como RAIZ, na origem (0,0,0),
+        // mesmo ponto de partida que todo preset do menu "Entidade" ja
+        // usa (ver RenderMenuBar, "Criar Cubo" etc). Posicionar a
+        // instancia exatamente sob o cursor (via raycast contra o plano
+        // do chao ou a superficie sob o mouse) e um refinamento futuro -
+        // por ora, arrastar e so uma forma rapida de trazer o prefab para
+        // a cena, ajustar a posicao depois pelo gizmo/Properties panel
+        // continua sendo o fluxo normal.
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_PREFAB_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                InstantiatePrefab(pathString);
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         // Toolbar flutuante do gizmo (Translate/Rotate/Scale + Local/World)
         // - desenhada por CIMA do canto superior esquerdo da IMAGEM (nao
@@ -1770,6 +1982,14 @@ namespace PrismEditor {
                         m_CommandHistory.Execute(Prism::CreateScope<SetParentCommand>(m_ActiveScene, dragged, oldParent, Prism::Entity{}));
                 }
             }
+            // Soltar um .prismprefab do Content Browser aqui instancia ele
+            // como uma nova RAIZ da cena (mesmo comportamento de arrastar
+            // um prefab para a arvore de cena na Unity/Godot) - ver
+            // ContentBrowserPanel::RenderGrid, fonte deste payload.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_PREFAB_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1); // -1: string no payload inclui o terminador nulo
+                InstantiatePrefab(pathString);
+            }
             ImGui::EndDragDropTarget();
         }
 
@@ -1802,6 +2022,17 @@ namespace PrismEditor {
         if (ImGui::IsItemClicked())
             m_SelectedEntity = entity;
 
+        // Menu de contexto (botao direito) - BeginPopupContextItem reage ao
+        // ULTIMO item desenhado (o TreeNodeEx acima), por isso vem logo
+        // depois dele. Botao direito sobre um node TAMBEM seleciona a
+        // entidade (convencao normal de qualquer editor: botao direito
+        // implica "isto e sobre o que eu cliquei", nao so o esquerdo) -
+        // sem isso, seria possivel abrir "Excluir" sobre uma entidade
+        // diferente da que estava selecionada antes.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            m_SelectedEntity = entity;
+        m_EntityContextMenu.OnImGuiRender(entity, (uint32_t)handle);
+
         // Origem do drag: qualquer node pode ser arrastado. So guardamos o
         // handle bruto (4 bytes) no payload - suficiente para reconstruir
         // uma Prism::Entity do lado de quem recebe (m_ActiveScene.get() e
@@ -1832,6 +2063,15 @@ namespace PrismEditor {
                     }
                 }
             }
+            // Soltar um .prismprefab EM CIMA de um node existente instancia
+            // o prefab como FILHO dele (ver comentario em
+            // EditorLayer::InstantiatePrefab sobre o parametro 'parent') -
+            // mesmo payload que a area vazia da Hierarchy panel ja aceita
+            // (ver RenderHierarchyPanel), so que aqui reparenta em seguida.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_PREFAB_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                InstantiatePrefab(pathString, entity);
+            }
             ImGui::EndDragDropTarget();
         }
 
@@ -1855,6 +2095,23 @@ namespace PrismEditor {
             // nada de fato); sem TreePop correspondente porque
             // NoTreePushOnOpen nunca empurrou um.
         }
+    }
+
+    void EditorLayer::DuplicateEntity(Prism::Entity entity) {
+        if (!entity)
+            return;
+        auto command = Prism::CreateScope<DuplicateEntityCommand>(m_ActiveScene, entity);
+        DuplicateEntityCommand* raw = command.get();
+        m_CommandHistory.Execute(std::move(command));
+        m_SelectedEntity = raw->GetDuplicatedEntity();
+    }
+
+    void EditorLayer::DeleteEntity(Prism::Entity entity) {
+        if (!entity)
+            return;
+        m_CommandHistory.Execute(Prism::CreateScope<DeleteEntityCommand>(m_ActiveScene, entity));
+        if (m_SelectedEntity == entity)
+            m_SelectedEntity = {};
     }
 
     void EditorLayer::RenderPropertiesPanel() {
@@ -1930,6 +2187,45 @@ namespace PrismEditor {
             auto& material = m_SelectedEntity.GetComponent<Prism::MaterialComponent>();
             bool keepOpen = true;
             if (ImGui::CollapsingHeader("Material", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
+                // --- Material Asset (.prismmat) - reutilizar entre entidades ---
+                // "Salvar como Asset" grava os campos ATUAIS deste
+                // MaterialComponent num arquivo .prismmat (ver
+                // MaterialSerializer.h) dentro de Assets/Materials -
+                // "Carregar de Asset" faz o inverso, sobrescrevendo os
+                // campos deste MaterialComponent com os de um .prismmat
+                // existente (via LoadMaterialAssetCommand, com undo - ver
+                // EditorCommands.h). Arrastar um .prismmat do Content
+                // Browser direto para este cabecalho faz o mesmo que
+                // "Carregar de Asset" (ver drop target logo abaixo) - dois
+                // jeitos de chegar no mesmo resultado, mesmo espirito dos
+                // slots de textura abaixo (arrastar OU digitar o path).
+                //
+                // SEM VINCULO VIVO com o arquivo (ver comentario grande em
+                // MaterialSerializer.h) - isto e uma copia pontual dos
+                // campos, nao uma referencia compartilhada; editar o
+                // .prismmat depois nao afeta entidades que ja carregaram
+                // dele antes.
+                if (ImGui::Button("Salvar como Asset...")) {
+                    m_ShowSaveMaterialPopup = true;
+                    std::string suggested = m_SelectedEntity.HasComponent<Prism::TagComponent>()
+                        ? m_SelectedEntity.GetComponent<Prism::TagComponent>().Tag : std::string("Material");
+                    strncpy(m_SaveMaterialNameBuffer, suggested.c_str(), sizeof(m_SaveMaterialNameBuffer) - 1);
+                    m_SaveMaterialNameBuffer[sizeof(m_SaveMaterialNameBuffer) - 1] = '\0';
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("ou arraste um .prismmat aqui:");
+
+                ImGui::Button("Carregar de Asset (arraste aqui)", ImVec2(-1, 0));
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_MATERIAL_PATH")) {
+                        std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                        m_CommandHistory.Execute(Prism::CreateScope<LoadMaterialAssetCommand>(m_SelectedEntity, pathString));
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                ImGui::Separator();
+
                 // Cada slot de textura vira um "cartao": preview GRANDE
                 // (96x96, arrastavel/solta-vel) a esquerda, nome do
                 // arquivo + botoes (limpar/editar path manualmente) a

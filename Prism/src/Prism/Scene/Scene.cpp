@@ -98,6 +98,64 @@ namespace Prism {
         return cloned;
     }
 
+    // Helper interno (sem parentesco ainda) de DuplicateEntity: cria UMA
+    // copia de 'source' com TransformComponent + todo Component opcional
+    // presente (mesmo mecanismo de ComponentRegistry::Copy usado por
+    // Clone(), ver comentario la), e recursivamente duplica os filhos
+    // dela, preenchendo 'handleMap' (original -> copia) para que o
+    // chamador possa remontar o parentesco INTERNO da subarvore depois
+    // (o pai da RAIZ da subarvore e tratado por fora, em
+    // Scene::DuplicateEntity - esta funcao nunca chama SetParent para o
+    // topo, so entre pais/filhos dentro da propria copia).
+    static Entity DuplicateEntityRecursive(Scene& scene, Entity source, std::unordered_map<entt::entity, entt::entity>& handleMap) {
+        Entity copy = scene.CreateEntity(source.GetComponent<TagComponent>().Tag);
+        handleMap[source.GetHandle()] = copy.GetHandle();
+
+        copy.GetComponent<TransformComponent>() = source.GetComponent<TransformComponent>();
+
+        for (auto& info : ComponentRegistry::GetAll()) {
+            if (info.Has(source))
+                info.Copy(source, copy);
+        }
+
+        if (auto* rel = scene.GetRegistry().try_get<RelationshipComponent>(source.GetHandle())) {
+            // Copia a lista de filhos ANTES de iterar: CreateEntity() (chamada
+            // dentro da recursao, via DuplicateEntityRecursive) pode invalidar
+            // referencias para dentro do registry se o vector interno do EnTT
+            // precisar realocar - iterar uma copia evita esse risco, mesmo
+            // padrao ja usado por Scene::DestroyEntity e EditorLayer::RenderHierarchyNode.
+            std::vector<entt::entity> childrenCopy = rel->Children;
+            for (entt::entity childHandle : childrenCopy) {
+                Entity child(childHandle, source.GetScene());
+                Entity childCopy = DuplicateEntityRecursive(scene, child, handleMap);
+                scene.SetParent(childCopy, copy);
+            }
+        }
+
+        return copy;
+    }
+
+    Entity Scene::DuplicateEntity(Entity source) {
+        if (!source)
+            return Entity();
+
+        std::unordered_map<entt::entity, entt::entity> handleMap;
+        Entity copy = DuplicateEntityRecursive(*this, source, handleMap);
+
+        // A copia nasce IRMA do original (mesmo pai) - se 'source' tiver
+        // pai, reparenta a copia para debaixo dele; senao a copia ja
+        // nasceu raiz (CreateEntity nunca adiciona RelationshipComponent
+        // sozinho) e nao ha nada a fazer.
+        if (auto* rel = m_Registry.try_get<RelationshipComponent>(source.GetHandle())) {
+            if (rel->Parent != entt::null) {
+                Entity parent(rel->Parent, this);
+                SetParent(copy, parent);
+            }
+        }
+
+        return copy;
+    }
+
     void Scene::DestroyEntity(Entity entity) {
         entt::entity handle = entity.GetHandle();
 

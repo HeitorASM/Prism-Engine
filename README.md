@@ -12,10 +12,11 @@ O projeto já passou da fase de "fundação pura": arquitetura de camadas
 (Viewport, Hierarquia, Propriedades, Console, Content Browser, Editor de
 Script), Scene/ECS via EnTT com parenting real, scripting Lua, física
 Jolt Physics, janela de Play separada, iluminação de verdade (multi-luz
-Point/Spot/Directional) e um gizmo de manipulação (ImGuizmo) para
-mover/rotacionar/escalar direto na viewport já estão implementados — ver
-as notas específicas de cada um mais abaixo, e "Próximos passos sugeridos"
-para o que ainda falta.
+Point/Spot/Directional), um gizmo de manipulação (ImGuizmo) para
+mover/rotacionar/escalar direto na viewport, menu de contexto de entidade
+(Duplicar/Criar Prefab/Excluir) e um sistema de assets reutilizáveis
+(Prefabs e Materiais) já estão implementados — ver as notas específicas de
+cada um mais abaixo, e "Próximos passos sugeridos" para o que ainda falta.
 
 Ainda **não** implementados (por design, para não travar o projeto tentando
 fazer tudo de uma vez): BSP/CSG, importação de assets externos
@@ -42,7 +43,8 @@ Prism/          -> a engine, biblioteca estática (Prism.lib)
                    Shader, Mesh (wrapper generico de VAO/VBO/EBO),
                    PrimitiveMeshFactory (gera geometria de Cube/Sphere/
                    Capsule/Cylinder/Plane), Renderer (API minima de desenho)
-    Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer
+    Scene/      -> Scene, Entity, Components (ECS via EnTT), SceneSerializer,
+                   PrefabSerializer (.prismprefab), MaterialSerializer (.prismmat)
     Scripting/  -> ScriptEngine (VM Lua via sol2, ciclo de vida de scripts)
     Physics/    -> PhysicsEngine (mundo Jolt Physics, corpos, sincronizacao com Transform)
     ImGui/      -> ImGuiLayer (integra Dear ImGui ao ciclo de eventos)
@@ -57,6 +59,8 @@ PrismEditor/    -> o executável do editor
     PrismEditor/Panels/
       ConsolePanel.*          -> painel de log (lê Prism::LogBuffer)
       ContentBrowserPanel.*   -> navega os arquivos do projeto (Assets/Maps/Scripts/Cache)
+      EntityContextMenuPanel.* -> menu de contexto (botão direito) de uma
+                                  entidade: Duplicar/Criar Prefab/Excluir
     PrismEditor/Commands/
       EditorCommands.h        -> Commands concretos (Transform, criar/excluir entidade, etc)
 
@@ -588,9 +592,12 @@ nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
     abaixo). SSAO/HBAO continuam pendentes, junto com shadow mapping para
     Point/Spot e Cascaded Shadow Maps - ver nota "Shadow Mapping" abaixo
     para o escopo exato do que já funciona.
-19. Sistema de prefabs/cenas reutilizáveis (estilo Godot: uma "cena" de
-    personagem instanciável em múltiplas cenas/entidades) - ainda não
-    existe; hoje toda entidade é definida do zero em cada `.prismmap`.
+19. ~~Sistema de prefabs/cenas reutilizáveis (estilo Godot: uma "cena" de
+    personagem instanciável em múltiplas cenas/entidades).~~ ✅ feito
+    (parcialmente - ver nota "Prefabs e Materiais reutilizáveis" abaixo).
+    `.prismprefab`/`.prismmat` já funcionam via menu de contexto e
+    drag-and-drop; falta vínculo vivo entre instância e arquivo original
+    (editar o asset não propaga para instâncias já colocadas).
 20. IDE/editor de código embutido (scripting sem sair do editor) -
     `ScriptEditorPanel` já existe (syntax highlight via
     ImGuiColorTextEdit), falta autocomplete/breakpoints/um "IDE" de verdade
@@ -601,6 +608,9 @@ nada (ex: cliclou e soltou sem arrastar), nenhum comando é gerado.
 23. Materiais de verdade (hoje `MeshRendererComponent` só tem uma cor
     sólida RGB - sem texturas, PBR, ou o sistema "material com albedo/UV
     editável" que o guia do protótipo descreve).
+24. ~~Menu de contexto (botão direito) de entidade com
+    Duplicar/Excluir.~~ ✅ feito (ver nota "Menu de Contexto de Entidade"
+    abaixo).
 
 ## Nota sobre `CameraComponent` funcional (estado atual)
 
@@ -781,6 +791,97 @@ funcionam globalmente, exceto enquanto o ImGui está capturando texto (ex:
 editando o campo "Nome"), onde o undo nativo do campo de texto tem
 prioridade.
 
+## Nota sobre Menu de Contexto de Entidade (estado atual)
+
+Botão direito sobre um node da Hierarchy panel abre um popup com
+**Duplicar** (Ctrl+D também funciona como atalho global), **Criar
+Prefab...** e **Excluir** (Delete/Backspace também funcionam como atalho) -
+ver `PrismEditor::EntityContextMenuPanel`
+(`PrismEditor/Panels/EntityContextMenuPanel.h/.cpp`).
+
+O painel foi extraído para um arquivo próprio (mesmo padrão de
+`ConsolePanel`/`ContentBrowserPanel`) justamente para ficar fácil de
+adicionar novas ações (Renomear, Copiar/Colar, Isolar, etc.) sem inchar
+ainda mais `EditorLayer.cpp`. `EntityContextMenuPanel` não conhece
+`CommandHistory`/`Scene` nem os popups de outros painéis - ele só desenha
+o menu e avisa o que foi escolhido via callbacks (`SetOnDuplicate`,
+`SetOnDelete`, `SetOnCreatePrefabRequested`), ligados uma única vez em
+`EditorLayer::OnAttach()` às funções que de fato sabem executar cada ação
+(`EditorLayer::DuplicateEntity/DeleteEntity`, e o popup
+`RenderCreatePrefabPopup` para o caso de "Criar Prefab...").
+
+**Duplicar** usa `Scene::DuplicateEntity()` (`Prism/Scene/Scene.h/.cpp`),
+que copia a entidade E toda a sua subárvore de filhos reaproveitando
+`ComponentRegistry::Copy` - o mesmo mecanismo que `Scene::Clone()` já usa
+para clonar uma `Scene` inteira (ver nota "Registro Central de Components"
+abaixo). Diferente do `DeleteEntityCommand` original (que tinha uma lista
+fixa de ~6 tipos de Component escritos à mão), duplicar cobre
+automaticamente **qualquer** Component registrado, presente ou futuro.
+Passa por `DuplicateEntityCommand` (`EditorCommands.h`), com undo/redo.
+
+**Correção de um bug do ImGui**: a primeira versão deste menu usava
+`ImGui::BeginPopupContextItem("EntityContextMenu")` com uma string de ID
+fixa, que gera o **mesmo ID interno** independente de qual entidade foi
+clicada - com várias entidades na Hierarchy, os popups escondidos
+colidiam no mesmo ID e o ImGui acusava "2 visible items with conflicting
+ID" (aviso, não crash). A correção foi envolver o popup em
+`ImGui::PushID((int)entity.GetHandle())` - o handle da entidade (único por
+definição) garante um ID de popup exclusivo por entidade.
+
+**Limitação atual, no viewport**: o botão direito ali já é usado para
+"modo voar" da câmera (ver `RenderViewportPanel`), então o menu de
+contexto de entidade por enquanto só existe na Hierarchy panel - colocá-lo
+também na viewport exigiria distinguir um clique-direito-rápido (menu) de
+um clique-e-arraste (voar câmera), o que fica para uma iteração futura se
+isso fizer falta na prática.
+
+## Nota sobre Prefabs e Materiais reutilizáveis (estado atual)
+
+Dois novos tipos de asset, análogos a "Prefab" (Unity)/"PackedScene"
+(Godot) e a um asset de material - ambos vivem em `Prism/src/Prism/Scene/`
+e seguem deliberadamente o mesmo layout binário (`magic + versão`) que
+`SceneSerializer` já usava, reaproveitando toda a infraestrutura de
+`ComponentRegistry`:
+
+- **`PrefabSerializer.h/.cpp`** (`.prismprefab`, salvos em
+  `Project::GetPrefabDirectory()` = `Assets/Prefabs/`): salva uma entidade
+  e **toda a sua subárvore de filhos** em disco (`Serialize`), e
+  instancia essa subárvore inteira dentro de qualquer `Scene` existente
+  (`Instantiate`) - diferente de `SceneSerializer`, nunca substitui a
+  Scene ativa, só adiciona entidades novas a uma que já existe.
+- **`MaterialSerializer.h/.cpp`** (`.prismmat`, salvos em
+  `Project::GetMaterialDirectory()` = `Assets/Materials/`): salva/carrega
+  só os campos de um `MaterialComponent` isolado (Albedo/Normal/
+  RoughnessMetallic + fatores) - o arquivo mais simples da engine, sem
+  lista de entidades nem `ComponentRegistry` envolvido.
+
+**No editor**:
+- **Criar Prefab...** - item do menu de contexto de entidade (ver nota
+  acima) → popup modal pedindo o nome → `PrefabSerializer::Serialize`.
+- **Instanciar um Prefab** - arraste um `.prismprefab` do Content Browser
+  para a Hierarchy panel (vira raiz, ou filho se soltado em cima de um
+  node existente) ou para a Viewport (vira raiz, sempre na origem
+  `(0,0,0)` - posicionar sob o cursor via raycast é um refinamento
+  futuro). Passa por `InstantiatePrefabCommand`, com undo/redo.
+- **Salvar como Asset...**/**Carregar de Asset** - botões no painel
+  Material da Properties panel; carregar também aceita arrastar um
+  `.prismmat` do Content Browser direto para o painel. Passa por
+  `LoadMaterialAssetCommand`, com undo/redo (guarda os campos antigos do
+  material para poder reverter).
+- Content Browser reconhece os dois tipos visualmente (ícone/cor
+  próprios: verde para `.prismprefab`, magenta para `.prismmat`) e os
+  oferece como fonte de drag-and-drop.
+
+**Limitações conhecidas, deixadas de propósito**: nenhum dos dois tipos
+tem vínculo vivo com o arquivo original - instanciar um prefab ou carregar
+um material asset é uma **cópia pontual** dos dados; editar o
+`.prismprefab`/`.prismmat` depois **não** propaga automaticamente para
+instâncias/entidades que já carregaram dele antes (equivalente a uma
+"unpacked scene instance" da Godot, ou a quebrar o vínculo com o Prefab na
+Unity). Um sistema de referência compartilhada/atualização em cascata é
+uma funcionalidade maior, que fica para uma iteração futura se isso vier a
+fazer falta na prática.
+
 ## Nota sobre o Content Browser (estado atual)
 
 `PrismEditor::ContentBrowserPanel` navega a partir de
@@ -792,12 +893,15 @@ a Scene ativa pela do arquivo clicado (sem perguntar "salvar antes?" ainda —
 ver limitação abaixo).
 
 Limitações conhecidas, deixadas de propósito para não expandir escopo agora:
-sem criar/renomear/excluir/arrastar arquivos pelo painel (isso se conecta
-naturalmente ao fluxo de importação de assets do guia do protótipo, que
-ainda não existe); sem confirmação de "salvar antes de trocar de mapa" —
-carregar outro mapa (seja pelo Content Browser, seja por "Novo Mapa") perde
-qualquer alteração não salva na cena atual, sem aviso — fica para quando
-existir rastreamento de "alterações não salvas" (dirty flag).
+sem criar/renomear/excluir arquivos pelo painel (arrastar já funciona para
+`.prismprefab`/`.prismmat`, ver nota "Prefabs e Materiais reutilizáveis"
+acima, e para imagens sobre um slot de textura no painel Material - mas
+isso se conecta naturalmente ao fluxo de importação de assets do guia do
+protótipo, que ainda não existe de forma mais ampla); sem confirmação de
+"salvar antes de trocar de mapa" — carregar outro mapa (seja pelo Content
+Browser, seja por "Novo Mapa") perde qualquer alteração não salva na cena
+atual, sem aviso — fica para quando existir rastreamento de "alterações não
+salvas" (dirty flag).
 
 ## Nota sobre as novas primitivas de mesh (estado atual)
 

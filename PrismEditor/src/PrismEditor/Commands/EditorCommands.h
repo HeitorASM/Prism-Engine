@@ -27,6 +27,7 @@
 #include <string>
 #include <utility>
 #include <functional>
+#include <filesystem>
 
 namespace PrismEditor {
 
@@ -247,6 +248,118 @@ namespace PrismEditor {
         Prism::ScriptComponent m_Script;
         bool m_HadCamera = false;
         Prism::CameraComponent m_Camera;
+    };
+
+    // Duplica uma entidade (e toda a sua subarvore de filhos) via
+    // Scene::DuplicateEntity - ver Scene.h/.cpp para o motivo desta logica
+    // viver la (reaproveita ComponentRegistry::Copy, mesmo mecanismo que
+    // Scene::Clone ja usa, entao cobre QUALQUER Component registrado sem
+    // precisar de uma lista fixa como o antigo DeleteEntityCommand tinha).
+    // Guardamos so o handle 'original' (nao os dados dela) porque
+    // Execute()/Redo() sempre duplicam de novo a partir do estado ATUAL
+    // do original - se o original for editado entre um Undo() e um Redo()
+    // deste comando, o Redo() reflete a edicao mais recente, igual o
+    // comportamento esperado de "refazer" em qualquer editor.
+    class DuplicateEntityCommand : public Prism::Command {
+    public:
+        DuplicateEntityCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity original)
+            : m_Scene(scene), m_Original(original) {}
+
+        void Execute() override {
+            if (m_Original)
+                m_Duplicate = m_Scene->DuplicateEntity(m_Original);
+        }
+
+        void Undo() override {
+            if (m_Duplicate)
+                m_Scene->DestroyEntity(m_Duplicate);
+            m_Duplicate = {};
+        }
+
+        std::string GetName() const override { return "Duplicar Entidade"; }
+
+        // Valido apos Execute(), ate o proximo Undo() - usado pelo
+        // chamador (EditorLayer) para selecionar a copia recem-criada.
+        Prism::Entity GetDuplicatedEntity() const { return m_Duplicate; }
+
+    private:
+        Prism::Ref<Prism::Scene> m_Scene;
+        Prism::Entity m_Original;
+        Prism::Entity m_Duplicate;
+    };
+
+    // Instancia um prefab (ver Prism::PrefabSerializer, Prism/Scene/
+    // PrefabSerializer.h) dentro da Scene ativa - usado pelo drag-and-drop
+    // de um .prismprefab do Content Browser para a Hierarchy/Viewport (ver
+    // EditorLayer::InstantiatePrefab). Guardamos so o CAMINHO do arquivo
+    // (nao os dados), pelo mesmo motivo de DuplicateEntityCommand: um
+    // Redo() sempre le o arquivo de novo do disco, entao reflete qualquer
+    // edicao feita no prefab entre o Undo() e o Redo() deste comando -
+    // mesmo comportamento que se espera de "refazer" em qualquer editor.
+    class InstantiatePrefabCommand : public Prism::Command {
+    public:
+        InstantiatePrefabCommand(Prism::Ref<Prism::Scene> scene, std::filesystem::path prefabPath)
+            : m_Scene(scene), m_PrefabPath(std::move(prefabPath)) {}
+
+        void Execute() override {
+            m_Instantiated = Prism::PrefabSerializer::Instantiate(*m_Scene, m_PrefabPath);
+        }
+
+        void Undo() override {
+            if (m_Instantiated)
+                m_Scene->DestroyEntity(m_Instantiated);
+            m_Instantiated = {};
+        }
+
+        std::string GetName() const override { return "Instanciar Prefab"; }
+
+        // Valido apos Execute(), ate o proximo Undo() - usado pelo
+        // chamador (EditorLayer) para selecionar a raiz recem-instanciada.
+        Prism::Entity GetInstantiatedEntity() const { return m_Instantiated; }
+
+    private:
+        Prism::Ref<Prism::Scene> m_Scene;
+        std::filesystem::path m_PrefabPath;
+        Prism::Entity m_Instantiated;
+    };
+
+    // Carrega um Material Asset (.prismmat - ver Prism::MaterialSerializer,
+    // Prism/Scene/MaterialSerializer.h) sobre o MaterialComponent de uma
+    // entidade - usado pelo botao "Carregar de Asset" e pelo drag-and-drop
+    // de um .prismmat sobre o painel Material (ver EditorLayer.cpp). Ao
+    // contrario de DuplicateEntityCommand/InstantiatePrefabCommand (que
+    // recriam do zero no Redo), aqui guardamos os campos ANTIGOS do
+    // material explicitamente: MaterialSerializer::Deserialize so
+    // preenche campos de textura/fatores, nao ha uma forma natural de
+    // "desfazer" um Load senao devolvendo o valor de antes.
+    class LoadMaterialAssetCommand : public Prism::Command {
+    public:
+        LoadMaterialAssetCommand(Prism::Entity entity, std::filesystem::path assetPath)
+            : m_Entity(entity), m_AssetPath(std::move(assetPath)) {}
+
+        void Execute() override {
+            if (!m_Entity || !m_Entity.HasComponent<Prism::MaterialComponent>())
+                return;
+            m_Before = m_Entity.GetComponent<Prism::MaterialComponent>();
+            Prism::MaterialComponent loaded;
+            if (Prism::MaterialSerializer::Deserialize(m_AssetPath, loaded)) {
+                m_Entity.GetComponent<Prism::MaterialComponent>() = loaded;
+                m_Loaded = true;
+            }
+        }
+
+        void Undo() override {
+            if (m_Loaded && m_Entity && m_Entity.HasComponent<Prism::MaterialComponent>())
+                m_Entity.GetComponent<Prism::MaterialComponent>() = m_Before;
+        }
+
+        std::string GetName() const override { return "Carregar Material de Asset"; }
+
+    private:
+        Prism::Entity m_Entity;
+        std::filesystem::path m_AssetPath;
+        Prism::MaterialComponent m_Before;
+        bool m_Loaded = false; // false se Deserialize falhou (arquivo corrompido/inexistente) - Undo() nao faz nada nesse caso, pois Execute() tambem nao mudou nada
     };
 
     // Reparenta uma entidade (drag-and-drop na Hierarchy panel - ver

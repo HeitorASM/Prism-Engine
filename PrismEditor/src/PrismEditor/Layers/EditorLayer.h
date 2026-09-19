@@ -28,12 +28,14 @@
 
 #include <Prism.h>
 #include <imgui.h> // ImVec2 - usado na assinatura de RenderTransformGizmo (ver abaixo)
+#include <filesystem> // std::filesystem::path - usado na assinatura de InstantiatePrefab
 #include <ImGuizmo.h> // ImGuizmo::OPERATION/MODE - usados como TIPO dos membros m_GizmoOperation/m_GizmoMode (ver abaixo)
 #include <glm/glm.hpp>
 #include "../Commands/EditorCommands.h"
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
+#include "../Panels/EntityContextMenuPanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
@@ -57,6 +59,18 @@ namespace PrismEditor {
         // extraido de RenderHierarchyPanel() porque a recursao precisa
         // chamar a si mesma para cada nivel da hierarquia.
         void RenderHierarchyNode(Prism::Entity entity);
+
+        // Duplica 'entity' via DuplicateEntityCommand e seleciona a copia -
+        // logica compartilhada entre o menu de contexto (m_EntityContextMenu,
+        // ver Panels/EntityContextMenuPanel.h) e o atalho de teclado Ctrl+D
+        // (ver OnUpdate).
+        void DuplicateEntity(Prism::Entity entity);
+
+        // Exclui 'entity' via DeleteEntityCommand e limpa a selecao se ela
+        // era a entidade excluida - logica compartilhada entre o menu de
+        // contexto, a tecla Delete/Backspace (ver OnUpdate) e o item de
+        // menu "Excluir selecionada" (ver RenderMenuBar).
+        void DeleteEntity(Prism::Entity entity);
 
         // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
         // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
@@ -162,6 +176,40 @@ namespace PrismEditor {
         // chamado a cada frame de RenderDockspace() (ImGui::OpenPopup
         // exige isso mesmo quando o popup esta fechado, ver EditorLayer.cpp).
         void RenderSaveAsPopup();
+
+        // Desenha o popup modal "Criar Prefab" (mesmo padrao de
+        // RenderSaveAsPopup) - pede o nome do arquivo, chama
+        // Prism::PrefabSerializer::Serialize(m_PrefabToCreateFrom, ...) ao
+        // confirmar, salvando dentro de Project::GetPrefabDirectory().
+        // Aberto pelo item "Criar Prefab..." do menu de contexto (ver
+        // Panels/EntityContextMenuPanel.h, callback SetOnCreatePrefabRequested
+        // ligado em OnAttach()). Chamado a cada frame de
+        // RenderDockspace(), mesmo fechado (mesmo motivo de todo popup
+        // modal aqui - ImGui::OpenPopup exige isso).
+        void RenderCreatePrefabPopup();
+
+        // Desenha o popup modal "Salvar Material como Asset" (mesmo
+        // padrao de RenderCreatePrefabPopup) - pede o nome do arquivo,
+        // chama Prism::MaterialSerializer::Serialize com o
+        // MaterialComponent ATUAL de m_SelectedEntity ao confirmar,
+        // salvando dentro de Project::GetMaterialDirectory(). Aberto pelo
+        // botao "Salvar como Asset..." do painel Material (ver
+        // RenderPropertiesPanel).
+        void RenderSaveMaterialPopup();
+
+        // Instancia o prefab em 'prefabPath' dentro da Scene ativa via
+        // InstantiatePrefabCommand (undo/redo - ver EditorCommands.h) e
+        // seleciona a raiz recem-criada. Se 'parent' for uma Entity
+        // valida, a raiz instanciada e reparentada para debaixo dela logo
+        // em seguida (via SetParentCommand - ver RenderHierarchyNode, soltar
+        // um prefab EM CIMA de um node existente o torna filho dele, em vez
+        // de mais uma raiz solta na cena); default e instanciar como raiz
+        // (mesmo comportamento de soltar na area vazia da Hierarchy panel
+        // ou na Viewport). Dois comandos separados no historico (instanciar
+        // + reparentar) em vez de um so - aceitavel aqui porque Undo()
+        // desfaz os dois em sequencia de qualquer forma (o usuario so
+        // precisa apertar Ctrl+Z, nao percebe que sao dois comandos).
+        void InstantiatePrefab(const std::filesystem::path& prefabPath, Prism::Entity parent = {});
 
         // Tenta carregar Project::GetConfig().StartMap; se nao existir
         // ainda (projeto novo, primeira vez abrindo o editor), cria uma
@@ -320,6 +368,30 @@ namespace PrismEditor {
         bool m_ShowSaveAsPopup = false;
         char m_SaveAsNameBuffer[128] = "";
 
+        // Estado do popup modal "Criar Prefab" (mesmo padrao de
+        // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo item
+        // "Criar Prefab..." do menu de contexto de uma entidade (ver
+        // Panels/EntityContextMenuPanel.h). m_PrefabToCreateFrom guarda QUAL
+        // entidade vai virar a raiz do prefab - capturada no momento do
+        // clique no menu, nao lida de m_SelectedEntity de novo ao
+        // confirmar (o usuario pode trocar a selecao clicando em outro
+        // lugar antes de digitar o nome e confirmar o popup).
+        bool m_ShowCreatePrefabPopup = false;
+        char m_CreatePrefabNameBuffer[128] = "";
+        Prism::Entity m_PrefabToCreateFrom;
+
+        // Estado do popup modal "Salvar Material como Asset" (mesmo
+        // padrao de m_ShowCreatePrefabPopup acima) - aberto pelo botao
+        // "Salvar como Asset..." do painel Material (ver
+        // RenderPropertiesPanel). Ao contrario do prefab, nao precisa de
+        // um "m_MaterialToSaveFrom" separado - sempre opera sobre
+        // m_SelectedEntity no momento da confirmacao (o material fica
+        // visivel/editavel so quando ha selecao, entao nao ha o mesmo
+        // risco de "selecao mudou enquanto o popup estava aberto" que
+        // justificou capturar a entidade separadamente para prefabs).
+        bool m_ShowSaveMaterialPopup = false;
+        char m_SaveMaterialNameBuffer[128] = "";
+
         // Janela de Play (janela separada do SO, ver Play/PlayWindow.h) -
         // dona de uma Scene CLONADA, nunca a mesma instancia de
         // m_ActiveScene. OnPlayButtonClicked()/OnStopButtonClicked() abrem/
@@ -362,6 +434,15 @@ namespace PrismEditor {
         // um editor com abas ainda - ver ScriptEditorPanel::Open, que troca
         // o arquivo ativo em vez de abrir uma segunda instancia).
         ScriptEditorPanel m_ScriptEditor;
+
+        // Menu de contexto (botao direito) de uma entidade - Duplicar/
+        // Criar Prefab.../Excluir (ver Panels/EntityContextMenuPanel.h).
+        // Os callbacks (SetOnDuplicate/SetOnDelete/SetOnCreatePrefabRequested)
+        // sao ligados uma unica vez em OnAttach() as funcoes deste
+        // EditorLayer que de fato conhecem CommandHistory/Scene/popups -
+        // o painel em si nao guarda nenhum estado de Scene, so desenha o
+        // popup e avisa o que foi escolhido.
+        EntityContextMenuPanel m_EntityContextMenu;
 
         // Estado do popup modal "Novo Script" (mesmo padrao de
         // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao

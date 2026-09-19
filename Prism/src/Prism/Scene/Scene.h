@@ -73,6 +73,26 @@ namespace Prism {
         // pode virar filho do proprio descendente) ou newParent == child.
         bool SetParent(Entity child, Entity newParent);
 
+        // Duplica 'source' E toda a sua subarvore de filhos (recursivo),
+        // dentro desta MESMA Scene - equivalente a Ctrl+D/"Duplicate" de
+        // Unity/Godot. A copia nasce como IRMA de 'source' (mesmo pai,
+        // ou raiz se 'source' for raiz), logo apos ela na lista de
+        // Children do pai (ver comentario no .cpp) - nao no fim da lista,
+        // para aparecer visualmente colada ao original na Hierarchy panel.
+        //
+        // Usa ComponentRegistry::GetAll()[i].Copy para cada Component
+        // opcional presente, exatamente como Clone() ja faz para uma
+        // Scene inteira (ver comentario grande la) - por isso, ao
+        // contrario do antigo DeleteEntityCommand (que so sabia lidar com
+        // uma lista fixa de 6 tipos de Component escritos a mao),
+        // DuplicateEntity cobre automaticamente QUALQUER Component
+        // registrado, presente ou futuro, sem precisar ser atualizado de
+        // novo quando um Component novo for adicionado a engine.
+        //
+        // Retorna a raiz da subarvore duplicada (Entity invalida se
+        // 'source' for invalida).
+        Entity DuplicateEntity(Entity source);
+
         // Matriz de mundo de uma entidade, ja combinando o TransformComponent
         // local dela com o de todos os ancestrais (via RelationshipComponent).
         // Entidades sem RelationshipComponent (ou sem Parent valido) usam so

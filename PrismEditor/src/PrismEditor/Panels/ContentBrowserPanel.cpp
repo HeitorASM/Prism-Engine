@@ -131,6 +131,8 @@ namespace PrismEditor {
             bool isSelected = (entry.Path == m_SelectedPath);
             bool isMapFile = !entry.IsDirectory && entry.Path.extension() == ".prismmap";
             bool isProjectFile = !entry.IsDirectory && entry.Path.extension() == ".prismproj";
+            bool isPrefabFile = !entry.IsDirectory && entry.Path.extension() == ".prismprefab";
+            bool isMaterialFile = !entry.IsDirectory && entry.Path.extension() == ".prismmat";
 
             // Extensoes que stb_image decodifica (ver Texture.cpp) -
             // calculado ANTES de desenhar o botao (nao so depois, como
@@ -184,6 +186,8 @@ namespace PrismEditor {
                 ImVec4 iconColor = entry.IsDirectory ? ImVec4(0.45f, 0.65f, 0.90f, 1.0f)
                     : isMapFile ? ImVec4(0.85f, 0.55f, 0.20f, 1.0f)
                     : isProjectFile ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
+                    : isPrefabFile ? ImVec4(0.35f, 0.80f, 0.55f, 1.0f) // verde - "algo que pode ser instanciado na cena", distinto do laranja de mapa
+                    : isMaterialFile ? ImVec4(0.85f, 0.35f, 0.65f, 1.0f) // rosa/magenta - distinto de tudo o resto, "algo que pode ser aplicado a um Material"
                     : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(iconColor.x, iconColor.y, iconColor.z, isSelected ? 0.55f : 0.25f));
@@ -194,7 +198,7 @@ namespace PrismEditor {
                 // formato que stb_image nao decodifica apesar da
                 // extensao) ganha um icone proprio, para distinguir de
                 // "so nao tentamos gerar thumbnail para este tipo".
-                const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : isImage ? "[Img?]" : "[Arq]";
+                const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : isPrefabFile ? "[Prefab]" : isMaterialFile ? "[Mat]" : isImage ? "[Img?]" : "[Arq]";
                 std::string buttonLabel = std::string(icon) + "\n" + entry.Name;
 
                 clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(cellSize, cellSize));
@@ -223,6 +227,31 @@ namespace PrismEditor {
                 ImGui::SetDragDropPayload("CONTENT_BROWSER_IMAGE_PATH", pathString.c_str(), pathString.size() + 1);
                 if (hasThumbnail)
                     ImGui::Image((ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(48, 48));
+                ImGui::Text("%s", entry.Name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
+            // Fonte de drag & drop: arquivos .prismprefab podem ser
+            // arrastados para a Hierarchy panel ou para a Viewport (ver
+            // EditorLayer::RenderHierarchyPanel/RenderViewportPanel,
+            // PayloadID "CONTENT_BROWSER_PREFAB_PATH") para instanciar o
+            // prefab na cena ativa - mesmo padrao de path absoluto no
+            // payload que CONTENT_BROWSER_IMAGE_PATH ja usa acima.
+            if (isPrefabFile && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                std::string pathString = entry.Path.string();
+                ImGui::SetDragDropPayload("CONTENT_BROWSER_PREFAB_PATH", pathString.c_str(), pathString.size() + 1);
+                ImGui::Text("%s", entry.Name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
+            // Fonte de drag & drop: arquivos .prismmat podem ser
+            // arrastados para o painel Material (ver
+            // EditorLayer::RenderPropertiesPanel, PayloadID
+            // "CONTENT_BROWSER_MATERIAL_PATH") para carregar aquele
+            // material sobre a entidade selecionada.
+            if (isMaterialFile && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                std::string pathString = entry.Path.string();
+                ImGui::SetDragDropPayload("CONTENT_BROWSER_MATERIAL_PATH", pathString.c_str(), pathString.size() + 1);
                 ImGui::Text("%s", entry.Name.c_str());
                 ImGui::EndDragDropSource();
             }
