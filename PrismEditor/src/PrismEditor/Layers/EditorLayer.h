@@ -74,11 +74,8 @@ namespace PrismEditor {
 
         // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
         // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
-        // Scene ativa. A Scene de edicao nunca e tocada por scripts/fisica
-        // - diferente da abordagem antiga (Play dentro da propria viewport,
-        // com snapshot/restore e popup de "salvar antes de rodar?"), que
-        // foi removida quando esta janela separada passou a existir (ver
-        // README "Nota sobre Play").
+        // Scene ativa. A Scene de edicao nunca e tocada por scripts/fisica,
+        // entao nao ha nada para restaurar ao parar.
         void OnPlayButtonClicked();
 
         // Chamado pelo botao "Parar" (so aparece quando a PlayWindow esta
@@ -141,8 +138,8 @@ namespace PrismEditor {
         void RenderNewScriptPopup();
 
         // Carrega o mapa em 'path' na Scene ativa, substituindo o que
-        // estiver aberto no momento (sem perguntar "salvar antes?" ainda -
-        // ver nota no README). Chamado tanto por LoadOrCreateScene()
+        // estiver aberto no momento (sem perguntar "salvar antes?" ainda).
+        // Chamado tanto por LoadOrCreateScene()
         // (StartMap na abertura do editor) quanto pelo duplo-clique num
         // .prismmap no Content Browser. Retorna false se a leitura falhar -
         // a Scene ativa permanece intocada nesse caso (ver
@@ -351,10 +348,9 @@ namespace PrismEditor {
         // extra em sessoes que nunca abrem o painel Camera.
         Prism::Scope<Prism::Framebuffer> m_CameraPreviewFramebuffer;
 
-        // A cena ativa do editor. Por ora criada em memoria com uma entidade
-        // de exemplo em OnAttach() - salvar/carregar cenas do disco (dentro
-        // de Project::GetMapDirectory(), ver Project.h) e o proximo passo
-        // natural depois deste (ver README, secao "Proximos passos").
+        // A cena ativa do editor. Vem do StartMap do projeto (dentro de
+        // Project::GetMapDirectory(), ver Project.h) ou, se nao houver, e
+        // uma cena de exemplo criada em memoria por LoadOrCreateScene().
         Prism::Ref<Prism::Scene> m_ActiveScene;
 
         // Caminho (absoluto) do arquivo .prismmap associado a m_ActiveScene
@@ -484,16 +480,9 @@ namespace PrismEditor {
         // posicionada dentro da capsula de colisao) sem visao de trabalho
         // na viewport principal.
         //
-        // m_CameraPosition substituiu o antigo trio yaw/pitch/DISTANCE que
-        // forcava a camera a olhar sempre para a origem (0,0,0) - o usuario
-        // ficava restrito a uma "orbita curta" em volta da cena, sem
-        // conseguir entrar/se afastar de um objeto especifico. Agora a
-        // camera tem POSICAO livre; yaw/pitch so definem a direcao que ela
-        // olha, nunca um alvo fixo. Valores iniciais foram escolhidos para
-        // reproduzir exatamente a posicao que a antiga camera de orbita
-        // (yaw=-35, pitch=25, distance=6) ocupava no primeiro frame - a
-        // mudanca e visualmente transparente para quem so abriu o editor
-        // e nao mexeu em nada.
+        // A camera tem POSICAO livre; yaw/pitch so definem a direcao que
+        // ela olha, nunca um alvo fixo. Os valores iniciais dao uma visao
+        // de cima e de lado da origem no primeiro frame.
         glm::vec3 m_CameraPosition = { 4.5f, 2.5f, -3.1f };
         float m_CameraYaw = -35.0f;   // graus
         float m_CameraPitch = 25.0f;  // graus

@@ -202,8 +202,8 @@ namespace Prism {
         // --- Physics.Raycast --------------------------------------------
         // Tabela global `Physics` (nao Entity:Raycast(), de proposito - um
         // raycast nao pertence logicamente a uma entidade especifica, e
-        // uma query livre no mundo, igual b3World_CastRayClosest no lado
-        // C++ - ver PhysicsEngine::Raycast). Assinatura em Lua:
+        // uma query livre no mundo - ver PhysicsEngine::Raycast).
+        // Assinatura em Lua:
         //   local hit = Physics.Raycast(originVec3, directionVec3, maxDistance)
         //   if hit.Hit then log(hit:GetEntity():GetName()) end
         // maxDistance e opcional (default 1000, mesmo default de
@@ -352,10 +352,9 @@ namespace Prism {
         }
         lua["Key"] = keyTable;
 
-        // TODO(colisao): expor callbacks OnCollisionEnter/OnCollisionExit
-        // chamados pelo PhysicsEngine::Simulate quando eventos de contato
-        // do Jolt ocorrem envolvendo esta entidade - adiado desta
-        // primeira integracao de fisica (ver TODO identico em
+        // TODO: expor callbacks OnCollisionEnter/OnCollisionExit chamados
+        // pelo PhysicsEngine::Simulate quando ocorrem eventos de contato
+        // do Jolt envolvendo esta entidade (ver o TODO em
         // PhysicsEngine::Simulate, no bloco de eventos de colisao).
     }
 

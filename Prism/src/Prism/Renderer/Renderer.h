@@ -2,19 +2,16 @@
 
 // ============================================================================
 // Renderer.h
-// API de desenho MINIMA da engine. Sabe desenhar as primitivas embutidas
+// API de desenho da engine (estatica). Desenha as primitivas embutidas
 // definidas em PrimitiveMesh (ver Components.h: Cube, Sphere, Capsule,
-// Cylinder, Plane) com um shader simples (cor solida + luz direcional
-// fake) - o suficiente para qualquer MeshRendererComponent aparecer na
-// viewport.
+// Cylinder, Plane) com um shader forward de iluminacao Lambert
+// multi-luz, materiais com textura, sombras direcionais e SSAO.
 //
-// Isto NAO e o "Renderizador principal" definitivo mencionado no guia do
-// prototipo (esse ainda esta em aberto - forward vs deferred, batching,
-// materiais de verdade, etc). E o primeiro tijolo: uma API estatica
-// parecida com a de engines tipo Hazel/Sokol. Quem decide O QUE desenhar
-// (percorrer as entidades da Scene) e o EditorLayer, chamando DrawMesh()
-// uma vez por entidade com MeshRendererComponent - ver
-// EditorLayer::RenderScene().
+// DrawScene() e o ponto de entrada: percorre as entidades da Scene e
+// executa todos os passes (sombra, pre-passe de geometria, SSAO, cor).
+// Tanto o editor quanto a PlayWindow chamam so ele. DrawMesh() e a
+// primitiva de baixo nivel, usada por DrawScene e por chamadores avulsos
+// (ex: previews).
 //
 // Geometria de cada primitiva e gerada uma unica vez em Init() (ver
 // PrimitiveMeshFactory) e mantida em memoria de GPU (Mesh) pelo resto da
@@ -84,11 +81,9 @@ namespace Prism {
     // shader em um unico frame - array de tamanho fixo no lado GLSL (ver
     // "uniform GPULight u_Lights[MAX_LIGHTS]" em s_FragmentSrc), entao
     // este valor DEVE bater exatamente com a constante espelhada la.
-    // 16 e generoso para o tamanho de cena que este prototipo desenha
-    // hoje; se um mapa precisar de mais luzes simultaneas no mesmo
-    // draw call, este e o numero a aumentar (dos dois lados - C++ e
-    // shader) - nao ha custo de convercao alem do maior array copiado
-    // por frame.
+    // Se um mapa precisar de mais luzes simultaneas no mesmo draw call,
+    // este e o numero a aumentar (dos dois lados - C++ e shader); nao ha
+    // custo alem do maior array copiado por frame.
     static constexpr uint32_t MAX_LIGHTS = 16;
 
     class Renderer {
@@ -119,8 +114,7 @@ namespace Prism {
         // as luzes coletadas via CollectGPULights() para iluminacao de
         // verdade - ver DrawScene(), que ja faz isso automaticamente.
         // 'shadowMap'/'lightSpaceMatrix' sao opcionais (ambos nullptr por
-        // padrao = "sem sombra", comportamento identico a antes desta
-        // feature existir): quando fornecidos, o fragment shader amostra
+        // padrao = "sem sombra"): quando fornecidos, o fragment shader amostra
         // 'shadowMap' para decidir se cada fragmento esta na sombra da luz
         // Directional que gerou 'lightSpaceMatrix' (ver CalculateShadow em
         // s_FragmentSrc, Renderer.cpp). DrawScene() preenche os dois
@@ -130,8 +124,8 @@ namespace Prism {
         // 'shadowCasterLightIndex' identifica, dentro de 'lights', qual
         // luz corresponde a 'shadowMap' (ver comentario em UploadLights) -
         // ignorado se 'shadowMap' for nullptr.
-        // 'ssao' e opcional (nullptr por padrao = "sem AO", identico ao
-        // comportamento antes desta feature existir): quando fornecida, o
+        // 'ssao' e opcional (nullptr por padrao = "sem AO"): quando
+        // fornecida, o
         // termo de luz ambiente e multiplicado por (1 - oclusao) lida da
         // textura JA SUAVIZADA (BindBlurredForReading) de 'ssao' (ver
         // u_AOMap/u_HasAO em s_FragmentSrc, Renderer.cpp). DrawScene()
@@ -200,16 +194,15 @@ namespace Prism {
         // todas (nao ha culling/batching ainda - ver comentario no topo do
         // arquivo). Extraido de EditorLayer::RenderSceneEntities para
         // dentro do Renderer (fora do editor) porque tanto a viewport do
-        // editor quanto a futura Play Window (janela separada do SO
-        // rodando o jogo de verdade - ver README) precisam do MESMO loop
-        // de desenho, sem duplicar a logica em dois lugares. Chama
+        // editor quanto a Play Window (janela separada do SO rodando o
+        // jogo) precisam do MESMO loop de desenho, sem duplicar a logica
+        // em dois lugares. Chama
         // SetCameraPosition(cameraWorldPos) internamente antes de
         // qualquer DrawMesh() (ver comentario em SetCameraPosition acima)
         // - o chamador nao precisa fazer isso separadamente.
         //
         // 'view' e 'projection' SEPARADAS (nao uma unica viewProjection
-        // combinada, como antes desta funcao ganhar SSAO) - necessario
-        // porque RenderGeometryPrePass/RenderSSAOPass precisam de cada
+        // combinada) - necessario porque RenderGeometryPrePass/RenderSSAOPass precisam de cada
         // matriz individualmente: 'view' para transformar normais para
         // view-space, 'projection' para reconstruir posicao 3D a partir
         // da profundidade (unproject). viewProjection = projection * view
@@ -223,8 +216,7 @@ namespace Prism {
         // (Scene::GetWorldTransform - respeita parenting, igual DrawScene
         // ja faz para meshes). Limita a MAX_LIGHTS resultados: luzes alem
         // desse limite sao ignoradas silenciosamente (nao ha prioridade
-        // por distancia/importancia ainda - TODO se algum mapa real
-        // esbarrar nesse limite).
+        // por distancia/importancia).
         //
         // Publica (nao so uso interno de DrawMesh/DrawScene) porque
         // ferramentas do editor - ex: um futuro gizmo que desenha o cone
@@ -247,9 +239,7 @@ namespace Prism {
         // usa".
         //
         // Retorna nullptr se nenhuma luz da cena tem
-        // LightComponent::CastShadows == true (comportamento identico a
-        // antes desta feature existir: sem shadow map, sem sombra
-        // nenhuma).
+        // LightComponent::CastShadows == true (sem shadow map, sem sombra).
         static ShadowMap* RenderShadowPass(class Scene& scene);
 
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
@@ -343,22 +333,15 @@ namespace Prism {
         // para qualquer glDrawArrays, mesmo sem nenhum atributo habilitado
         // nele - por isso ainda precisamos de UM VAO, so que vazio.
         //
-        // BUG HISTORICO consertado aqui: uma versao anterior desta feature
-        // usava um UNICO VAO estatico (criado uma vez, no contexto do
-        // editor, dentro de Init()) para TODOS os contextos GLFW - isso
-        // produzia lixo visual (padrao de listras/ruido, cores como
-        // magenta) quando SSAO rodava dentro da Play Window (PlayWindow.cpp),
-        // que usa um GLFWwindow/contexto SEPARADO do editor. VAOs (Vertex
-        // Array Objects) sao objetos de "container" no OpenGL e, ao
-        // contrario de texturas/buffers/shaders, NAO SAO COMPARTILHADOS
-        // entre contextos mesmo quando os contextos compartilham a share
-        // list (glfwCreateWindow(..., sharedContextWindow) - ver
-        // PlayWindow::Open) - um VAO valido num contexto e invalido/vazio
-        // em outro. Mesh ja resolvia exatamente este problema (ver
-        // Mesh::BindForCurrentContext, Mesh.cpp/.h) muito antes do SSAO
-        // existir; GetFullscreenQuadVAOForCurrentContext() abaixo aplica a
-        // mesma tecnica (um VAO por GLFWwindow*, criado sob demanda e
-        // cacheado) para o VAO do fullscreen quad.
+        // ATENCAO: VAOs (Vertex Array Objects) sao objetos de "container"
+        // no OpenGL e, ao contrario de texturas/buffers/shaders, NAO SAO
+        // COMPARTILHADOS entre contextos, mesmo com share list
+        // (glfwCreateWindow(..., sharedContextWindow) - ver
+        // PlayWindow::Open). Um VAO unico criado no contexto do editor e
+        // invalido/vazio na Play Window e produz lixo visual (listras,
+        // ruido, cores como magenta). GetFullscreenQuadVAOForCurrentContext()
+        // aplica a mesma tecnica de Mesh::BindForCurrentContext: um VAO por
+        // GLFWwindow*, criado sob demanda e cacheado.
         static uint32_t GetFullscreenQuadVAOForCurrentContext();
         static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_FullscreenQuadVAOsByContext;
 

@@ -61,11 +61,10 @@ namespace Prism {
         // (ao contrario de AssetDirectory/ScriptDirectory/MapDirectory)
         // porque e sempre uma subpasta FIXA dentro de Assets/ (ver
         // GetDefaultProjectFolders acima, "Assets/Prefabs") - nao ha
-        // necessidade de configurar isso por projeto ainda. Projetos
-        // criados ANTES desta pasta existir na lista padrao simplesmente
-        // nao tem ela no disco ate a primeira vez que algo for salvo la
-        // (ver comentario em PrefabSerializer::Serialize sobre
-        // create_directories).
+        // necessidade de configurar isso por projeto. Projetos antigos
+        // simplesmente nao tem a pasta no disco ate a primeira vez que algo
+        // for salvo la (ver comentario em PrefabSerializer::Serialize
+        // sobre create_directories).
         std::filesystem::path GetPrefabDirectory() const { return GetAssetDirectory() / "Prefabs"; }
 
         // Pasta onde .prismmat (materiais reutilizaveis) fica - ver

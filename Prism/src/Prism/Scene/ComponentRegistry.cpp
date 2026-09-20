@@ -17,10 +17,8 @@ namespace Prism {
         in.read(reinterpret_cast<char*>(&length), sizeof(length));
         if (!in) return false;
 
-        // Mesma sanidade que ja existia em SceneSerializer::ReadString
-        // antes desta migracao (ver ComponentRegistration.cpp/historico) -
-        // um nome gigante e sinal de arquivo corrompido ou lido com offset
-        // errado, nao alocamos as cegas.
+        // Sanidade: um nome gigante e sinal de arquivo corrompido ou lido
+        // com offset errado; nao alocamos as cegas.
         if (length > (16 * 1024 * 1024)) {
             PRISM_CORE_ERROR("ComponentRegistry::ReadString: string absurdamente grande (", length, " bytes) - arquivo provavelmente corrompido.");
             return false;

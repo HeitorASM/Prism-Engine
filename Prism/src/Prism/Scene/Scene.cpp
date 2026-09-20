@@ -457,7 +457,7 @@ namespace Prism {
         m_IsRunning = true;
 
         // Fisica ANTES dos scripts: PhysicsEngine::OnSceneStart cria um
-        // corpo Box3D para toda entidade RigidBody+Collider ja existente -
+        // corpo Jolt para toda entidade RigidBody+Collider ja existente -
         // se um script OnCreate() precisar aplicar uma forca/impulso
         // imediatamente (ver ScriptEngine::RegisterAPI, ApplyForce), o
         // corpo fisico ja precisa existir nesse momento.
@@ -494,7 +494,7 @@ namespace Prism {
 
         // Fisica DEPOIS dos scripts: OnDestroy() de um script ainda pode
         // querer ler a posicao final do corpo fisico (ex: salvar onde o
-        // personagem parou) antes do mundo Box3D ser destruido.
+        // personagem parou) antes do mundo fisico ser destruido.
         PhysicsEngine::OnSceneStop(*this);
     }
 

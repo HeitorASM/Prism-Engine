@@ -54,10 +54,10 @@ namespace Prism {
         }
     };
 
-    // Primitivas de mesh embutidas na engine (sem importacao de assets
-    // ainda - ver guia do prototipo: FBX/OBJ/glTF ficam para uma fase
-    // futura). O Renderer gera a geometria de cada uma proceduralmente em
-    // Renderer::Init() - ver Renderer.cpp.
+    // Primitivas de mesh embutidas na engine (nao ha importacao de modelos
+    // FBX/OBJ/glTF ainda). A geometria de cada uma e gerada
+    // proceduralmente (ver PrimitiveMeshFactory) e enviada a GPU em
+    // Renderer::Init().
     enum class PrimitiveMesh {
         Cube,
         Sphere,
@@ -70,11 +70,9 @@ namespace Prism {
     // (Color) e sempre o FALLBACK: se a entidade tiver um
     // MaterialComponent (ver abaixo) com AlbedoPath configurado, a
     // textura de albedo substitui esta cor solida; sem MaterialComponent
-    // (ou com AlbedoPath vazio), Color continua sendo usada exatamente
-    // como antes do sistema de Material existir - manter
-    // MeshRendererComponent funcionando sozinho, sem exigir um
-    // MaterialComponent obrigatorio em toda entidade, evita quebrar
-    // qualquer cena/prefab salvo antes desta mudanca.
+    // (ou com AlbedoPath vazio), Color e usada normalmente -
+    // MeshRendererComponent funciona sozinho, sem exigir um
+    // MaterialComponent em toda entidade.
     struct MeshRendererComponent {
         PrimitiveMesh Mesh = PrimitiveMesh::Cube;
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
@@ -83,13 +81,15 @@ namespace Prism {
         MeshRendererComponent(const MeshRendererComponent&) = default;
     };
 
-    // Material PBR (Physically Based Rendering) opcional de uma entidade -
-    // ver Renderer::DrawMesh/s_FragmentSrc (Renderer.cpp) para o shader
-    // Cook-Torrance que consome estes dados. Component SEPARADO de
-    // MeshRendererComponent (nao um campo a mais nele) de proposito: nem
-    // toda entidade visivel precisa de controle fino de material (a
-    // maioria dos objetos de prototipo/bloqueio de nivel fica bem so com
-    // MeshRendererComponent::Color) - manter os dois components
+    // Material opcional de uma entidade - ver Renderer::DrawMesh/
+    // s_FragmentSrc (Renderer.cpp) para o shader que consome estes dados.
+    // Hoje o shader usa AlbedoPath (+ AlbedoTint) e NormalPath;
+    // RoughnessMetallicPath, RoughnessFactor e MetallicFactor sao
+    // guardados mas ainda sem efeito, pois o shader e Lambert (sem
+    // termo especular). Component SEPARADO de MeshRendererComponent
+    // (nao um campo a mais nele) de proposito: nem toda entidade visivel
+    // precisa de controle fino de material (objetos de bloqueio de nivel
+    // ficam bem so com MeshRendererComponent::Color) - manter os dois components
     // independentes deixa o caso simples simples, e o caso avancado
     // opcional.
     //
@@ -119,11 +119,10 @@ namespace Prism {
         MaterialComponent(const MaterialComponent&) = default;
     };
 
-    // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS - ver
-    // guia do prototipo); Orthographic fica reservado para usos futuros
-    // (ex: uma camera 2D/isometrica, ou uma vista "top-down" de edicao) -
-    // ja suportado no dado e no calculo de projecao (ver
-    // CameraComponent::GetProjection) para nao exigir migracao depois.
+    // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS);
+    // Orthographic serve para uma camera 2D/isometrica ou vista "top-down"
+    // - ja suportado no dado e no calculo de projecao (ver
+    // CameraComponent::GetProjection).
     enum class CameraProjectionType {
         Perspective,
         Orthographic
@@ -131,10 +130,9 @@ namespace Prism {
 
     // Camera de cena (distinta da camera de editor em EditorLayer, que so
     // existe para navegar a viewport). Usada pelo modo "Play" (janela
-    // separada - ver README) a partir da entidade com Primary=true; tambem
-    // usada pela propria viewport do editor quando a cena tem uma camera
-    // Primary (ver EditorLayer::RenderScene) - a camera de orbita do editor
-    // vira so o fallback para cenas sem nenhuma CameraComponent ainda.
+    // separada) a partir da entidade com Primary=true, e pela preview de
+    // camera do editor. A viewport principal do editor sempre usa a camera
+    // livre, nunca esta.
     struct CameraComponent {
         CameraProjectionType ProjectionType = CameraProjectionType::Perspective;
 
@@ -169,15 +167,11 @@ namespace Prism {
         }
     };
 
-    // Tipos de luz suportados - nomes escolhidos para bater com o
-    // vocabulario do guia do prototipo ("spotlight", "omnilight"/point
-    // light) em vez de nomes tecnicos de shader.
+    // Tipos de luz suportados.
     //
     // EXTENSIBILIDADE: este enum foi projetado para crescer sem quebrar
-    // nada que ja existe. Point/Spot/Directional cobrem o pedido original
-    // do guia; Area e IES ja estao aqui como proximos candidatos naturais
-    // (comuns em engines "grandes" - Unreal, Unity, Godot) para quando
-    // fizerem falta:
+    // nada que ja existe. Area e IES sao candidatos naturais (comuns em
+    // engines grandes - Unreal, Unity, Godot) para quando fizerem falta:
     //   - Area: luz emitida por uma superficie retangular/disco (ex:
     //     softbox, janela, painel de LED) - mais realista que Point para
     //     luz "de estudio". Usaria Size (novo campo abaixo) como
@@ -329,9 +323,9 @@ namespace Prism {
     // rodando (Play).
     struct RigidBodyComponent {
         BodyType Type = BodyType::Dynamic;
-        float Mass = 1.0f;              // kg - so relevante para Dynamic. Agora alimenta a simulacao de verdade (ver PhysicsEngine::CreateBodyForEntity, EOverrideMassProperties::CalculateInertia) - antes deste campo era ignorado (TODO historico), todo corpo Dynamic tinha massa calculada automaticamente pela densidade default do Jolt independente do que estivesse aqui.
+        float Mass = 1.0f;              // kg - so relevante para Dynamic (ver PhysicsEngine::CreateBodyForEntity, EOverrideMassProperties::CalculateInertia)
         bool UseGravity = true;         // so relevante para Dynamic
-        bool ContinuousCollisionDetection = false; // CCD - para objetos rapidos nao atravessarem paredes (ver guia do prototipo)
+        bool ContinuousCollisionDetection = false; // CCD - para objetos rapidos nao atravessarem paredes
 
         // Atrito de Coulomb (0 = gelo, sem atrito nenhum; 1 = atrito alto,
         // valor tipico de borracha em asfalto). Jolt combina o atrito dos
@@ -412,13 +406,9 @@ namespace Prism {
         RelationshipComponent(const RelationshipComponent&) = default;
     };
 
-    // Slot de script anexado a uma entidade - ainda NAO executa nada (Lua
-    // ainda nao esta embutido na engine, ver guia do prototipo). Isto so
-    // guarda QUAL arquivo .lua esta associado a entidade, para que:
-    //   1) o editor ja tenha uma UI para o fluxo completo antes do Lua
-    //      existir (evita re-projetar a UI depois)
-    //   2) cenas salvas agora ja carreguem esse dado quando scripting for
-    //      ligado, sem precisar migrar arquivos .prismmap antigos
+    // Slot de script anexado a uma entidade. Guarda QUAL arquivo .lua esta
+    // associado a ela; quem carrega e executa e o ScriptEngine (ver
+    // Scripting/ScriptEngine.h), durante o Play.
     struct ScriptComponent {
         // Caminho RELATIVO a Project::GetScriptDirectory() (ex:
         // "player_controller.lua") - nao absoluto, para o projeto

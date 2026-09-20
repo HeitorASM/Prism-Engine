@@ -72,10 +72,8 @@ namespace PrismEditor {
         // mapa - ela roda uma COPIA clonada de m_ActiveScene (ver
         // Play/PlayWindow.h); nao faz sentido continuar simulando essa
         // copia depois que o mapa que a originou deixou de ser o ativo no
-        // editor. Diferente da abordagem antiga (Play dentro da propria
-        // viewport, com snapshot/restore), m_ActiveScene em si NUNCA roda
-        // scripts/fisica agora - trocar de mapa e uma operacao simples,
-        // sem nada para "desfazer" nela.
+        // editor. m_ActiveScene em si NUNCA roda scripts/fisica, entao
+        // trocar de mapa e uma operacao simples, sem nada para "desfazer".
         if (m_PlayWindow.IsOpen())
             OnStopButtonClicked();
 
@@ -95,8 +93,8 @@ namespace PrismEditor {
     void EditorLayer::NewMap() {
         // TODO: quando existir rastreamento de "alteracoes nao salvas"
         // (dirty flag), perguntar aqui antes de descartar a cena atual -
-        // por ora, Novo Mapa descarta sem aviso, igual acontecia ao
-        // carregar outro mapa pelo Content Browser (ver nota no README).
+        // por ora, Novo Mapa descarta sem aviso, como carregar outro mapa
+        // pelo Content Browser.
         if (m_PlayWindow.IsOpen())
             OnStopButtonClicked(); // ver comentario identico em LoadScene()
 
@@ -1189,9 +1187,7 @@ namespace PrismEditor {
         // esse estado fica "preso" no valor de frames passados (ou
         // zerado/invalido logo na inicializacao), o que se manifesta
         // exatamente como "o gizmo aparece desenhado mas passar o mouse ou
-        // clicar nas setas/aneis nao registra nada" (bug reportado
-        // separadamente do problema de posicionamento do SetRect, ja
-        // corrigido - este era um SEGUNDO bug, independente). Cria e
+        // clicar nas setas/aneis nao registra nada". Cria e
         // destroi uma janela ImGui interna própria e invisível
         // ("gizmo", full-screen, ver ImGuizmo::BeginFrame) - nao interfere
         // com o resto do editor, so precisa rodar antes de qualquer outro
@@ -1492,10 +1488,8 @@ namespace PrismEditor {
         // ============================================================
         // Camera LIVRE do editor - estilo Godot
         // ============================================================
-        // Diferente da versao anterior (que orbitava sempre em torno da
-        // origem, limitando o usuario a uma "orbita curta" ao redor da
-        // cena), esta camera tem POSICAO livre e usa a mesma convencao de
-        // controles do editor da Godot:
+        // Camera com POSICAO livre, usando a mesma convencao de controles
+        // do editor da Godot:
         //
         //   - Segurar o botao DIREITO do mouse sobre a viewport entra em
         //     "modo voar": o cursor e escondido e LOCKADO via
@@ -1569,10 +1563,8 @@ namespace PrismEditor {
                 // POSITIVO -> camera olha para CIMA. Isso exige '+', nao
                 // '-': quando delta.y e negativo, somar 'delta.y * k' a
                 // m_CameraPitch DIMINUI o pitch (que e o que queremos).
-                //
-                // A versao anterior usava '-', que inverte o eixo vertical
-                // inteiro (mouse para cima -> camera olha para baixo, e
-                // vice-versa). Bug reportado e corrigido.
+                // Usar '-' inverteria o eixo vertical inteiro (mouse para
+                // cima -> camera olha para baixo, e vice-versa).
                 m_CameraPitch = std::clamp(m_CameraPitch + io.MouseDelta.y * 0.15f, -89.0f, 89.0f);
             }
 
@@ -1901,9 +1893,7 @@ namespace PrismEditor {
 
             // Se a entidade tem pai, o TransformComponent e relativo a ELE
             // - multiplicamos pela inversa da matriz de mundo do PAI para
-            // voltar ao espaco local, mesmo raciocinio que a nota de
-            // "Fisica + Parenting" no README ja descreve como o jeito
-            // correto de fazer (so que aqui em vez de la).
+            // voltar ao espaco local.
             Prism::Entity parent;
             if (auto* rel = m_ActiveScene->GetRegistry().try_get<Prism::RelationshipComponent>(m_SelectedEntity.GetHandle())) {
                 if (rel->Parent != entt::null)
@@ -2412,7 +2402,7 @@ namespace PrismEditor {
                 }
 
                 ImGui::Checkbox("E um Trigger", &collider.IsTrigger);
-                ImGui::TextDisabled("Ainda nao alimenta simulacao de fisica (ver README).");
+                ImGui::TextDisabled("Precisa de um Rigid Body para participar da fisica.");
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::ColliderComponent>>(m_SelectedEntity, "Collider"));
@@ -2443,7 +2433,7 @@ namespace PrismEditor {
                 // BodyType, Components.h) - mas nao ha necessidade de
                 // desabilitar o checkbox para Static: um valor "true" nele
                 // e simplesmente ignorado nesse caso (CreateBodyForEntity
-                // ainda passa fixedRotation para o Box3D independente do
+                // ainda passa fixedRotation para o Jolt independente do
                 // tipo, e um corpo Static ja tem rotacao fixa por natureza).
                 ImGui::Checkbox("Rotacao Fixa (nao tomba/gira por fisica)", &rigidBody.FixedRotation);
                 if (rigidBody.FixedRotation)
@@ -2673,8 +2663,7 @@ namespace PrismEditor {
 
     // Instancia o AddComponentCommand<T> certo a partir do DisplayName
     // registrado em ComponentRegistry (ver ComponentRegistration.cpp) e
-    // executa via m_CommandHistory (preservando Undo/Redo, exatamente
-    // como cada bloco manual fazia antes desta mudanca).
+    // executa via m_CommandHistory (com Undo/Redo).
     //
     // POR QUE ISTO NAO VIVE DENTRO DE ComponentRegistry (Prism::): porque
     // AddComponentCommand<T> e Command (Prism::Core::Command) sao dois
@@ -2731,7 +2720,7 @@ namespace PrismEditor {
         // OnAfterAddInEditor (ver ComponentRegistry.h) - cobre ajustes de
         // consistencia que dependem do RESTO da cena, como o caso de
         // CameraComponent::Primary (ver ComponentRegistration.cpp) - FORA
-        // do historico de Undo, igual o comportamento original.
+        // do historico de Undo.
         for (auto& info : Prism::ComponentRegistry::GetAll()) {
             if (info.DisplayName == displayName && info.OnAfterAddInEditor) {
                 info.OnAfterAddInEditor(entity, *m_ActiveScene);
@@ -2769,11 +2758,7 @@ namespace PrismEditor {
 
         if (ImGui::BeginPopup("AddComponentPopup")) {
             // Loop generico sobre TODO Component registrado (ver
-            // ComponentRegistry.h/ComponentRegistration.cpp) - antes desta
-            // mudanca, este popup tinha um bloco copiado manualmente por
-            // Component (HasComponent + MenuItem + AddComponentCommand),
-            // exatamente o tipo de duplicacao que motivou este registro
-            // existir. O Command real (com Undo/Redo, ver
+            // ComponentRegistry.h/ComponentRegistration.cpp). O Command real (com Undo/Redo, ver
             // AddComponentCommand<T>/EditorCommands.h) ainda e criado por
             // TIPO (nao generico) via AddComponentByRegistryName abaixo,
             // ja que o registro em si (Prism::ComponentRegistry) nao

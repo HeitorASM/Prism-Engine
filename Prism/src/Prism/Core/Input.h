@@ -27,7 +27,7 @@
 // do GLFW so adicionaria uma camada de traducao sem nenhum ganho real
 // (GLFW ja e a lib de janela/input escolhida em toda a engine, ver
 // GlfwWindow.h/PlayWindow.cpp), e KeyEvent::GetKeyCode() (Core/KeyEvent.h)
-// ja expunha esses mesmos codigos crus antes desta classe existir.
+// tambem expoe esses mesmos codigos crus.
 // ============================================================================
 
 #include <cstdint>
@@ -83,8 +83,7 @@ namespace Prism {
         Hidden,
         // Cursor INVISIVEL e "travado" no centro da janela (o SO nunca
         // deixa o cursor de verdade se mover) - modo padrao de camera
-        // FPS/TPS (ver guia do prototipo, "Camera: perspectiva FPS e
-        // TPS") - com este modo, GetMouseDeltaX/Y (ver abaixo) reportam
+        // FPS/TPS. Com este modo, GetMouseDeltaX/Y (ver abaixo) reportam
         // movimento relativo ILIMITADO (o mouse pode "girar" para sempre,
         // nao esbarra na borda da tela), que e exatamente o que uma
         // camera de olhar ao redor precisa.

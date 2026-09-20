@@ -25,9 +25,8 @@
 // nenhum link de volta ao .prismprefab. Editar o Prefab depois NAO
 // atualiza instancias ja colocadas em cenas (equivalente a "unpacked
 // scene instance" da Godot, ou a quebrar o vinculo com o Prefab na Unity).
-// Um sistema de instancias vinculadas/atualizacao em cascata e uma
-// funcionalidade grande o bastante para ficar para uma iteracao futura -
-// ver README/roadmap.
+// Um sistema de instancias vinculadas/atualizacao em cascata ainda nao
+// existe.
 // ============================================================================
 
 #include "../Core/Base.h"

@@ -4,12 +4,8 @@
 // ScriptEditorPanel.h
 // Painel de edicao de texto para scripts Lua, com syntax highlight via
 // ImGuiColorTextEdit (fork goossens - ver vendor/CMakeLists.txt para o
-// porque dessa lib especifica). Antes desta versao, o painel escrevia
-// direto num buffer proprio (std::vector<char>) passado pro
-// ImGui::InputTextMultiline - funcionava, mas sem nenhuma cor de sintaxe.
-// Trocar para a classe TextEditor da lib resolve isso e de quebra remove
-// toda a gestao manual de buffer/callback de resize que o painel tinha
-// antes (a lib cuida disso internamente).
+// porque dessa lib especifica). A classe TextEditor da lib cuida
+// internamente do buffer de texto e do redimensionamento.
 //
 // Fluxo tipico: Properties panel (ScriptComponent) tem um botao "Editar"
 // que chama Open(caminho) aqui - ver EditorLayer::RenderPropertiesPanel().

@@ -29,10 +29,7 @@ namespace Prism {
         float Position[3];
         float Normal[3];
 
-        // UV (coordenadas de textura, 0..1) - ate esta mudanca nao
-        // existia nenhum atributo de UV na engine (sem texturas, so cor
-        // solida - ver README/MeshRendererComponent::Color antes do
-        // MaterialComponent existir). Convencao padrao OpenGL: (0,0) e o
+        // UV (coordenadas de textura, 0..1). Convencao padrao OpenGL: (0,0) e o
         // canto inferior-esquerdo da textura, U cresce para a direita, V
         // cresce para cima.
         float UV[2];

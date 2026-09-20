@@ -127,11 +127,9 @@ namespace Prism {
 
     // Jolt exige uma chamada global de registro de tipos
     // (JPH::RegisterTypes()) e um Factory globais ANTES de qualquer
-    // PhysicsSystem ser criado - equivalente, em espirito, a nada que
-    // Box3D precisava (b3CreateWorld nao tinha pre-requisito global
-    // nenhum). Feito uma unica vez por processo via flag estatica -
-    // seguro mesmo se varias Scenes distintas chamarem OnSceneStart ao
-    // longo da vida do editor.
+    // PhysicsSystem ser criado. Feito uma unica vez por processo via flag
+    // estatica - seguro mesmo se varias Scenes distintas chamarem
+    // OnSceneStart ao longo da vida do editor.
     static void EnsureGlobalInit() {
         static bool s_Initialized = false;
         if (s_Initialized)
@@ -143,38 +141,30 @@ namespace Prism {
 
         s_Initialized = true;
 
-        // ATENCAO: esta engine nunca chama JPH::UnregisterTypes() /
-        // delete Factory::sInstance - de proposito. E infraestrutura
-        // global do PROCESSO inteiro (mesma vida util de, por exemplo,
-        // o contexto OpenGL ou a VM Lua base), nao de uma Scene
-        // individual, entao "vaza" ate o processo terminar, igual
-        // qualquer outro singleton global de biblioteca - nao e um leak
-        // por-Scene que cresce com o tempo.
+        // Nunca chamamos JPH::UnregisterTypes() nem deletamos
+        // Factory::sInstance, de proposito: e infraestrutura global do
+        // PROCESSO (mesma vida util do contexto OpenGL ou da VM Lua
+        // base), nao de uma Scene, entao vive ate o processo terminar.
     }
 
     // --- Conversao glm <-> Jolt ---------------------------------------------
     // JPH::Vec3/JPH::Quat NAO tem o mesmo layout de memoria de
     // glm::vec3/glm::quat (Jolt usa SIMD internamente - Vec3 na verdade
     // ocupa 16 bytes, nao 12), entao precisamos SEMPRE passar pelos
-    // metodos/construtores publicos da API, nunca reinterpret_cast (isso
-    // ja era verdade tambem na conversao Box3D anterior, por motivo
-    // diferente - aqui e ainda mais importante por causa do SIMD).
+    // metodos/construtores publicos da API, nunca reinterpret_cast.
 
     static JPH::Vec3 ToJolt(const glm::vec3& v) { return JPH::Vec3(v.x, v.y, v.z); }
     static glm::vec3 FromJolt(const JPH::Vec3& v) { return glm::vec3(v.GetX(), v.GetY(), v.GetZ()); }
 
     // JPH::Quat guarda (x,y,z,w) via GetX/GetY/GetZ/GetW - mapeamento
     // direto com glm::quat(w,x,y,z) na ordem de CONSTRUCAO (glm arma
-    // internamente como .x/.y/.z/.w tambem, mesma observacao que ja
-    // valia para b3Quat antes).
+    // internamente como .x/.y/.z/.w tambem).
     static JPH::Quat ToJolt(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
     static glm::quat FromJolt(const JPH::Quat& q) { return glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ()); }
 
     // TransformComponent::Rotation e Euler EM GRAUS na ordem yawPitchRoll(Y,X,Z)
-    // (ver TransformComponent::GetTransform() em Components.h) - mesma
-    // funcao que ja existia na versao Box3D, preservada identica aqui
-    // (nao depende da lib de fisica escolhida, so de convencao de eixos
-    // da propria engine).
+    // (ver TransformComponent::GetTransform() em Components.h) - depende
+    // so da convencao de eixos da engine, nao da lib de fisica.
     static glm::quat EulerDegreesToQuat(const glm::vec3& eulerDegrees) {
         glm::mat4 rotationMatrix = glm::yawPitchRoll(
             glm::radians(eulerDegrees.y), glm::radians(eulerDegrees.x), glm::radians(eulerDegrees.z));
@@ -183,8 +173,7 @@ namespace Prism {
 
     // Inverso de EulerDegreesToQuat - usado para escrever de volta em
     // TransformComponent::Rotation depois que o Jolt move o corpo (ver
-    // Simulate() abaixo). Identica a versao Box3D - so consome
-    // glm::quat, nao depende da lib de fisica.
+    // Simulate() abaixo).
     static glm::vec3 QuatToEulerDegrees(const glm::quat& q) {
         glm::vec3 pitchYawRoll = glm::eulerAngles(q); // (pitch=x, yaw=y, roll=z) em radianos, convencao glm padrao
         return glm::degrees(glm::vec3(pitchYawRoll.x, pitchYawRoll.y, pitchYawRoll.z));
@@ -271,10 +260,9 @@ namespace Prism {
         state.PhysicsSystem = std::make_unique<JPH::PhysicsSystem>();
 
         // Limites de quantos corpos/pares de corpo/contatos o Jolt
-        // pre-aloca - valores do exemplo oficial HelloWorld.cpp, generosos
-        // o bastante para uma engine ainda em prototipo (nao um jogo AAA
-        // com milhares de corpos simultaneos). Se um dia isto virar um
-        // gargalo real, estes numeros sao o primeiro lugar a revisar.
+        // pre-aloca - valores do exemplo oficial HelloWorld.cpp. Se isto
+        // virar um gargalo real, estes numeros sao o primeiro lugar a
+        // revisar.
         constexpr JPH::uint kMaxBodies = 4096;
         constexpr JPH::uint kNumBodyMutexes = 0; // 0 = Jolt escolhe um default razoavel
         constexpr JPH::uint kMaxBodyPairs = 4096;
@@ -285,8 +273,7 @@ namespace Prism {
             GetBroadPhaseLayerInterface(), GetObjectVsBroadPhaseLayerFilter(), GetObjectLayerPairFilter());
 
         // Convencao +Y para cima, mesma usada pelo resto da engine
-        // (camera, TransformComponent, etc) - identica a gravidade
-        // padrao que a versao Box3D ja usava.
+        // (camera, TransformComponent, etc).
         state.PhysicsSystem->SetGravity(JPH::Vec3(0.0f, -10.0f, 0.0f));
 
         GetStates()[&scene] = std::move(state);
@@ -304,11 +291,10 @@ namespace Prism {
         if (!state)
             return; // idempotente - chamar sem um mundo ativo nao faz nada
 
-        // Diferente de Box3D (onde b3DestroyWorld destruia tudo de uma
-        // vez sozinho), o Jolt exige que cada corpo seja explicitamente
-        // removido da broad-phase (RemoveBody) e destruido
-        // (DestroyBody) antes do PhysicsSystem em si ser liberado - ver
-        // Jolt docs "Body Lifetime". Iteramos EntityToBody para isso.
+        // O Jolt exige que cada corpo seja explicitamente removido da
+        // broad-phase (RemoveBody) e destruido (DestroyBody) antes do
+        // PhysicsSystem em si ser liberado - ver Jolt docs "Body
+        // Lifetime". Iteramos EntityToBody para isso.
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         for (auto& [entityHandle, bodyId] : state->EntityToBody) {
             bodyInterface.RemoveBody(bodyId);
@@ -344,23 +330,20 @@ namespace Prism {
         // senao um filho de um pai deslocado nasceria fisicamente na
         // posicao ERRADA (a posicao local, nao a posicao real dele na
         // cena). Depois de criado, o corpo fisico e independente do
-        // parenting (Jolt nao sabe de RelationshipComponent) - mesma
-        // limitacao conhecida que ja existia com Box3D, ver nota no
-        // README.
+        // parenting (Jolt nao sabe de RelationshipComponent) - ver
+        // docs/fisica.md, "Limitacoes conhecidas".
         glm::mat4 worldMatrix = scene.GetWorldTransform(entity);
         glm::vec3 worldPosition = glm::vec3(worldMatrix[3]);
 
-        // Mesmo bug/correcao ja documentado na versao Box3D: extrair a
-        // rotacao de uma matriz de mundo que ainda tem ESCALA embutida
-        // nas colunas (Translation * Rotation * Scale) produz um
+        // Extrair a rotacao de uma matriz de mundo que ainda tem ESCALA
+        // embutida nas colunas (Translation * Rotation * Scale) produz um
         // quaternion distorcido a menos que a escala seja exatamente
-        // {1,1,1}. A correcao e a mesma - normalizar as 3 colunas de
-        // rotacao ANTES de extrair o quaternion, nao normalizar o
-        // quaternion resultante depois (isso so corrige a magnitude, nao
-        // o eixo de rotacao ja errado). Jolt tambem valida quaternions
-        // de entrada via seus proprios asserts internos (USE_ASSERTS,
-        // ver vendor/CMakeLists.txt) - manter esta correcao evita o
-        // mesmo tipo de crash que acontecia com Box3D.
+        // {1,1,1}. Por isso normalizamos as 3 colunas de rotacao ANTES de
+        // extrair o quaternion (normalizar o quaternion resultante depois
+        // so corrige a magnitude, nao o eixo de rotacao ja errado). O
+        // Jolt valida quaternions de entrada via seus proprios asserts
+        // internos (USE_ASSERTS, ver vendor/CMakeLists.txt) e derruba o
+        // processo se receber um quaternion distorcido.
         glm::vec3 col0 = glm::vec3(worldMatrix[0]);
         glm::vec3 col1 = glm::vec3(worldMatrix[1]);
         glm::vec3 col2 = glm::vec3(worldMatrix[2]);
@@ -371,9 +354,8 @@ namespace Prism {
         );
         glm::quat worldRotation = glm::normalize(glm::quat_cast(rotationOnly));
 
-        // Monta o Shape primeiro (Jolt separa "shape" de "body creation
-        // settings" mais explicitamente que Box3D - o shape e uma
-        // referencia contada (JPH::RefConst) que pode, inclusive, ser
+        // Monta o Shape primeiro (o Jolt separa "shape" de "body creation
+        // settings" - o shape e uma referencia contada (JPH::RefConst) que pode, inclusive, ser
         // compartilhada entre varios corpos identicos; nao fazemos isso
         // aqui ainda, cada entidade tem seu proprio Shape, mas a API ja
         // permite otimizar isso no futuro se necessario).
@@ -381,37 +363,20 @@ namespace Prism {
         // Tamanho minimo: o Jolt tem asserts internos (USE_ASSERTS, ver
         // vendor/CMakeLists.txt - habilitados em builds Debug) que
         // ENCERRAM O PROCESSO se uma dimensao de shape for pequena
-        // demais - um Collider::Size editado para algo como 0.01 ou
-        // menor no editor disparava esse assert e derrubava a engine
-        // inteira, sem nenhuma mensagem amigavel. A partir daqui,
-        // qualquer dimensao abaixo de kMinShapeDimension e PRESA
+        // demais. Qualquer dimensao abaixo de kMinShapeDimension e PRESA
         // (clamped) a esse minimo antes de chegar no Jolt, com um aviso
-        // no log explicando o porque - a entidade continua com o
-        // Collider visualmente pequeno que o usuario pediu (ver
-        // MeshRendererComponent/TransformComponent::Scale, que nao tem
-        // essa limitacao - so a FISICA impoe um minimo, o visual pode
-        // ficar arbitrariamente pequeno), so a fisica trata como um
-        // pouco maior para nao crashar.
+        // no log. So a FISICA impoe esse minimo; o mesh visual pode ficar
+        // arbitrariamente pequeno.
         //
-        // kMinShapeDimension = 0.05, NAO 0.01: BoxShape/CapsuleShape/
-        // SphereShape do Jolt usam um "convex radius" default
-        // (JPH::cDefaultConvexRadius = 0.05) para arredondar levemente
-        // os cantos da shape (melhora estabilidade do solver de
-        // colisao). Internamente, o Jolt calcula
-        // mConvexRadius = min(convexRadius, halfExtent.ReduceMin()) - se
-        // uma dimensao (ex: a "espessura" de uma caixa achatada tipo
-        // plano/piso, Half-Extents (5, 0.01, 5)) for MENOR que o dobro
-        // do proprio raio convexo, a shape fica degenerada (mais fina
-        // que o arredondamento que deveria ter) e o Jolt entra em
-        // caminhos de codigo instaveis/assertivos mais adiante na
-        // criacao da malha de colisao - o sintoma exato reportado: Y do
-        // collider igual a 0.01 (dimensao TOTAL de half-extent, entao
-        // ainda menor que cDefaultConvexRadius) crashava mesmo com o
-        // clamp anterior (que usava 0.01 como piso - pequeno demais).
-        // 0.05 aqui bate exatamente com cDefaultConvexRadius, e o
-        // ConvexRadius EXPLICITO abaixo (kSafeConvexRadius) garante que
-        // nunca excede metade da menor dimensao, evitando o caso
-        // degenerado por completo.
+        // O valor 0.05 bate com JPH::cDefaultConvexRadius: BoxShape/
+        // CapsuleShape/SphereShape arredondam levemente os cantos com um
+        // "convex radius", e o Jolt calcula
+        // mConvexRadius = min(convexRadius, halfExtent.ReduceMin()). Uma
+        // dimensao menor que o raio convexo deixa a shape degenerada
+        // (ex: um piso com half-extents (5, 0.01, 5)) e o Jolt entra em
+        // caminhos instaveis/assertivos. O ConvexRadius EXPLICITO abaixo
+        // (kSafeConvexRadius) garante que nunca excede metade da menor
+        // dimensao.
         constexpr float kMinShapeDimension = 0.05f;
         glm::vec3 safeSize = collider.Size;
         bool sizeWasClamped = false;
@@ -454,14 +419,12 @@ namespace Prism {
                 break;
             }
             case ColliderShape::Capsule: {
-                // Capsula alinhada ao eixo Y (convencao usual - "de pe"),
-                // mesma convencao que a versao Box3D ja usava.
+                // Capsula alinhada ao eixo Y (convencao usual - "de pe").
                 // JPH::CapsuleShape recebe (halfHeightOfCylinder, radius)
                 // - a MESMA interpretacao de Size.y/Size.x que
                 // ColliderComponent::Size ja documenta (Size.y = altura
                 // TOTAL da parte cilindrica, sem contar as tampas
-                // hemisfericas - por isso dividimos por 2 aqui, igual a
-                // versao Box3D dividia para achar halfHeight).
+                // hemisfericas - por isso dividimos por 2 aqui).
                 float halfHeight = safeSize.y * 0.5f;
                 shape = new JPH::CapsuleShape(halfHeight, safeSize.x);
                 break;
@@ -477,12 +440,9 @@ namespace Prism {
 
         bodyCreationSettings.mGravityFactor = rigidBody.UseGravity ? 1.0f : 0.0f;
 
-        // isBullet no Box3D (b3BodyDef::isBullet) equivale a CCD
-        // (continuous collision detection) no Jolt - motionQuality
-        // LinearCast ativa CCD para este corpo, evitando que objetos
-        // rapidos atravessem paredes finas num unico step (mesmo
-        // proposito que RigidBodyComponent::ContinuousCollisionDetection
-        // ja documentava com Box3D).
+        // motionQuality LinearCast ativa CCD (continuous collision
+        // detection) para este corpo, evitando que objetos rapidos
+        // atravessem paredes finas num unico step.
         bodyCreationSettings.mMotionQuality = rigidBody.ContinuousCollisionDetection
             ? JPH::EMotionQuality::LinearCast
             : JPH::EMotionQuality::Discrete;
@@ -492,15 +452,12 @@ namespace Prism {
         // (camera FPS/TPS, corpo do player): sem isto, esbarrar em algo
         // ou cair de uma pequena altura aplica torque ao corpo, e
         // Simulate() sincroniza essa rotacao "acidental" de volta para
-        // TransformComponent, brigando visualmente com o script. Mesmo
-        // proposito que RigidBodyComponent::FixedRotation ja tinha com
-        // Box3D (que usava b3MotionLocks com os 3 eixos angulares
-        // travados) - Jolt expoe isto via
-        // BodyCreationSettings::mAllowedDOFs (Degrees Of Freedom): removemos
-        // os 3 bits de rotacao (RotationX/Y/Z) do conjunto default (All),
-        // mantendo os 3 de translacao livres - a translacao (cair, ser
-        // empurrado, colidir) continua 100% normal, so a rotacao fisica
-        // fica congelada.
+        // TransformComponent, brigando visualmente com o script. O Jolt
+        // expoe isto via BodyCreationSettings::mAllowedDOFs (Degrees Of
+        // Freedom): removemos os 3 bits de rotacao (RotationX/Y/Z) do
+        // conjunto default (All), mantendo os 3 de translacao livres - a
+        // translacao (cair, ser empurrado, colidir) continua normal, so a
+        // rotacao fisica fica congelada.
         if (rigidBody.FixedRotation) {
             bodyCreationSettings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(
                 static_cast<uint32_t>(JPH::EAllowedDOFs::TranslationX) |
@@ -508,9 +465,8 @@ namespace Prism {
                 static_cast<uint32_t>(JPH::EAllowedDOFs::TranslationZ));
         }
 
-        // Trigger/sensor: Jolt chama isso de "sensor" tambem (mesmo termo
-        // que Box3D/ColliderComponent::IsTrigger ja usava) - detecta
-        // sobreposicao mas nao gera resposta fisica (nao empurra nada).
+        // Trigger/sensor: detecta sobreposicao mas nao gera resposta
+        // fisica (nao empurra nada).
         bodyCreationSettings.mIsSensor = collider.IsTrigger;
 
         // Atrito e restitution (elasticidade) do material - Jolt combina
@@ -536,19 +492,12 @@ namespace Prism {
         // Massa customizada: por padrao (EOverrideMassProperties::
         // CalculateMassAndInertia) o Jolt calcularia massa E inercia
         // sozinho a partir do Shape * uma densidade generica fixa,
-        // ignorando RigidBodyComponent::Mass completamente - era esse o
-        // TODO historico deixado aqui (preservado da migracao Box3D ->
-        // Jolt, ver comentario que existia nesta mesma linha antes desta
-        // mudanca). CalculateInertia pede pro Jolt calcular a INERCIA
-        // ainda a partir da forma (relacao correta massa/tamanho/torque
-        // para a geometria configurada), mas usar a MASSA exata que o
-        // usuario colocou no Properties panel em vez da densidade
-        // generica - a combinacao certa para "eu quero controlar o peso,
-        // mas nao quero calcular um tensor de inercia a mao". So faz
-        // sentido para Dynamic (Static/Kinematic nao tem massa simulada
-        // de qualquer forma - o Jolt ignora MassPropertiesOverride nesses
-        // casos); Mass minimo de 0.001f evita massa zero/negativa (por
-        // erro de digitacao no editor) travando o solver do Jolt.
+        // ignorando RigidBodyComponent::Mass. CalculateInertia pede pro
+        // Jolt calcular a INERCIA a partir da forma, mas usar a MASSA
+        // exata definida na Properties panel. So faz sentido para Dynamic
+        // (o Jolt ignora MassPropertiesOverride em Static/Kinematic).
+        // Mass minimo de 0.001f evita massa zero/negativa travando o
+        // solver.
         if (rigidBody.Type == BodyType::Dynamic) {
             bodyCreationSettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
             bodyCreationSettings.mMassPropertiesOverride.mMass = std::max(rigidBody.Mass, 0.001f);
@@ -557,12 +506,10 @@ namespace Prism {
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         JPH::Body* body = bodyInterface.CreateBody(bodyCreationSettings);
 
-        // user data de 64 bits do proprio Jolt (equivalente ao void*
-        // userData que Box3D guardava em b3BodyDef) - armazena o
-        // entt::entity dono para que eventos/queries do Jolt consigam
-        // voltar para "qual entidade e essa" sem busca linear. entt::entity
-        // e tipicamente um uint32_t por baixo - cabe tranquilamente num
-        // uint64_t.
+        // user data de 64 bits do proprio Jolt - armazena o entt::entity
+        // dono para que eventos/queries do Jolt consigam voltar para "qual
+        // entidade e essa" sem busca linear. entt::entity e tipicamente um
+        // uint32_t por baixo - cabe num uint64_t.
         body->SetUserData(static_cast<JPH::uint64>(static_cast<uint32_t>(entity.GetHandle())));
 
         // EActivation::Activate para corpos que devem comecar acordados
@@ -585,11 +532,8 @@ namespace Prism {
             return;
 
         // Jolt exige RemoveBody (tira da simulacao/broad-phase) ANTES de
-        // DestroyBody (libera a memoria do corpo) - as duas chamadas sao
-        // separadas de proposito na API deles (voce pode remover um
-        // corpo temporariamente sem destruir, por exemplo) - diferente
-        // de b3DestroyBody, que fazia as duas coisas de uma vez so. Ver
-        // Jolt docs "Body Lifetime".
+        // DestroyBody (libera a memoria do corpo). Ver Jolt docs "Body
+        // Lifetime".
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         bodyInterface.RemoveBody(it->second);
         bodyInterface.DestroyBody(it->second);
@@ -602,13 +546,11 @@ namespace Prism {
         if (!state)
             return;
 
-        // Timestep FIXO via acumulador: Jolt (como a maioria dos motores
-        // de fisica, incluindo Box3D antes) e projetado e testado com um
-        // passo constante - alimentar deltaTime bruto e variavel direto
-        // no Update() degrada estabilidade (colisoes perdidas em quedas
-        // de frame-rate, jitter). Mesmo mecanismo de acumulador que a
-        // versao Box3D ja usava, preservado identico aqui (nao depende
-        // da lib de fisica escolhida).
+        // Timestep FIXO via acumulador: o Jolt (como a maioria dos motores
+        // de fisica) e projetado e testado com um passo constante -
+        // alimentar deltaTime bruto e variavel direto no Update() degrada
+        // estabilidade (colisoes perdidas em quedas de frame-rate,
+        // jitter).
         state->Accumulator += deltaTime;
         int stepsThisFrame = 0;
         while (state->Accumulator >= kFixedTimeStep && stepsThisFrame < kMaxStepsPerFrame) {
@@ -624,23 +566,18 @@ namespace Prism {
             stepsThisFrame++;
         }
         if (stepsThisFrame == kMaxStepsPerFrame)
-            state->Accumulator = 0.0f; // descarta o resto acumulado - preferimos desacelerar a travar (mesma protecao "espiral da morte" de antes)
+            state->Accumulator = 0.0f; // descarta o resto acumulado - preferimos desacelerar a travar ("espiral da morte")
 
         // --- Sincroniza corpos movidos de volta para TransformComponent ---
-        // Diferente de Box3D (que tinha um b3World_GetBodyEvents so com
-        // os corpos que realmente se moveram naquele step - mais barato),
-        // a API publica estavel do Jolt nao expoe um "moved bodies list"
-        // pronta do mesmo jeito (existe um BodyActivationListener para
+        // A API publica estavel do Jolt nao expoe uma lista de "corpos
+        // movidos neste step" (existe um BodyActivationListener para
         // ativar/dormir, mas nao um "moved this step" direto). Por isso
         // iteramos EntityToBody inteiro e perguntamos GetMotionType a
         // cada corpo - so sincronizamos corpos NAO-estaticos (Static
-        // nunca se move por definicao, entao nunca precisa escrever de
-        // volta no TransformComponent - e o TransformComponent dele e
-        // que dita a posicao inicial, nunca o contrario). Isto e
-        // ligeiramente mais caro que o esquema de eventos do Box3D com
-        // MUITOS corpos estaticos, mas correto e simples; se um dia isso
-        // virar gargalo medido de verdade, dá pra otimizar guardando uma
-        // lista separada so de corpos nao-estaticos em SceneState.
+        // nunca se move por definicao, e o TransformComponent dele dita a
+        // posicao inicial, nunca o contrario). Se isso virar gargalo
+        // medido, da pra otimizar guardando uma lista separada so de
+        // corpos nao-estaticos em SceneState.
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         for (auto& [entityHandleValue, bodyId] : state->EntityToBody) {
             if (bodyInterface.GetMotionType(bodyId) == JPH::EMotionType::Static)
@@ -654,48 +591,35 @@ namespace Prism {
             if (!transform)
                 continue;
 
-            // ATENCAO - limitacao conhecida (ver README, ja existia com
-            // Box3D): escrevemos POSICAO/ROTACAO DE MUNDO direto no
-            // TransformComponent LOCAL da entidade, ignorando qualquer
-            // ancestral (RelationshipComponent). Isso e correto para
-            // entidades SEM pai (a esmagadora maioria dos casos de
-            // gameplay), mas produz resultado errado para uma entidade
-            // fisica que tambem seja filha de outra na hierarquia (o
-            // Jolt nao tem ideia de que existe um pai, igual Box3D antes).
-            // Corrigir isso exigiria multiplicar pela inversa da
-            // transform do pai a cada sincronizacao - adiado de proposito
-            // (mesmo motivo/escopo de antes; nao mudou com a migracao).
+            // Limitacao conhecida (ver docs/fisica.md): escrevemos
+            // POSICAO/ROTACAO DE MUNDO direto no TransformComponent LOCAL
+            // da entidade, ignorando qualquer ancestral
+            // (RelationshipComponent). Isso e correto para entidades SEM
+            // pai (o caso comum), mas produz resultado errado para uma
+            // entidade fisica que tambem seja filha de outra na hierarquia
+            // (o Jolt nao sabe que existe um pai). Corrigir isso exigiria
+            // multiplicar pela inversa da transform do pai a cada
+            // sincronizacao.
             transform->Translation = FromJolt(bodyInterface.GetPosition(bodyId));
 
             // Rotacao so e sincronizada de volta se o corpo NAO tiver
             // FixedRotation (ver RigidBodyComponent::FixedRotation,
-            // Components.h) - mesma razao ja documentada na versao
-            // Box3D: com rotacao travada, o quat do corpo nunca muda de
-            // verdade, entao reconverter Euler->quat->Euler aqui toda vez
-            // so arriscaria introduzir deriva/ambiguidade de
-            // representacao SEM nenhum ganho, competindo a toa com um
-            // script que esta escrevendo transform->Rotation diretamente
-            // no mesmo frame.
+            // Components.h): com rotacao travada, o quat do corpo nunca
+            // muda de verdade, entao reconverter Euler->quat->Euler aqui
+            // toda vez so arriscaria introduzir deriva/ambiguidade de
+            // representacao sem nenhum ganho, competindo com um script que
+            // esteja escrevendo transform->Rotation no mesmo frame.
             auto* rigidBody = scene.GetRegistry().try_get<RigidBodyComponent>(handle);
             if (!rigidBody || !rigidBody->FixedRotation)
                 transform->Rotation = QuatToEulerDegrees(glm::normalize(FromJolt(bodyInterface.GetRotation(bodyId))));
         }
 
         // --- Eventos de colisao -> ScriptEngine::OnCollisionEnter/Exit ---
-        // TODO(proxima iteracao de scripting): quando ScriptEngine expuser
-        // OnCollisionEnter/OnCollisionExit para Lua (ver TODO em
-        // ScriptEngine::RegisterAPI), este e o lugar que vai traduzir os
-        // callbacks de contato do Jolt (JPH::ContactListener::OnContactAdded/
-        // OnContactRemoved - registrado via
-        // PhysicsSystem::SetContactListener, equivalente em espirito ao
-        // antigo b3ContactBeginTouchEvent/EndTouchEvent do Box3D, so que
-        // via listener/callback em vez de uma fila de eventos consultada
-        // por step) para CollisionEvent (que fala de entt::entity) e
-        // chamar o callback do script correspondente. Adiado de proposito
-        // desta migracao para manter o escopo controlado - a sincronizacao
-        // de Transform acima ja e o suficiente para objetos caindo/
-        // colidindo aparecerem corretamente na viewport, mesmo estado que
-        // ja existia antes da troca de Box3D para Jolt.
+        // TODO: ainda nao implementado. Registrar um
+        // JPH::ContactListener (PhysicsSystem::SetContactListener) e
+        // traduzir OnContactAdded/OnContactRemoved para CollisionEvent
+        // (que fala de entt::entity), chamando os callbacks
+        // OnCollisionEnter/OnCollisionExit do script correspondente.
     }
 
     void PhysicsEngine::ApplyForce(Scene& scene, Entity entity, const glm::vec3& force) {
@@ -747,10 +671,9 @@ namespace Prism {
 
         // direction pode chegar nao-normalizada (ver comentario no .h) -
         // JPH::RRayCast espera Direction = vetor deslocamento COMPLETO do
-        // raio (origin -> origin + Direction), mesmo padrao que
-        // b3World_CastRayClosest ja exigia com Box3D - por isso
-        // normalizamos e multiplicamos por maxDistance aqui, em vez de
-        // passar direction crua.
+        // raio (origin -> origin + Direction), por isso normalizamos e
+        // multiplicamos por maxDistance aqui, em vez de passar direction
+        // crua.
         float lengthSq = glm::dot(direction, direction);
         if (lengthSq < 0.0000001f) // direcao (quase) zero - nao ha raio nenhum para lancar
             return result;
@@ -759,20 +682,11 @@ namespace Prism {
 
         JPH::RRayCast ray(ToJolt(origin), ToJolt(translation));
 
-        // NarrowPhaseQuery::CastRay (variante simples, "closest hit") e o
-        // equivalente direto de b3World_CastRayClosest - mesma limitacao
-        // ja documentada no .h: sem filtro fino por camada/mascara ainda
-        // (usamos os filtros default, que aceitam qualquer BroadPhaseLayer/
-        // ObjectLayer - equivalente em espirito ao antigo
-        // b3DefaultQueryFilter()).
+        // NarrowPhaseQuery::CastRay (variante simples, "closest hit").
+        // Sem filtro fino por camada/mascara: os parametros de filtro de
+        // CastRay tem default vazio ({}), que aceita qualquer
+        // BroadPhaseLayer/ObjectLayer.
         JPH::RayCastResult rayResult;
-        // Sem filtro customizado: os parametros de filtro de CastRay tem
-        // default vazio ({}), que ja aceita qualquer BroadPhaseLayer/
-        // ObjectLayer - equivalente ao antigo b3DefaultQueryFilter() do
-        // Box3D. (Antes disto havia uma tentativa de combinar dois
-        // SpecifiedBroadPhaseLayerFilter com operator| - que nao existe
-        // na API do Jolt para esse tipo; nao e necessario de qualquer
-        // forma, já que omitir o filtro já cobre "aceita tudo".)
         //
         // 'ignoreEntities' (ver comentario no .h) vira um BodyFilter via
         // JPH::IgnoreMultipleBodiesFilter - classe utilitaria que o

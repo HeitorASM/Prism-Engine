@@ -54,12 +54,10 @@ namespace Prism {
     // Ligar culling por winding no pipeline faria essas primitivas
     // sumirem inteiras (ou mostrarem so a face errada) em vez de so
     // esconder a face interna. Testar dot(normal, viewDir) funciona
-    // igual independente do winding - e mais barato para a GPU calcular
-    // culling por indice, mas para o tamanho de cena que este prototipo
-    // desenha hoje a diferenca de custo e desprezivel. Uma correcao futura
-    // (normalizar o winding de cada PrimitiveMeshFactory::Create* e trocar
-    // para glCullFace) fica registrada no README como proximo passo
-    // opcional de performance, nao como bug.
+    // igual independente do winding. O culling por indice e mais barato
+    // para a GPU, mas para o tamanho de cena atual a diferenca e
+    // desprezivel. Otimizacao possivel: normalizar o winding de cada
+    // PrimitiveMeshFactory::Create* e trocar para glCullFace.
     static const char* s_VertexSrc = R"(
         #version 450 core
         layout(location = 0) in vec3 a_Position;
@@ -303,7 +301,7 @@ namespace Prism {
     //
     // Modelo de iluminacao continua Lambert simples (sem especular, sem
     // PBR) - propositalmente, para bater com o nivel de fidelidade do
-    // resto do renderer neste estagio do prototipo (ver README). Trocar
+    // resto do renderer neste estagio. Trocar
     // por um modelo mais realista (Blinn-Phong, PBR/Cook-Torrance) e uma
     // mudanca isolada dentro de CalculateLight/main, que nao afeta a
     // API C++ (GPULight/LightComponent) nem o editor.
@@ -319,11 +317,10 @@ namespace Prism {
         uniform vec3 u_CameraWorldPos;
 
         // --- Material (albedo/normal/roughness-metallic) -----------------
-        // u_Has*Map=false (o padrao) preserva o comportamento antigo
-        // exato: sem nenhuma amostragem de textura, so os fatores/tint
-        // (ver MaterialComponent, Components.h) - permite qualquer
-        // MeshRendererComponent SEM MaterialComponent continuar
-        // desenhando exatamente como antes desta feature existir.
+        // u_Has*Map=false (o padrao) significa nenhuma amostragem de
+        // textura, so os fatores/tint (ver MaterialComponent,
+        // Components.h) - permite desenhar qualquer MeshRendererComponent
+        // SEM MaterialComponent.
         uniform sampler2D u_AlbedoMap;
         uniform bool u_HasAlbedoMap;
         uniform sampler2D u_NormalMap;
@@ -429,12 +426,9 @@ namespace Prism {
             if (projCoords.z > 1.0)
                 return 0.0;
 
-            // Bias de profundidade AINDA existe, mas bem menor que antes -
-            // o normal offset acima ja faz a maior parte do trabalho de
-            // evitar acne; este bias residual cobre erro de precisao de
-            // ponto flutuante remanescente, nao mais a inclinacao inteira
-            // da superficie sozinho (por isso os valores sao bem menores
-            // que a versao anterior desta funcao).
+            // O normal offset acima ja faz a maior parte do trabalho de
+            // evitar acne; este bias residual, pequeno, cobre so o erro de
+            // precisao de ponto flutuante remanescente.
             float bias = max(0.0006 * (1.0 - dot(normal, lightDir)), 0.00015);
 
             // PCF (Percentage-Closer Filtering) 3x3: amostra a vizinhanca
@@ -546,10 +540,7 @@ namespace Prism {
             }
 
             // Ambiente fixo e pequeno - evita faces totalmente pretas em
-            // areas sem nenhuma luz alcancando (nao ha GI/luz indireta
-            // ainda). Mesmo valor (0.25) que o shader antigo usava, para
-            // cenas sem luzes configuradas nao ficarem mais escuras do
-            // que estavam antes desta mudanca.
+            // areas sem nenhuma luz alcancando (nao ha GI/luz indireta).
             //
             // SSAO e aplicado SO no termo ambiente, nunca na contribuicao
             // direta de cada luz (CalculateLight) - fisicamente, ambient
@@ -820,8 +811,7 @@ namespace Prism {
             // termo especular/PBR que dependa de roughness/metallic (ver
             // CalculateLight, s_FragmentSrc acima). RoughnessFactor/
             // MetallicFactor (e este mapa) ficam PRONTOS no dado do
-            // Material para quando o shader ganhar um termo especular de
-            // verdade - ver TODO no guia do prototipo sobre PBR completo.
+            // Material para quando o shader ganhar um termo especular.
             Texture2D* roughnessMetallic = GetOrLoadTexture(material->RoughnessMetallicPath, /*isSRGB*/ false);
             if (roughnessMetallic && roughnessMetallic->IsValid())
                 roughnessMetallic->Bind(4);
@@ -839,11 +829,9 @@ namespace Prism {
 
         // 'shadowMap' e opcional (ver comentario em Renderer.h) - sem ele,
         // u_HasShadow fica false e CalculateShadow nunca e chamada no
-        // shader (comportamento identico a antes desta feature existir).
+        // shader.
         // GL_TEXTURE0 e reservado para o shadow map, GL_TEXTURE1 para o
-        // AO map (ver abaixo) - DrawMesh nao usa nenhuma outra textura
-        // hoje (sem materiais/texturas ainda - ver README), entao nao ha
-        // conflito de slot.
+        // AO map (ver abaixo); as texturas do Material usam os slots 2-4.
         if (shadowMap) {
             shadowMap->BindForReading(0);
             s_BasicShader->SetInt("u_ShadowMap", 0);
@@ -855,8 +843,7 @@ namespace Prism {
         }
 
         // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
-        // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao),
-        // comportamento identico a antes desta feature existir.
+        // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao).
         if (ssao) {
             ssao->BindBlurredForReading(1);
             s_BasicShader->SetInt("u_AOMap", 1);
@@ -884,12 +871,10 @@ namespace Prism {
 
         // ATENCAO: s_LineVAO e criado uma unica vez em Init() (contexto do
         // editor) e, como qualquer VAO, NAO e valido em outro contexto
-        // OpenGL mesmo com share list (ver comentario grande em Mesh.h/
-        // Mesh::BindForCurrentContext - mesmo problema que DrawMesh() tinha
-        // e foi corrigido para meshes de entidade). DrawLines() so e
-        // chamado hoje pelo EditorLayer (gizmos de selecao/camera preview),
-        // nunca pela PlayWindow - se um dia gizmos de debug forem
-        // desenhados tambem dentro da PlayWindow, esta funcao vai precisar
+        // OpenGL mesmo com share list (ver Mesh.h/
+        // Mesh::BindForCurrentContext). DrawLines() so e chamado pelo
+        // EditorLayer (gizmos), nunca pela PlayWindow - se gizmos de debug
+        // forem desenhados tambem na PlayWindow, esta funcao vai precisar
         // do mesmo tratamento de "VAO por contexto" que Mesh:: ja tem.
         glBindVertexArray(s_LineVAO);
         glBindBuffer(GL_ARRAY_BUFFER, s_LineVBO);
@@ -1020,8 +1005,8 @@ namespace Prism {
     //     cubemap, no caso de Point) em vez do ortho simples aqui; adiado
     //     de proposito para manter esta etapa pequena e testavel. Uma
     //     segunda LightComponent com CastShadows=true simplesmente e
-    //     ignorada (nenhum erro, nenhum aviso ainda - TODO se isso incomodar
-    //     na pratica: um PRISM_CORE_WARN uma vez por sessao ajudaria).
+    //     ignorada, sem erro nem aviso (um PRISM_CORE_WARN uma vez por
+    //     sessao ajudaria).
     //   - SEM Cascaded Shadow Maps (CSM): um unico frustum ortho cobre a
     //     cena inteira (ver bounding box abaixo) em vez de varios
     //     frustums encadeados por distancia da camera. Para as cenas de
@@ -1058,7 +1043,7 @@ namespace Prism {
 
         if (shadowCasterHandle == entt::null) {
             // Nenhuma luz projeta sombra - DrawScene desenha sem shadow
-            // map, igual antes desta feature existir. Limpa o estado
+            // map. Limpa o estado
             // "shadow caster" do frame anterior (ver comentario em
             // s_HasShadowCasterEntity, Renderer.h) para DrawScene nao
             // reusar por engano o indice de um frame onde a luz shadow
@@ -1281,11 +1266,8 @@ namespace Prism {
         // Salva framebuffer + viewport ATUAIS antes de qualquer sub-pass
         // que desenhe em outro lugar (shadow map, G-buffer, SSAO) - todos
         // eles mudam framebuffer/viewport temporariamente e sao
-        // restaurados ao final de cada um deles aqui, nunca implicitamente
-        // (ver comentario grande sobre o bug historico do shadow pass, um
-        // pouco acima em RenderShadowPass/versoes anteriores desta
-        // funcao, que motivou fazer isso de forma explicita e centralizada
-        // aqui em vez de espalhado em cada sub-pass).
+        // restaurados ao final de cada um deles aqui, de forma explicita e
+        // centralizada, em vez de espalhado em cada sub-pass.
         GLint previousFramebuffer = 0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
         GLint previousViewport[4];
@@ -1320,11 +1302,10 @@ namespace Prism {
         // viewport tem tamanho valido (largura/altura > 0) - pode ser 0
         // por um frame quando o painel esta sendo redimensionado/oculto.
         //
-        // TODO(toggle): hoje SSAO esta SEMPRE ativo (sem uma opcao de
-        // liga/desliga no editor, ao contrario de CastShadows por luz) -
-        // e candidato natural para uma configuracao de qualidade grafica
-        // futura (ex: um painel de "Render Settings" por cena/projeto),
-        // mas fica fora do escopo desta etapa.
+        // TODO: SSAO esta SEMPRE ativo (sem opcao de liga/desliga no
+        // editor, ao contrario de CastShadows por luz); poderia virar uma
+        // configuracao de qualidade grafica (ex: "Render Settings" por
+        // cena/projeto).
         SSAO* ssao = nullptr;
         if (viewportWidth > 0 && viewportHeight > 0) {
             GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight);
@@ -1340,10 +1321,9 @@ namespace Prism {
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         }
 
-        // Mesmo loop que EditorLayer::RenderSceneEntities fazia antes desta
-        // funcao existir (ver comentario em Renderer.h) - toda entidade com
-        // TransformComponent + MeshRendererComponent, usando a transform de
-        // MUNDO (Scene::GetWorldTransform, ancestrais/parenting inclusos).
+        // Toda entidade com TransformComponent + MeshRendererComponent,
+        // usando a transform de MUNDO (Scene::GetWorldTransform,
+        // ancestrais/parenting inclusos).
         //
         // Nome 'meshRendererView' (nao so 'view') para nao colidir com o
         // parametro 'view' (matriz de camera) desta funcao.

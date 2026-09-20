@@ -104,9 +104,8 @@ namespace Prism {
         // (ex: CameraComponent nasce com Primary=true, mas se outra
         // camera ja e Primary, o EditorLayer corrige isso aqui - ver
         // ComponentRegistration.cpp). NAO faz parte do historico de
-        // Undo/Redo, igual o comportamento que ja existia antes deste
-        // registro (ver comentario original em EditorLayer, "e so um
-        // ajuste de consistencia, nao uma edicao que o usuario pediu").
+        // Undo/Redo (e so um ajuste de consistencia, nao uma edicao que o
+        // usuario pediu).
         std::function<void(Entity, Scene&)> OnAfterAddInEditor = nullptr;
     };
 

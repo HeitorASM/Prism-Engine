@@ -25,15 +25,12 @@
 // raiz e um bug da engine (ex: um Collider degenerado que ainda nao
 // tinha o clamp de tamanho minimo, ver PhysicsEngine::CreateBodyForEntity).
 //
-// WINDOWS-ONLY por enquanto: usa SetUnhandledExceptionFilter, uma API
-// especifica do Win32 - mesma limitacao implicita que ja existia em
-// PRISM_DEBUGBREAK (Base.h), que so define __debugbreak() para MSVC/
-// Windows. Guardado por PRISM_PLATFORM_WINDOWS (definida pelo CMake, ver
-// Prism/CMakeLists.txt) - em qualquer outra plataforma este arquivo vira
-// um no-op silencioso. Instalar um handler equivalente para Linux/macOS
-// (via sigaction para SIGSEGV/SIGABRT) fica como trabalho futuro se/quando
-// a engine precisar rodar nessas plataformas - ver README para o estado
-// geral de portabilidade.
+// WINDOWS-ONLY: usa SetUnhandledExceptionFilter, uma API do Win32 (mesma
+// limitacao de PRISM_DEBUGBREAK em Base.h, que so define __debugbreak()
+// para MSVC/Windows). Guardado por PRISM_PLATFORM_WINDOWS (definida pelo
+// CMake, ver Prism/CMakeLists.txt); em qualquer outra plataforma este
+// arquivo vira um no-op silencioso. Um handler equivalente para Linux/macOS
+// (via sigaction para SIGSEGV/SIGABRT) ainda nao existe.
 // ============================================================================
 
 namespace Prism {

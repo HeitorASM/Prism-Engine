@@ -185,8 +185,8 @@ namespace PrismEditor {
         // ProcessPendingLayerOps() do proximo frame, sem nenhum frame
         // intermediario onde ProjectManagerLayer e EditorLayer coexistem
         // na LayerStack e ambos tentam desenhar UI ao mesmo tempo (esse
-        // frame de sobreposicao foi a causa real de um crash de
-        // ImGui::InputText - ver historico do projeto). A ordem
+        // frame de sobreposicao ja causou um crash de
+        // ImGui::InputText). A ordem
         // push-antes-pop nao importa aqui, so que ambos sejam enfileirados
         // no mesmo lugar/momento.
         Prism::Application& app = Prism::Application::Get();

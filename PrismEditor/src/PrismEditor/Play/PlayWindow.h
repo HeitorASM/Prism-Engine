@@ -6,9 +6,7 @@
 // ImGui dockable) que roda o jogo de verdade durante o modo Play - mesmo
 // padrao usado por Godot, Unity e Source (uma janela distinta da do editor).
 //
-// Duas decisoes de design centrais, ambas motivadas por bugs que a
-// abordagem antiga (Play dentro da propria viewport do editor, com
-// snapshot/restore - ver README) exigia:
+// Duas decisoes de design centrais:
 //
 // 1) A Scene rodada aqui e uma COPIA (Scene::Clone(), em memoria - ver
 //    Scene.h/.cpp e PlayWindow::Open) da Scene de edicao, NUNCA a mesma
@@ -89,10 +87,9 @@ namespace PrismEditor {
         GLFWwindow* m_Window = nullptr;
         Prism::Ref<Prism::Scene> m_PlayScene;
 
-        // Tamanho inicial da janela de Play - fixo por enquanto (sem
-        // configuracao de resolucao na UI ainda, ver README "Proximos
-        // passos"). Atualizado se o usuario redimensionar a janela do SO
-        // manualmente (ver GlfwWindowSizeCallback no .cpp).
+        // Tamanho inicial da janela de Play - fixo (sem configuracao de
+        // resolucao na UI). Atualizado se o usuario redimensionar a janela
+        // do SO manualmente (ver GlfwWindowSizeCallback no .cpp).
         uint32_t m_Width = 1280;
         uint32_t m_Height = 720;
 

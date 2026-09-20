@@ -56,8 +56,7 @@ namespace Prism {
         // Restaura o framebuffer padrao (tela/FBO 0). Assim como
         // ShadowMap::Unbind, NAO restaura o glViewport sozinho - quem
         // chama (Renderer::DrawScene) e responsavel por isso, ja que so
-        // o chamador sabe qual era o viewport antes (ver comentario
-        // grande sobre esse bug historico em Renderer::DrawScene).
+        // o chamador sabe qual era o viewport antes.
         void Unbind() const;
 
         // Bind da textura de normal (view-space) como sampler2D no slot dado.

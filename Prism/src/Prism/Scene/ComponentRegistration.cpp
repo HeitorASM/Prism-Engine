@@ -231,8 +231,7 @@ namespace Prism {
             // Primary na cena, isso violaria a regra de "no maximo uma"
             // ate o usuario mexer manualmente no checkbox. Corrige aqui,
             // FORA do historico de Undo (e so um ajuste de consistencia,
-            // nao uma edicao que o usuario pediu) - migrado 1:1 do bloco
-            // que antes vivia em EditorLayer::RenderAddComponentMenu.
+            // nao uma edicao que o usuario pediu).
             [](Entity e, Scene& scene) {
                 bool anyOtherPrimary = false;
                 auto view = scene.GetRegistry().view<CameraComponent>();

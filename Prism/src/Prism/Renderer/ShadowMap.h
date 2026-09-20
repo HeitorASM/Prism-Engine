@@ -19,15 +19,13 @@
 // exigiria flags condicionais espalhados pelo Framebuffer existente sem
 // necessidade real.
 //
-// Esta e a implementacao mais simples que funciona: UM shadow map, UMA
-// luz Directional projetando sombra por vez (ver comentario grande em
-// Renderer::RenderShadowPass sobre o motivo de nao suportar Point/Spot
-// nem multiplas luzes com sombra ainda). Cascaded Shadow Maps (CSM -
-// varios ShadowMap encadeados por distancia da camera, usados por engines
-// AAA para cenas grandes) fica como evolucao natural se/quando cenas desta
-// engine precisarem: a API publica desta classe (Bind/GetLightSpaceMatrix)
-// ja e compativel com "um ShadowMap por cascata" no futuro, sem quebrar
-// nada.
+// Implementacao simples: UM shadow map, UMA luz Directional projetando
+// sombra por vez (ver comentario em Renderer::RenderShadowPass sobre o
+// motivo de nao suportar Point/Spot nem multiplas luzes com sombra).
+// Cascaded Shadow Maps (varios ShadowMap encadeados por distancia da
+// camera) seriam a evolucao para cenas grandes: a API publica desta
+// classe (Bind/GetLightSpaceMatrix) ja e compativel com "um ShadowMap por
+// cascata".
 // ============================================================================
 
 #include "../Core/Base.h"
@@ -41,10 +39,8 @@ namespace Prism {
         // 'resolution' e a largura E altura (quadrada) da textura de
         // profundidade em texels. 2048 e um meio-termo razoavel entre
         // qualidade de borda de sombra e memoria de GPU (2048x2048 x 32
-        // bits ~= 16MB) - generoso o bastante para nao serrilhar
-        // visivelmente nas cenas de portfolio que esta engine desenha
-        // hoje, sem ir para os 4096+ que engines AAA usam para cenas
-        // muito maiores.
+        // bits ~= 16MB); suficiente para nao serrilhar visivelmente nas
+        // cenas atuais.
         explicit ShadowMap(uint32_t resolution = 2048);
         ~ShadowMap();
 

@@ -6,11 +6,10 @@
 // Log.h), para que qualquer painel de UI (hoje, o Console do editor) possa
 // exibir o historico de log sem precisar redirecionar stdout/stderr.
 //
-// Fica no CORE da engine (nao no Editor) de proposito: a Prism engine pode
-// ser usada standalone (fora do editor, ver README) e mesmo assim pode
-// fazer sentido inspecionar o log em runtime - por exemplo, um futuro
-// console de debug in-game. O ConsolePanel do editor so consome isto, nao
-// e dono da logica de armazenamento.
+// Fica no CORE da engine (nao no Editor) de proposito: a engine pode ser
+// usada fora do editor e ainda assim fazer sentido inspecionar o log em
+// runtime (por exemplo, um console de debug in-game). O ConsolePanel do
+// editor so consome isto, nao e dono da logica de armazenamento.
 // ============================================================================
 
 #include "Log.h"

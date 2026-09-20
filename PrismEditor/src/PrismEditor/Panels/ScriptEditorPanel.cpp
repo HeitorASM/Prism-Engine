@@ -86,9 +86,8 @@ namespace PrismEditor {
         ImGui::TextDisabled("%s", m_CurrentPath.string().c_str());
 
         // Ctrl+S salva mesmo com o foco dentro do TextEditor abaixo - o
-        // proprio TextEditor nao reserva Ctrl+S para nada (ver mapeamento
-        // de atalhos no README da lib), entao verificar isso aqui - fora
-        // do Render() - e seguro.
+        // proprio TextEditor nao reserva Ctrl+S para nada, entao verificar
+        // isso aqui - fora do Render() - e seguro.
         ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
             Save();
@@ -105,9 +104,7 @@ namespace PrismEditor {
         // caminho do arquivo: como so existe UMA instancia de TextEditor
         // neste painel (m_Editor) reaproveitada entre arquivos diferentes,
         // variar o ID evita qualquer estado de foco/scroll residual do
-        // ImGui vazando de um arquivo pro outro ao trocar (mesma logica
-        // que corrigiu o crash da versao anterior deste painel, baseada em
-        // InputTextMultiline).
+        // ImGui vazando de um arquivo pro outro ao trocar.
         ImVec2 avail = ImGui::GetContentRegionAvail();
         m_Editor.Render(("##ScriptEditorBuffer_" + m_CurrentPath.string()).c_str(), ImVec2(avail.x, avail.y));
 

@@ -155,11 +155,8 @@ namespace Prism {
         // que chama OnCreate()) de toda entidade com ScriptComponent que
         // tenha um caminho de arquivo preenchido. Depois disso, OnUpdate()
         // passa a chamar PhysicsEngine::Simulate() e
-        // ScriptEngine::UpdateScript() por frame. E o que o futuro modo
-        // Play vai chamar ao abrir a janela separada (ver README "Nota
-        // sobre modo Play") - tambem pode ser chamado isoladamente pelo
-        // editor so para testar scripts/fisica sem UI de Play completa
-        // ainda existir.
+        // ScriptEngine::UpdateScript() por frame. E o que o modo Play
+        // chama ao abrir a janela separada, sobre a Scene clonada.
         void OnScriptsStart();
 
         // Desliga o modo "rodando": destroi o mundo fisico

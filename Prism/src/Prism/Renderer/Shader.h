@@ -18,10 +18,8 @@ namespace Prism {
     class Shader {
     public:
         // Constroi a partir do CODIGO FONTE em memoria (nao de um caminho de
-        // arquivo) - deliberado por enquanto, ja que ainda nao existe um
-        // sistema de assets/importacao (ver guia do prototipo). Quando o
-        // importador de assets existir, um Shader::CreateFromFile pode ser
-        // adicionado sem quebrar este construtor.
+        // arquivo). Um Shader::CreateFromFile pode ser adicionado depois
+        // sem quebrar este construtor.
         Shader(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
         ~Shader();
 

@@ -20,16 +20,9 @@ namespace PrismEditor {
         }
 
         // --- Clona a Scene (nao roda a instancia de edicao diretamente) ---
-        // Ate esta mudanca, isso era feito serializando a Scene de edicao
-        // para um arquivo .prismmap TEMPORARIO em disco e desserializando
-        // de volta (ver historico) - existia porque, antes de
-        // Prism::ComponentRegistry existir, nao havia um jeito centralizado
-        // de saber "como copiar cada tipo de Component" sem duplicar esse
-        // conhecimento numa segunda funcao de clonagem. Com
-        // ComponentRegistry ja centralizando isso (ver Scene::Clone(),
-        // Scene.cpp), clonar em memoria e mais simples e mais barato (sem
-        // I/O de disco, sem arquivo temporario para limpar) - Scene::Clone()
-        // e o novo mecanismo canonico de "copia independente de uma Scene".
+        // Scene::Clone() (ver Scene.cpp) faz uma copia independente em
+        // memoria, usando o ComponentRegistry para copiar cada tipo de
+        // Component - sem I/O de disco nem arquivo temporario.
         Prism::Ref<Prism::Scene> clonedScene = editorScene->Clone();
         if (!clonedScene) {
             PRISM_CORE_ERROR("PlayWindow::Open: falha ao clonar a Scene de edicao.");

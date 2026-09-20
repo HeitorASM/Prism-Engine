@@ -13,99 +13,40 @@
 namespace Prism {
 
     // Incrementar sempre que o layout binario mudar de forma incompativel
-    // (novo component obrigatorio, campo removido, etc). Deserialize()
-    // recusa arquivos com versao diferente desta - ver comentario no .h.
+    // (novo component, campo novo/removido, mudanca na ordem de
+    // registro no ComponentRegistry). Deserialize() recusa arquivos com
+    // versao diferente desta - ver comentario no .h. Mapas de versao
+    // anterior precisam ser resalvos por uma versao compativel do editor.
     //
-    // v1 -> v2: adicionados LightComponent, ColliderComponent,
-    // RigidBodyComponent, ScriptComponent (todos opcionais, mesmo padrao de
-    // flag-de-presenca que MeshRendererComponent ja usava). Arquivos v1 nao
-    // sao lidos por este parser (ver Deserialize) - projetos criados antes
-    // desta mudanca precisam ser resalvos uma vez.
-    // v1 -> v2: adicionados LightComponent, ColliderComponent,
-    // RigidBodyComponent, ScriptComponent (todos opcionais, mesmo padrao de
-    // flag-de-presenca que MeshRendererComponent ja usava). Arquivos v1 nao
-    // sao lidos por este parser (ver Deserialize) - projetos criados antes
-    // desta mudanca precisam ser resalvos uma vez.
+    // Historico do formato:
+    //   v2  LightComponent, ColliderComponent, RigidBodyComponent e
+    //       ScriptComponent (opcionais, com flag de presenca)
+    //   v3  CameraComponent
+    //   v4  RelationshipComponent (parenting), ver nota abaixo
+    //   v5  LightComponent: InnerSpotAngle e CastShadows. Size (reservado
+    //       para o tipo Area) nao e salvo: nenhum LightType o usa ainda
+    //   v6  RigidBodyComponent: FixedRotation
+    //   v7  RaycastComponent (so TargetPosition/Enabled; os campos de
+    //       resultado - Hit, HitEntity, HitPoint etc - sao de runtime e
+    //       nunca vao para o arquivo)
+    //   v8  RigidBodyComponent: Friction, Restitution, LinearDamping,
+    //       AngularDamping
+    //   v9  RaycastComponent: IgnoreParentAndSiblings
+    //   v10 MaterialComponent, registrado entre MeshRendererComponent e
+    //       LightComponent (a ordem de registro no ComponentRegistry,
+    //       ver ComponentRegistry::GetAll(), determina a ordem no arquivo)
     //
-    // v2 -> v3: adicionado CameraComponent (opcional, mesmo padrao de flag
-    // de presenca). Arquivos v2 nao sao lidos por este parser - mapas
-    // salvos antes desta mudanca precisam ser resalvos uma vez.
-    //
-    // v3 -> v4: adicionado RelationshipComponent (parenting). Diferente
-    // dos outros components opcionais, NAO usa flag de presenca + campos -
-    // usa so um int32_t por entidade (indice do pai na ordem de escrita
-    // deste arquivo, -1 = sem pai/raiz). entt::entity bruto NUNCA e salvo
-    // (o handle e so valido durante a sessao atual - ao recarregar, o
-    // EnTT pode reciclar/reordenar handles livremente); o indice posicional
-    // e estavel porque Serialize()/Deserialize() sempre iteram/criam
-    // entidades na MESMA ordem (ver ForEachEntity). Children nao e salvo
-    // separado - Deserialize() reconstroi Children chamando
-    // Scene::SetParent() para cada entidade que tem um Parent valido,
-    // depois que TODAS as entidades ja foram criadas (precisa dos handles
-    // novos de ambos os lados existirem antes de ligar o parentesco).
-    //
-    // v4 -> v5: LightComponent ganhou InnerSpotAngle (soft edge do cone
-    // do Spot) e CastShadows (reservado - ver Components.h/Renderer, o
-    // Renderer ainda nao produz sombra nenhuma). Size (reservado para o
-    // futuro tipo Area) DELIBERADAMENTE nao e salvo ainda - nenhum
-    // LightType usa esse campo hoje, entao gravar seria so ruido no
-    // arquivo; sera adicionado ao formato quando Area for implementado.
-    // Arquivos v4 nao sao lidos por este parser - mapas salvos antes
-    // desta mudanca precisam ser resalvos uma vez (mesmo padrao de todo
-    // bump anterior, ver comentarios acima).
-    //
-    // v5 -> v6: RigidBodyComponent ganhou FixedRotation (trava as 3
-    // rotacoes fisicas do corpo - ver Components.h e o comentario de
-    // PhysicsEngine::Simulate sobre por que isto e necessario para
-    // camera/player controlados por script). Arquivos v5 nao sao lidos
-    // por este parser - mapas salvos antes desta mudanca precisam ser
-    // resalvos uma vez (mesmo padrao de todo bump anterior).
-    //
-    // v6 -> v7: adicionado RaycastComponent (opcional, mesmo padrao de
-    // flag de presenca). So TargetPosition/Enabled sao gravados - os
-    // campos de resultado (Hit/HitEntity/HitPoint/HitNormal/HitDistance)
-    // sao transientes de runtime e nunca vao para o arquivo (ver
-    // comentario no bloco de Serialize/Deserialize). Arquivos v6 nao sao
-    // lidos por este parser - mapas salvos antes desta mudanca precisam
-    // ser resalvos uma vez (mesmo padrao de todo bump anterior).
-    //
-    // v7 -> v8: RigidBodyComponent ganhou Friction/Restitution/
-    // LinearDamping/AngularDamping - ate aqui esses 4 valores existiam
-    // (com defaults fixos) mas nunca chegavam ao Jolt nem ao arquivo;
-    // agora alimentam a simulacao de verdade (ver
-    // PhysicsEngine::CreateBodyForEntity) e por isso precisam ser salvos,
-    // ou um mapa recarregado perderia o ajuste fino do usuario e voltaria
-    // silenciosamente para os defaults. Arquivos v7 nao sao lidos por
-    // este parser - mapas salvos antes desta mudanca precisam ser
-    // resalvos uma vez (mesmo padrao de todo bump anterior).
-    //
-    // v8 -> v9: RaycastComponent ganhou IgnoreParentAndSiblings (ver
-    // Components.h) - controla se o raio ignora a entidade pai e as
-    // entidades irmas ao testar colisao (Scene::UpdateRaycastComponents).
-    // Arquivos v8 nao sao lidos por este parser - mapas salvos antes
-    // desta mudanca precisam ser resalvos uma vez (mesmo padrao de todo
-    // bump anterior).
-    //
-    // CORRECAO: esta constante estava incorretamente travada em 8 apos
-    // IgnoreParentAndSiblings ja ter sido adicionado ao formato binario
-    // (ver ComponentRegistration.cpp, bloco RaycastComponent, que ja
-    // gravava/lia o campo novo com um comentario "v9+" mesmo com
-    // kSceneFormatVersion ainda em 8) - uma inconsistencia real que
-    // significava que um .prismmap salvo DEPOIS de
-    // IgnoreParentAndSiblings existir ainda se identificava como v8 no
-    // cabecalho, apesar de ja ter o campo extra no corpo do arquivo.
-    // Corrigido aqui para o valor que deveria ter sido usado desde que
-    // aquele campo foi adicionado.
-    //
-    // v9 -> v10: novo MaterialComponent (ver Components.h/
-    // ComponentRegistration.cpp) - registrado no ComponentRegistry entre
-    // MeshRendererComponent e LightComponent, entao toda entidade que
-    // tiver este component agora grava uma flag+campos a mais no stream
-    // (ver ComponentRegistry::GetAll(), a ordem de registro determina a
-    // ordem no arquivo). Arquivos v9 (e os v8 incorretamente rotulados,
-    // ver correcao acima) nao sao lidos por este parser - mapas salvos
-    // antes desta mudanca precisam ser resalvos uma vez (mesmo padrao de
-    // todo bump anterior).
+    // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
+    // presenca; grava so um int32_t por entidade com o indice do pai na
+    // ordem de escrita do arquivo (-1 = raiz). O entt::entity bruto nunca
+    // e salvo, pois o handle so vale durante a sessao (o EnTT pode
+    // reciclar/reordenar handles ao recarregar). O indice posicional e
+    // estavel porque Serialize()/Deserialize() sempre iteram/criam
+    // entidades na MESMA ordem (ver ForEachEntity). Children tambem nao e
+    // salvo: Deserialize() o reconstroi chamando Scene::SetParent() para
+    // cada entidade com pai valido, depois que TODAS as entidades ja
+    // foram criadas (os handles novos de ambos os lados precisam existir
+    // antes de ligar o parentesco).
     static constexpr uint32_t kSceneFormatVersion = 10;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 

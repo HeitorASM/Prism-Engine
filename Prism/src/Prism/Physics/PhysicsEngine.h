@@ -4,25 +4,11 @@
 // PhysicsEngine.h
 // Ponte entre a engine e o Jolt Physics (github.com/jrouwe/JoltPhysics).
 //
-// MIGRADO de Box3D (erincatto/box3d) para Jolt Motivo resumido: Box3D era v0.1.0
-// alpha (unica release existente no momento da integracao original), com
-// o proprio autor pedindo para nao mandar PRs ainda (API instavel por
-// design). Jolt e usado em producao (Horizon Forbidden West) e tem
-// releases semanticas estaveis - ver comentario em vendor/CMakeLists.txt.
-//
-// A API PUBLICA desta classe (assinaturas de todos os metodos abaixo, e
-// os tipos CollisionEvent/RaycastHit) foi mantida IDENTICA a versao
-// Box3D de proposito - ScriptEngine.cpp e qualquer outro consumidor
-// (editor, futuros sistemas) NAO precisaram mudar uma linha por causa
-// desta migracao. So este arquivo e o .cpp mudam.
-//
-// Design geral (mesmo espirito do ScriptEngine - ver Scripting/ScriptEngine.h):
-// um mundo fisico Jolt (PhysicsSystem) por Scene "rodando", criado em
+// Um mundo fisico Jolt (PhysicsSystem) por Scene "rodando", criado em
 // Scene::OnScriptsStart() (o mesmo Play que liga scripts tambem liga
 // fisica) e destruido em Scene::OnScriptsStop(). Corpos Jolt sao criados
 // para toda entidade que tenha AMBOS RigidBodyComponent E
-// ColliderComponent (mesma regra de antes - ver CreateBodyForEntity no
-// .cpp).
+// ColliderComponent (ver CreateBodyForEntity no .cpp).
 //
 // Convencao de eixos/unidades: +Y para cima (mesma convencao do resto da
 // engine: TransformComponent, camera, etc) e gravidade padrao {0, -10, 0}.
@@ -41,9 +27,9 @@
 // Jolt exige varios headers "de infraestrutura" (job system, allocator,
 // broad phase layers) alem do header principal - isolados aqui para nao
 // espalhar includes do Jolt pelo resto do arquivo. Ver comentario extenso
-// em PhysicsEngine.cpp sobre cada um desses conceitos (Jolt, diferente de
-// Box3D, exige que o CONSUMIDOR da lib defina layers de colisao e job
-// system - nao vem com um default pronto).
+// em PhysicsEngine.cpp sobre cada um desses conceitos (o Jolt exige que o
+// CONSUMIDOR da lib defina layers de colisao e job system - nao vem com
+// um default pronto).
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyID.h>
@@ -59,20 +45,16 @@ namespace Prism {
     class Entity;
 
     // Um evento de colisao "traduzido" para o vocabulario da engine - a
-    // camada de scripting (ver ScriptEngine::RegisterAPI, TODO de fisica)
-    // consome isto, nao os tipos crus do Jolt (JPH::ContactManifold etc)
-    // diretamente, para nao vazar a lib de fisica escolhida para dentro
-    // da API Lua (se um dia trocarmos de Jolt para outra coisa, so este
-    // arquivo muda, no maximo - mesma razao de design de quando isto
-    // isolava Box3D).
+    // camada de scripting consome isto, nao os tipos crus do Jolt
+    // (JPH::ContactManifold etc), para nao vazar a lib de fisica escolhida
+    // para dentro da API Lua. Ainda nao e alimentado: os callbacks de
+    // contato do Jolt nao foram ligados.
     struct CollisionEvent {
         entt::entity OtherEntity = entt::null; // a OUTRA entidade envolvida na colisao (nao a dona do callback)
     };
 
-    // Resultado de um Raycast - mesmo espirito de CollisionEvent acima:
-    // vocabulario da engine (glm::vec3, entt::entity), nunca tipos crus do
-    // Jolt, para a escolha de lib de fisica nunca vazar para quem consome
-    // isto (ScriptEngine, editor).
+    // Resultado de um Raycast, no vocabulario da engine (glm::vec3,
+    // entt::entity) e nunca com tipos crus do Jolt.
     struct RaycastHit {
         // false = o raio nao acertou nada dentro de MaxDistance (todo o
         // resto dos campos abaixo fica em seus valores default/invalidos -
@@ -141,12 +123,8 @@ namespace Prism {
         // Lanca um raio a partir de 'origin' na direcao 'direction' (NAO
         // precisa vir normalizada - normalizada internamente, ver .cpp)
         // ate 'maxDistance' unidades de mundo, e retorna o hit MAIS
-        // PROXIMO (equivalente ao antigo b3World_CastRayClosest - convem
-        // para o uso mais comum: "o que esta na minha frente?", "aponte a
-        // arma para X"). Nao ha suporte a filtro de camada/mascara ainda -
-        // mesma limitacao que ja existia na versao Box3D, preservada aqui
-        // de proposito para manter o escopo desta migracao contido so a
-        // troca de motor fisico (nao adicionar feature nova).
+        // PROXIMO - o uso mais comum: "o que esta na minha frente?",
+        // "aponte a arma para X". Nao ha suporte a filtro de camada/mascara.
         //
         // 'ignoreEntities' (opcional, vazio por padrao) - corpos DESSAS
         // entidades nunca sao considerados um "hit", mesmo que o raio
@@ -173,8 +151,7 @@ namespace Prism {
         // o mesmo motivo por tras de ScriptEngine viver separado). Uma
         // entrada por Scene* que esteja atualmente com IsRunning() == true.
         struct SceneState {
-            // PhysicsSystem e o "mundo" do Jolt (equivalente ao b3WorldId
-            // antigo) - mas, diferente de Box3D, o Jolt exige que o
+            // PhysicsSystem e o "mundo" do Jolt. O Jolt exige que o
             // consumidor tambem gerencie um TempAllocator (memoria
             // temporaria usada durante um Update()) e um JobSystem
             // (paralelizacao do solver entre threads) por conta propria -
@@ -188,16 +165,14 @@ namespace Prism {
             std::unique_ptr<JPH::JobSystemThreadPool> JobSystem;
 
             // accumulator de tempo para o passo FIXO de simulacao (ver
-            // Simulate() no .cpp) - mesmo mecanismo que a versao Box3D ja
-            // usava.
+            // Simulate() no .cpp).
             float Accumulator = 0.0f;
 
             // Mapeia JPH::BodyID de volta para o entt::entity dono -
             // necessario porque eventos/queries do Jolt devolvem BodyID,
             // nao "a entidade que criou aquilo". Jolt tambem suporta um
-            // "user data" de 64 bits por corpo (equivalente ao userData
-            // void* que Box3D usava) - guardamos o entt::entity la
-            // TAMBEM (ver CreateBodyForEntity no .cpp), mas mantemos este
+            // "user data" de 64 bits por corpo - guardamos o entt::entity
+            // la TAMBEM (ver CreateBodyForEntity no .cpp), mas mantemos este
             // mapa inverso (entidade -> BodyID) para
             // CreateBodyForEntity(recarregar)/DestroyBodyForEntity
             // encontrarem o corpo de uma entidade especifica sem
@@ -241,7 +216,7 @@ namespace Prism {
         static std::unordered_map<Scene*, SceneState>& GetStates();
 
         static constexpr float kFixedTimeStep = 1.0f / 60.0f;
-        static constexpr int kMaxStepsPerFrame = 5; // mesma protecao de "espiral da morte" que a versao Box3D ja tinha
+        static constexpr int kMaxStepsPerFrame = 5; // protecao contra a "espiral da morte" (ver Simulate)
         static constexpr int kCollisionSteps = 1;    // sub-steps do solver do Jolt por chamada de Update() - ver comentario no .cpp
     };
 

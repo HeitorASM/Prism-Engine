@@ -20,8 +20,8 @@
 // editar o .prismmat depois nao propaga automaticamente para entidades
 // que ja carregaram dele antes. Um sistema de referencia compartilhada
 // (todas as entidades apontando para o MESMO material em memoria,
-// mudanca em uma reflete em todas) e uma funcionalidade maior, que fica
-// para uma iteracao futura caso vire necessidade real de producao.
+// mudanca em uma reflete em todas) e uma funcionalidade maior que ainda
+// nao existe.
 // ============================================================================
 
 #include "../Core/Base.h"

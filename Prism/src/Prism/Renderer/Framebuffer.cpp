@@ -1,5 +1,5 @@
-// Lembrete da regra de ouro do projeto: glad SEMPRE antes de qualquer coisa
-// que toque OpenGL/GLFW (ver comentario completo em OpenGLContext.cpp).
+// glad sempre antes de qualquer header que toque OpenGL/GLFW (ver
+// OpenGLContext.cpp).
 #include <glad/gl.h>
 #include "Framebuffer.h"
 #include "../Core/Log.h"

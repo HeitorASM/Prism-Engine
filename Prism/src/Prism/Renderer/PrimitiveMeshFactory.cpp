@@ -64,9 +64,8 @@ namespace Prism {
     GeneratedMesh PrimitiveMeshFactory::CreateCube() {
         GeneratedMesh mesh;
 
-        // Mesmos dados que ja existiam em Renderer.cpp antes desta
-        // refatoracao - 4 vertices por face (normais nao suavizadas),
-        // reorganizados aqui no formato MeshVertex.
+        // 4 vertices por face (normais nao suavizadas), no formato
+        // MeshVertex.
         float raw[] = {
             // +X
              0.5f, -0.5f, -0.5f,  1,0,0,   0.5f,  0.5f, -0.5f,  1,0,0,   0.5f,  0.5f,  0.5f,  1,0,0,   0.5f, -0.5f,  0.5f,  1,0,0,
