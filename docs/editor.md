@@ -67,7 +67,17 @@ Botão direito num node da Hierarquia abre **Duplicar**, **Criar Prefab...** e *
 - **Salvar Mapa** (Ctrl+S): grava em cima do arquivo atual; se não houver, funciona como Salvar Como.
 - **Salvar Como** (Ctrl+Shift+S): pede um nome, mostra o caminho final e avisa se um mapa com esse nome já existe. Nunca sobrescreve sem avisar. O mapa salvo vira o mapa inicial do projeto.
 
-Carregar outro mapa ou criar um novo descarta as alterações não salvas sem aviso (não há dirty flag ainda).
+### Alterações não salvas
+
+Fechar o editor (botão X ou **Arquivo → Fechar Projeto**), criar um **Novo Mapa** ou abrir outro mapa com duplo clique no Content Browser, tendo alterações não salvas, abre um popup com três opções:
+
+- **Salvar**: grava o mapa e só então continua a ação. Se o mapa ainda não tem arquivo, abre o Salvar Como; cancelar o nome cancela também a ação. Se a gravação falhar, a ação não prossegue.
+- **Não salvar**: continua a ação e descarta as alterações.
+- **Cancelar** (ou `Esc`): volta para o editor sem mudar nada.
+
+A detecção não depende do undo/redo: compara o estado atual da cena com o de quando ela foi carregada ou salva pela última vez (`SceneSerializer::ComputeFingerprint`). Por isso pega também as edições que não geram comando de undo (Light, Collider, RigidBody, Camera) e qualquer campo novo de component, sem precisar marcar nada. Desfazer ou reverter à mão até o estado salvo volta a contar como limpo. O cálculo só roda ao tentar sair ou trocar de mapa, nunca por frame.
+
+Limite conhecido: duas entidades com conteúdo 100% idêntico (mesmo nome, transform e components) são indistinguíveis, então trocar o pai de um filho entre elas não é detectado. As duas árvores ficam idênticas, então o resultado visível é o mesmo.
 
 ## Prefabs e materiais
 

@@ -37,6 +37,8 @@
 #include "../Panels/ScriptEditorPanel.h"
 #include "../Panels/EntityContextMenuPanel.h"
 #include "../Play/PlayWindow.h"
+#include <functional>
+#include <cstdint>
 
 namespace PrismEditor {
 
@@ -173,6 +175,47 @@ namespace PrismEditor {
         // chamado a cada frame de RenderDockspace() (ImGui::OpenPopup
         // exige isso mesmo quando o popup esta fechado, ver EditorLayer.cpp).
         void RenderSaveAsPopup();
+
+        // --- Alteracoes nao salvas ("dirty") ------------------------------
+        //
+        // Ha alteracoes nao salvas quando o estado ATUAL da cena difere do
+        // estado de quando ela foi carregada/salva pela ultima vez. A
+        // comparacao e por fingerprint da cena (ver
+        // SceneSerializer::ComputeFingerprint) em vez de um flag marcado a
+        // cada edicao: assim pega TODA alteracao, inclusive as dos campos de
+        // Light/Collider/RigidBody/Camera que nao geram comando de undo, e
+        // qualquer campo novo no futuro, sem ninguem precisar lembrar de
+        // "marcar dirty". E desfazer/refazer ate o estado salvo volta a
+        // contar como limpo.
+        //
+        // Custo: uma passada pela cena por chamada (~1 ms). So e chamado
+        // quando o usuario tenta descartar a cena (fechar, novo mapa, abrir
+        // outro mapa) - NUNCA por frame.
+        bool HasUnsavedChanges() const;
+
+        // Memoriza o estado atual da cena como "o que esta salvo em disco".
+        // Chamado apos carregar uma cena, criar uma nova e apos cada save
+        // bem sucedido.
+        void MarkSceneClean();
+
+        // Ponto de entrada unico para QUALQUER acao que descartaria a cena
+        // atual (fechar o editor, Novo Mapa, abrir outro mapa). Se nao ha
+        // alteracoes nao salvas, executa 'action' na hora. Se ha, guarda
+        // 'action' e abre o popup "Salvar alteracoes?" - 'action' so roda
+        // depois que o usuario escolher Salvar (e o save der certo) ou
+        // Nao salvar; Cancelar a descarta.
+        void RunAfterUnsavedCheck(std::function<void()> action);
+
+        // Desenha o popup modal "Salvar alteracoes?" (Salvar / Nao salvar /
+        // Cancelar). Chamado a cada frame de RenderDockspace(), mesmo
+        // fechado (mesmo motivo de todo popup modal aqui).
+        void RenderUnsavedChangesPopup();
+
+        // Igual a SaveActiveScene(), mas retorna se a cena FICOU salva
+        // (true) ou se o save foi adiado/falhou (false). Cena sem arquivo
+        // abre o popup Salvar Como e retorna false: o save so acontece num
+        // frame futuro, quando o usuario confirmar o nome.
+        bool TrySaveActiveScene();
 
         // Desenha o popup modal "Criar Prefab" (mesmo padrao de
         // RenderSaveAsPopup) - pede o nome do arquivo, chama
@@ -542,6 +585,52 @@ namespace PrismEditor {
         // terminou) - ver RenderTransformGizmo() no .cpp.
         Prism::TransformComponent m_GizmoTransformBeforeEdit;
         bool m_GizmoWasUsingLastFrame = false;
+
+        // =====================================================================
+        // ATENCAO: os membros do "dirty flag" (alteracoes nao salvas) ficam
+        // NO FIM da classe DE PROPOSITO - nao mova para o meio.
+        //
+        // Este header e incluido por DOIS .cpp (EditorLayer.cpp, que usa os
+        // membros, e ProjectManagerLayer.cpp, que faz `new EditorLayer()`).
+        // Se estes membros ficassem no meio, todos os membros originais
+        // depois deles seriam DESLOCADOS. Qualquer .obj que ainda estivesse
+        // compilado com o layout antigo (build incremental, cache do CMake)
+        // alocaria MENOS memoria do que o resto do codigo escreve - corrupcao
+        // de heap que so estoura tempos depois, em outro lugar (o sintoma
+        // real foi um crash 0xC0000374 dentro do driver, via ImGui).
+        // No fim da classe, o layout de TUDO que ja existia continua
+        // identico, e so o tamanho total cresce.
+        // =====================================================================
+
+        // Fingerprint da cena no ultimo carregamento/save (ver
+        // HasUnsavedChanges). 0 = ainda nao memorizado.
+        uint64_t m_SavedSceneFingerprint = 0;
+
+        // Estado do popup "Salvar alteracoes?" (ver RunAfterUnsavedCheck).
+        // m_PendingDiscardAction e o que o usuario estava tentando fazer;
+        // fica guardado ate ele decidir.
+        bool m_ShowUnsavedChangesPopup = false;
+        std::function<void()> m_PendingDiscardAction;
+
+        // true quando o usuario escolheu "Salvar" numa cena SEM arquivo: o
+        // save real acontece no popup Salvar Como (outro frame), e a acao
+        // pendente so deve rodar se esse save de fato ocorrer. Se o usuario
+        // cancelar o nome, a acao e descartada - fechar o editor depois de
+        // um "Salvar" cancelado perderia o trabalho justamente quando o
+        // aviso deveria protege-lo.
+        bool m_RunPendingActionAfterSaveAs = false;
+
+        // Fechar a janela (botao X) chega pelo callback do GLFW, no meio de
+        // glfwPollEvents - cedo demais para abrir um popup ImGui. O gancho
+        // do Application so registra o pedido aqui, e OnImGuiRender o
+        // trata no proximo frame.
+        bool m_CloseWindowRequested = false;
+
+        // true enquanto o editor confirma que PODE fechar (depois do
+        // usuario ter decidido no popup). Faz o gancho do Application
+        // deixar o proximo pedido de fechamento passar sem perguntar de
+        // novo.
+        bool m_AllowWindowClose = false;
     };
 
 }

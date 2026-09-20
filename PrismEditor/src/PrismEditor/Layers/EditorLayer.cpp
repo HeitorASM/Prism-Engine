@@ -22,6 +22,7 @@ namespace PrismEditor {
     // em RenderDockspace() (que precisa saber se ja esta aberto, para nao
     // tentar abrir de novo por cima de si mesmo).
     static constexpr const char* kSaveAsPopupId = "Salvar Mapa Como";
+    static constexpr const char* kUnsavedChangesPopupId = "Alteracoes nao salvas";
     static constexpr const char* kCreatePrefabPopupId = "Criar Prefab";
     static constexpr const char* kSaveMaterialPopupId = "Salvar Material Como";
     static constexpr const char* kNewScriptPopupId = "Novo Script";
@@ -39,7 +40,24 @@ namespace PrismEditor {
 
         m_ContentBrowser.ResetToProjectRoot();
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
-            LoadScene(mapPath);
+            // Copia do path: o Content Browser pode reaproveitar o buffer
+            // dele antes do popup "Salvar alteracoes?" ser respondido (a
+            // acao roda depois, em outro frame).
+            RunAfterUnsavedCheck([this, mapPath]() { LoadScene(mapPath); });
+            });
+
+        // Botao X da janela (ou Alt+F4). O callback do GLFW roda no meio de
+        // glfwPollEvents, cedo demais para abrir um popup ImGui - entao o
+        // gancho so decide "deixa fechar?" e, se ha alteracoes, REGISTRA o
+        // pedido (m_CloseWindowRequested) para OnImGuiRender abrir o popup
+        // no frame seguinte, e recusa o fechamento por ora.
+        Prism::Application::Get().SetCloseRequestHandler([this]() -> bool {
+            if (m_AllowWindowClose)
+                return true;
+            if (!HasUnsavedChanges())
+                return true;
+            m_CloseWindowRequested = true;
+            return false;
             });
 
         // Liga o menu de contexto de entidade (ver Panels/EntityContextMenuPanel.h)
@@ -87,14 +105,14 @@ namespace PrismEditor {
         m_CurrentMapPath = mapPath;
         m_SelectedEntity = {};
         m_CommandHistory.Clear();
+        MarkSceneClean();
         return true;
     }
 
     void EditorLayer::NewMap() {
-        // TODO: quando existir rastreamento de "alteracoes nao salvas"
-        // (dirty flag), perguntar aqui antes de descartar a cena atual -
-        // por ora, Novo Mapa descarta sem aviso, como carregar outro mapa
-        // pelo Content Browser.
+        // NewMap() em si descarta a cena sem perguntar - quem pergunta e
+        // o CHAMADOR, via RunAfterUnsavedCheck (ver RenderMenuBar). Assim
+        // chamadas internas/programaticas nao ficam presas num popup.
         if (m_PlayWindow.IsOpen())
             OnStopButtonClicked(); // ver comentario identico em LoadScene()
 
@@ -102,6 +120,8 @@ namespace PrismEditor {
         m_CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
         m_SelectedEntity = {};
         m_CommandHistory.Clear();
+
+        MarkSceneClean();
 
         PRISM_INFO("Novo mapa criado (ainda nao salvo).");
     }
@@ -146,6 +166,7 @@ namespace PrismEditor {
         mesh2.Color = { 0.3f, 0.6f, 0.9f };
 
         m_SelectedEntity = cube;
+        MarkSceneClean();
     }
 
     // Helper interno (nao declarado no .h) - escreve m_ActiveScene em
@@ -167,15 +188,156 @@ namespace PrismEditor {
     }
 
     void EditorLayer::SaveActiveScene() {
+        TrySaveActiveScene();
+    }
+
+    bool EditorLayer::TrySaveActiveScene() {
         if (m_CurrentMapPath.empty()) {
             // Cena sem arquivo associado ainda (nova, ou criada por
             // NewMap()) - nao ha "onde" sobrescrever, entao pedimos um
-            // nome, exatamente como Salvar Como faria.
+            // nome, exatamente como Salvar Como faria. O save de verdade
+            // so acontece num frame futuro (RenderSaveAsPopup), entao
+            // aqui a resposta e "ainda nao salvou".
             SaveActiveSceneAs();
+            return false;
+        }
+
+        if (!WriteSceneFile(m_ActiveScene, m_CurrentMapPath))
+            return false;
+
+        MarkSceneClean();
+        return true;
+    }
+
+    bool EditorLayer::HasUnsavedChanges() const {
+        if (!m_ActiveScene)
+            return false;
+
+        Prism::SceneSerializer serializer(m_ActiveScene);
+        uint64_t current = serializer.ComputeFingerprint();
+
+        // 0 = nao foi possivel calcular (ex: sem permissao na pasta
+        // temporaria). Na duvida, assume que HA alteracoes: um aviso a mais
+        // e inofensivo, ja um aviso a menos perde o trabalho do usuario.
+        if (current == 0 || m_SavedSceneFingerprint == 0)
+            return true;
+
+        return current != m_SavedSceneFingerprint;
+    }
+
+    void EditorLayer::MarkSceneClean() {
+        if (!m_ActiveScene) {
+            m_SavedSceneFingerprint = 0;
+            return;
+        }
+        Prism::SceneSerializer serializer(m_ActiveScene);
+        m_SavedSceneFingerprint = serializer.ComputeFingerprint();
+    }
+
+    void EditorLayer::RunAfterUnsavedCheck(std::function<void()> action) {
+        if (!HasUnsavedChanges()) {
+            action();
             return;
         }
 
-        WriteSceneFile(m_ActiveScene, m_CurrentMapPath);
+        // Ja ha um popup aberto esperando resposta: nao empilha uma segunda
+        // acao por cima (ex: duplo clique em outro mapa com o popup
+        // aberto). A primeira decisao do usuario ainda esta pendente.
+        if (m_ShowUnsavedChangesPopup || ImGui::IsPopupOpen(kUnsavedChangesPopupId))
+            return;
+
+        m_PendingDiscardAction = std::move(action);
+        m_ShowUnsavedChangesPopup = true;
+    }
+
+    void EditorLayer::RenderUnsavedChangesPopup() {
+        // Pedido de fechar a janela chegado pelo gancho do Application.
+        if (m_CloseWindowRequested) {
+            m_CloseWindowRequested = false;
+            RunAfterUnsavedCheck([this]() {
+                // Libera o gancho para o proximo pedido passar direto, e
+                // fecha pelo Close() (incondicional) em vez de depender do
+                // GLFW: o X ja foi consumido/recusado uma vez.
+                m_AllowWindowClose = true;
+                Prism::Application::Get().Close();
+                });
+        }
+
+        if (m_ShowUnsavedChangesPopup) {
+            ImGui::OpenPopup(kUnsavedChangesPopupId);
+            m_ShowUnsavedChangesPopup = false; // OpenPopup so precisa ser chamado uma vez
+        }
+
+        // A acao escolhida roda so depois de EndPopup(): ela pode trocar a
+        // cena ativa ou pedir o fechamento do editor, e fazer isso no meio
+        // do BeginPopupModal deixaria o popup manipulando estado que a acao
+        // acabou de invalidar.
+        std::function<void()> actionToRun;
+
+        // Centraliza na janela principal: um aviso de "voce vai perder
+        // seu trabalho" nao pode aparecer num canto onde passe batido.
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal(kUnsavedChangesPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            std::string mapName = m_CurrentMapPath.empty()
+                ? m_ActiveScene->GetName() + " (ainda nao salvo)"
+                : m_CurrentMapPath.filename().string();
+
+            ImGui::TextWrapped("O mapa '%s' tem alteracoes nao salvas.", mapName.c_str());
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::TextDisabled("Se voce continuar sem salvar, elas serao perdidas.");
+            ImGui::Dummy(ImVec2(0, 10));
+
+            bool save = ImGui::Button("Salvar", ImVec2(110, 0));
+            ImGui::SameLine();
+            bool discard = ImGui::Button("Nao salvar", ImVec2(110, 0));
+            ImGui::SameLine();
+            bool cancel = ImGui::Button("Cancelar", ImVec2(110, 0));
+
+            // Esc cancela: e a saida "segura" universal de um dialogo, e
+            // impede que o usuario fique preso sem clicar num botao.
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+                cancel = true;
+
+            if (save) {
+                if (TrySaveActiveScene()) {
+                    // Salvou (cena ja tinha arquivo): segue com o que o
+                    // usuario queria fazer.
+                    ImGui::CloseCurrentPopup();
+                    actionToRun = std::move(m_PendingDiscardAction);
+                    m_PendingDiscardAction = nullptr;
+                }
+                else if (m_ShowSaveAsPopup) {
+                    // Cena sem arquivo: TrySaveActiveScene() abriu o popup
+                    // Salvar Como. A acao pendente fica guardada e so roda
+                    // se o usuario CONFIRMAR o nome (ver RenderSaveAsPopup).
+                    m_RunPendingActionAfterSaveAs = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                else {
+                    // Save falhou (disco cheio, sem permissao...). NAO
+                    // segue: continuar aqui perderia o trabalho justamente
+                    // no cenario em que este aviso existe para proteger.
+                    // O erro ja foi logado no Console por WriteSceneFile.
+                    m_PendingDiscardAction = nullptr;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            else if (discard) {
+                ImGui::CloseCurrentPopup();
+                actionToRun = std::move(m_PendingDiscardAction);
+                m_PendingDiscardAction = nullptr;
+            }
+            else if (cancel) {
+                m_PendingDiscardAction = nullptr;
+                m_AllowWindowClose = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        if (actionToRun)
+            actionToRun();
     }
 
     void EditorLayer::SaveActiveSceneAs() {
@@ -190,6 +352,13 @@ namespace PrismEditor {
     }
 
     void EditorLayer::RenderSaveAsPopup() {
+        // Acao pendente (fechar/novo mapa/abrir mapa) liberada por um save
+        // bem sucedido. Roda so DEPOIS de EndPopup(): ela pode trocar a
+        // cena ativa ou pedir o fechamento do editor, e fazer isso no meio
+        // do BeginPopupModal deixaria o popup manipulando estado que a acao
+        // acabou de invalidar.
+        std::function<void()> actionAfterSaveAs;
+
         if (m_ShowSaveAsPopup) {
             ImGui::OpenPopup(kSaveAsPopupId);
             m_ShowSaveAsPopup = false; // OpenPopup so precisa ser chamado uma vez, no frame em que o popup deve abrir
@@ -255,15 +424,44 @@ namespace PrismEditor {
                     // qualquer Salvar Como subsequente).
                     std::filesystem::path relativeToMapDir = std::filesystem::relative(previewPath, project->GetMapDirectory());
                     Prism::Project::SetStartMap(relativeToMapDir);
+
+                    // O nome da cena mudou (SetName acima) e ele faz parte
+                    // do que e comparado - o fingerprint tem que ser
+                    // calculado DEPOIS dele, senao a cena recem-salva
+                    // pareceria ter alteracoes.
+                    MarkSceneClean();
+
+                    // Veio de "Salvar" no popup de alteracoes nao salvas:
+                    // agora que o arquivo existe de fato, segue com a acao
+                    // que o usuario tinha pedido (fechar, novo mapa...).
+                    if (m_RunPendingActionAfterSaveAs) {
+                        m_RunPendingActionAfterSaveAs = false;
+                        actionAfterSaveAs = std::move(m_PendingDiscardAction);
+                        m_PendingDiscardAction = nullptr;
+                    }
+                }
+                else if (m_RunPendingActionAfterSaveAs) {
+                    // Escrita falhou: nao segue com a acao pendente.
+                    m_RunPendingActionAfterSaveAs = false;
+                    m_PendingDiscardAction = nullptr;
                 }
                 ImGui::CloseCurrentPopup();
             }
             else if (cancelled) {
+                // Cancelou o nome: o usuario desistiu de salvar, entao a
+                // acao que dependia disso (ex: fechar o editor) tambem e
+                // cancelada - nunca fecha "sem salvar" sem ele ter pedido.
+                m_RunPendingActionAfterSaveAs = false;
+                m_PendingDiscardAction = nullptr;
+                m_AllowWindowClose = false;
                 ImGui::CloseCurrentPopup();
             }
 
             ImGui::EndPopup();
         }
+
+        if (actionAfterSaveAs)
+            actionAfterSaveAs();
     }
 
     void EditorLayer::RenderCreatePrefabPopup() {
@@ -596,24 +794,39 @@ namespace PrismEditor {
     }
 
     void EditorLayer::OnDetach() {
-        // Restaura o cursor ao normal caso o editor esteja sendo destruido
-        // com o modo voar ativo (RMB segurado). Sem isso, o cursor ficaria
-        // escondido/lockado (GLFW_CURSOR_DISABLED) por um instante ate o
-        // SO restaurar sozinho quando a janela sumir - nao e catastrofico,
-        // mas e feio.
+        // NAO chamar Prism::Application::Get() aqui para "desregistrar" o
+        // gancho de fechar janela (SetCloseRequestHandler, ver OnAttach).
+        // Este OnDetach roda DENTRO da destruicao do Application (o
+        // LayerStack e um membro dele), DEPOIS de ~Application() ja ter
+        // zerado s_Instance - Get() desreferenciaria nullptr e o editor
+        // crasharia ao fechar. O gancho e um membro do proprio Application,
+        // entao ele ja e limpo por ~Application() (ver Application.cpp)
+        // antes de qualquer Layer ser destruida; nao ha como um clique no X
+        // chamar o gancho de um EditorLayer que ja nao existe.
         //
-        // DEFENSIVO: nao acessa GetNativeWindow() se nao estamos em modo
-        // voar - durante o shutdown da Application, a janela do SO pode ja
-        // ter sido destruida antes deste OnDetach ser chamado, e chamar
-        // glfwSetInputMode num GLFWwindow* ja liberado seria use-after-free.
-        // Zerar m_CameraLookActive ANTES de tocar na janela garante que se
-        // algo falhar no meio, nao re-entramos nesse caminho depois.
-        if (m_CameraLookActive) {
-            m_CameraLookActive = false;
-            if (GLFWwindow* window = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow()) {
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            }
-        }
+        // (Excecao nao coberta: EditorLayer sendo removido com o Application
+        // VIVO, por PopLayer. Hoje nada faz isso - o EditorLayer so sai no
+        // shutdown. Se um dia o "Fechar Projeto" voltar ao
+        // ProjectManagerLayer, o PopLayer(EditorLayer) precisa limpar o
+        // gancho ANTES de enfileirar a remocao, a partir de um ponto onde o
+        // Application e sabidamente valido - por exemplo o proprio
+        // RenderMenuBar.)
+
+        // Cursor: se o editor esta sendo destruido com o modo voar ativo
+        // (RMB segurado), o cursor estaria escondido/lockado
+        // (GLFW_CURSOR_DISABLED). Antes este metodo tentava restaura-lo via
+        // Application::Get().GetWindow() - mas OnDetach roda DENTRO da
+        // destruicao do Application (o LayerStack e membro dele), depois de
+        // ~Application() ter zerado s_Instance E possivelmente depois da
+        // janela GLFW ja ter sido destruida: Get() desreferenciaria nullptr
+        // (crash ao fechar o editor) e mesmo com a instancia valida o
+        // GLFWwindow* podia ja estar liberado (use-after-free).
+        //
+        // Por isso aqui so zeramos o estado. A janela do SO ao ser
+        // destruida devolve o cursor ao normal sozinha - o unico custo e o
+        // cursor continuar escondido por um instante ate a janela sumir, que
+        // e exatamente o que o comentario original desta funcao ja aceitava.
+        m_CameraLookActive = false;
     }
 
     void EditorLayer::OnUpdate(float deltaTime) {
@@ -1229,7 +1442,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !ImGui::IsPopupOpen(kSaveAsPopupId) && !ImGui::IsPopupOpen(kCreatePrefabPopupId) && !ImGui::IsPopupOpen(kSaveMaterialPopupId)) {
+        if (!io.WantTextInput && !ImGui::IsPopupOpen(kSaveAsPopupId) && !ImGui::IsPopupOpen(kCreatePrefabPopupId) && !ImGui::IsPopupOpen(kSaveMaterialPopupId) && !ImGui::IsPopupOpen(kUnsavedChangesPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_CommandHistory.Undo();
@@ -1252,6 +1465,7 @@ namespace PrismEditor {
 
         RenderMenuBar();
         RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
+        RenderUnsavedChangesPopup(); // idem - "Salvar alteracoes?" ao fechar/trocar de mapa com alteracoes nao salvas
         RenderNewScriptPopup(); // idem - popup modal do botao "Novo..." do ScriptComponent
         RenderCreatePrefabPopup(); // idem - popup modal do item "Criar Prefab..." do menu de contexto
         RenderSaveMaterialPopup(); // idem - popup modal do botao "Salvar como Asset..." do painel Material
@@ -1273,7 +1487,7 @@ namespace PrismEditor {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("Arquivo")) {
                 if (ImGui::MenuItem("Novo Mapa")) {
-                    NewMap();
+                    RunAfterUnsavedCheck([this]() { NewMap(); });
                 }
                 if (ImGui::MenuItem("Salvar Mapa", "Ctrl+S")) {
                     SaveActiveScene();
@@ -1283,7 +1497,11 @@ namespace PrismEditor {
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Fechar Projeto")) {
-                    Prism::Application::Get().Close(); // TODO: voltar ao ProjectManagerLayer em vez de fechar
+                    // TODO: voltar ao ProjectManagerLayer em vez de fechar
+                    RunAfterUnsavedCheck([this]() {
+                        m_AllowWindowClose = true;
+                        Prism::Application::Get().Close();
+                        });
                 }
                 ImGui::EndMenu();
             }

@@ -37,6 +37,27 @@ namespace Prism {
         void Close();
         void OnEvent(Event& e);
 
+        // Gancho OPCIONAL consultado quando o usuario tenta fechar a JANELA
+        // (botao X / Alt+F4). Retorne true para deixar fechar, false para
+        // CANCELAR o fechamento (a janela continua aberta e o loop segue).
+        // Serve para o editor perguntar "salvar alteracoes?" antes de
+        // sair - ver EditorLayer.
+        //
+        // Sem gancho definido (o padrao), o comportamento e o de sempre:
+        // fecha na hora. Por isso um futuro modo Runtime nao precisa saber
+        // que isto existe.
+        //
+        // NAO afeta Close(): Close() e uma ordem explicita do codigo da
+        // aplicacao ("feche agora") e continua incondicional. Quem quiser
+        // perguntar antes de fechar por codigo deve perguntar primeiro e
+        // so entao chamar Close().
+        //
+        // O gancho roda DENTRO do callback de evento da janela (no meio de
+        // glfwPollEvents), entao NAO deve abrir dialogos bloqueantes nem
+        // mexer na LayerStack - so decidir sim/nao (ou registrar um pedido
+        // para tratar no proximo frame, que e o que o editor faz).
+        void SetCloseRequestHandler(std::function<bool()> handler) { m_CloseRequestHandler = std::move(handler); }
+
         // IMPORTANTE: estas funcoes sao seguras de chamar de DENTRO de
         // OnUpdate()/OnImGuiRender()/OnEvent() de qualquer Layer (inclusive a
         // que esta chamando "se destruir", como o ProjectManagerLayer faz ao
@@ -76,6 +97,8 @@ namespace Prism {
         float m_LastFrameTime = 0.0f;
 
         std::vector<std::function<void()>> m_PendingLayerOps;
+
+        std::function<bool()> m_CloseRequestHandler;
 
         static Application* s_Instance;
     };

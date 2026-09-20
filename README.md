@@ -8,7 +8,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 
 - Editor com viewport, hierarquia em árvore, propriedades, console, content browser e editor de scripts
 - Gizmo de mover/rotacionar/escalar (ImGuizmo) e seleção por clique na viewport
-- Undo/redo para as operações principais
+- Undo/redo para as operações principais e aviso de alterações não salvas ao fechar o editor ou trocar de mapa
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
 - Iluminação PBR multi-luz (Point/Spot/Directional) com roughness/metallic, normal map, sombras direcionais e SSAO
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
@@ -78,5 +78,5 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger
 - [ ] Vínculo vivo entre instâncias e seus prefabs/materiais
-- [ ] Aviso de alterações não salvas (dirty flag)
+- [x] Aviso de alterações não salvas (dirty flag)
 - [ ] Modo Runtime (jogo exportado, sem editor)

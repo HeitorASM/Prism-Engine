@@ -80,7 +80,7 @@ namespace Prism {
 
     // --- Serialize --------------------------------------------------------
 
-    bool SceneSerializer::Serialize(const std::filesystem::path& filepath) {
+    bool SceneSerializer::Serialize(const std::filesystem::path& filepath, bool logSuccess) {
         // Garante que ComponentRegistry::GetAll() (usado abaixo, ver
         // ComponentRegistry.h/ComponentRegistration.cpp) ja esta populado
         // - chamado aqui, e nao so uma vez no bootstrap do editor, para
@@ -171,8 +171,150 @@ namespace Prism {
             return false;
         }
 
-        PRISM_CORE_INFO("Cena '", m_Scene->GetName(), "' salva em: ", filepath.string());
+        if (logSuccess)
+            PRISM_CORE_INFO("Cena '", m_Scene->GetName(), "' salva em: ", filepath.string());
         return true;
+    }
+
+    // FNV-1a de 64 bits: nao criptografico, mas de sobra aqui - so
+    // precisamos detectar "mudou / nao mudou" (nao ha adversario), e uma
+    // colisao acidental entre dois estados de cena reais e ~1 em 2^64.
+    static uint64_t Fnv1a64(const char* data, size_t size, uint64_t hash = 14695981039346656037ull) {
+        for (size_t i = 0; i < size; i++) {
+            hash ^= (uint64_t)(unsigned char)data[i];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    // Mistura dois hashes de 64 bits num terceiro (a ordem dos argumentos
+    // IMPORTA - ver uso abaixo, onde "conteudo + pai" tem que diferir de
+    // "pai + conteudo"). Constante de proporcao aurea, mesma ideia de
+    // boost::hash_combine.
+    static uint64_t HashCombine(uint64_t seed, uint64_t value) {
+        return seed ^ (value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
+    }
+
+    uint64_t SceneSerializer::ComputeFingerprint() {
+        // POR QUE NAO simplesmente hashear o arquivo que Serialize() gera:
+        // ForEachEntity itera o registro do EnTT em ordem de criacao
+        // INVERTIDA, e Deserialize() recria as entidades na ordem do
+        // arquivo - entao cada ciclo salvar -> carregar INVERTE a ordem
+        // das entidades. O mesmo mapa, sem nenhuma edicao, gera bytes
+        // diferentes a cada ciclo (e o indice do pai, que e posicional,
+        // muda junto). Um hash do arquivo inteiro marcaria "alteracoes nao
+        // salvas" logo depois de abrir um mapa, ou de salva-lo.
+        //
+        // Aqui o hash NAO depende da ordem:
+        //  1) cada entidade vira um registro independente (tag, transform e
+        //     todos os components, pelos MESMOS serializadores do arquivo -
+        //     campo novo de component entra sozinho) e recebe seu hash;
+        //  2) o PAI entra no hash do filho pelo hash de CONTEUDO do pai, e
+        //     nao pelo indice - assim a hierarquia conta, sem depender de
+        //     posicao;
+        //  3) os hashes de todas as entidades sao SOMADOS (comutativo).
+        //
+        // Limite conhecido: duas entidades com conteudo 100% identico
+        // (mesmo nome, transform e components) sao indistinguiveis. Trocar
+        // um filho de pai entre dois "gemeos" perfeitos nao e detectado.
+        // Aceitavel: o efeito visivel e nenhum (as duas arvores sao
+        // identicas em conteudo).
+        ComponentRegistry::RegisterAll();
+
+        std::error_code ec;
+        std::filesystem::path tempPath = std::filesystem::temp_directory_path(ec);
+        if (ec)
+            return 0;
+        tempPath /= "prism_scene_fingerprint.tmp";
+
+        // ComponentRegistry so grava em std::ofstream (o registro inteiro
+        // esta amarrado a esse tipo), entao usamos UM arquivo temporario,
+        // reescrito por entidade. Apagado ao sair, em qualquer caminho.
+        struct TempFileGuard {
+            std::filesystem::path Path;
+            ~TempFileGuard() { std::error_code e; std::filesystem::remove(Path, e); }
+        } guard{ tempPath };
+
+        // Grava o registro de UMA entidade no temporario e devolve o hash
+        // dele; false se a escrita/leitura falhar.
+        auto hashEntityRecord = [&](Entity entity, const TagComponent& tag, uint64_t& outHash) -> bool {
+            {
+                std::ofstream out(tempPath, std::ios::binary | std::ios::trunc);
+                if (!out.is_open())
+                    return false;
+
+                WriteString(out, tag.Tag);
+                auto& transform = entity.GetComponent<TransformComponent>();
+                WriteRaw(out, transform.Translation);
+                WriteRaw(out, transform.Rotation);
+                WriteRaw(out, transform.Scale);
+
+                for (auto& info : ComponentRegistry::GetAll()) {
+                    bool has = info.Has(entity);
+                    WriteRaw(out, has);
+                    if (has)
+                        info.Serialize(out, entity);
+                }
+                if (!out)
+                    return false;
+            } // fecha (flush) antes de reler
+
+            std::ifstream in(tempPath, std::ios::binary | std::ios::ate);
+            if (!in.is_open())
+                return false;
+            std::streamsize size = in.tellg();
+            in.seekg(0, std::ios::beg);
+            std::vector<char> data((size_t)size);
+            if (size > 0 && !in.read(data.data(), size))
+                return false;
+
+            outHash = Fnv1a64(data.data(), data.size());
+            return true;
+        };
+
+        // Passe 1: hash de conteudo de cada entidade (sem pai).
+        std::unordered_map<entt::entity, uint64_t> contentHash;
+        bool failed = false;
+        m_Scene->ForEachEntity([&](entt::entity handle, TagComponent& tag) {
+            if (failed)
+                return;
+            uint64_t h = 0;
+            if (!hashEntityRecord(Entity(handle, m_Scene.get()), tag, h)) {
+                failed = true;
+                return;
+            }
+            contentHash[handle] = h;
+        });
+        if (failed)
+            return 0;
+
+        // Passe 2: hash final = conteudo combinado com o conteudo do pai;
+        // soma tudo (independe da ordem).
+        uint64_t total = 0;
+        for (auto& [handle, own] : contentHash) {
+            uint64_t parentPart = 0; // 0 = sem pai
+            if (auto* rel = m_Scene->GetRegistry().try_get<RelationshipComponent>(handle)) {
+                if (rel->Parent != entt::null) {
+                    auto it = contentHash.find(rel->Parent);
+                    if (it != contentHash.end())
+                        parentPart = it->second;
+                }
+            }
+            total += HashCombine(own, parentPart);
+        }
+
+        // Nome da cena e quantidade de entidades tambem contam: renomear a
+        // cena ou criar/excluir uma entidade de conteudo repetido muda o
+        // total. Combinados no fim (nao somados) - ordem fixa e conhecida.
+        const std::string& sceneName = m_Scene->GetName();
+        uint64_t hash = Fnv1a64(sceneName.data(), sceneName.size());
+        hash = HashCombine(hash, (uint64_t)contentHash.size());
+        hash = HashCombine(hash, total);
+
+        // 0 e o valor reservado para "falhou ao calcular"; se o hash real
+        // cair em 0 (probabilidade ~2^-64), troca por 1 em vez de deixar um
+        // resultado valido ser confundido com uma falha.
+        return hash == 0 ? 1 : hash;
     }
 
     // --- Deserialize --------------------------------------------------------

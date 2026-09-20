@@ -44,6 +44,13 @@ namespace Prism {
     }
 
     Application::~Application() {
+        // Primeiro de tudo: o gancho de fechar janela (ver
+        // SetCloseRequestHandler) captura ponteiros para Layers que estao
+        // prestes a ser destruidas junto com m_LayerStack. Zerar aqui
+        // garante que, mesmo que algum evento de janela ainda chegue durante
+        // o resto do shutdown, ele nao chame codigo de uma Layer morta.
+        m_CloseRequestHandler = nullptr;
+
         ScriptEngine::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
@@ -112,6 +119,17 @@ namespace Prism {
     }
 
     bool Application::OnWindowClose(WindowCloseEvent& e) {
+        // O GLFW ja marcou a flag "should close" da janela ANTES de chamar
+        // este evento (ver glfwSetWindowCloseCallback). Se o gancho
+        // recusar, precisamos DESMARCAR essa flag - senao a janela ficaria
+        // num estado "quase fechada" (o proximo evento a reaproveitaria).
+        // O loop principal usa m_Running, e nao a flag do GLFW, entao
+        // basta nao zerar m_Running para o app continuar vivo.
+        if (m_CloseRequestHandler && !m_CloseRequestHandler()) {
+            glfwSetWindowShouldClose(static_cast<GLFWwindow*>(m_Window->GetNativeWindow()), GLFW_FALSE);
+            return true; // consumido: nenhuma layer precisa reagir a um fechamento que nao aconteceu
+        }
+
         m_Running = false;
         return true;
     }
