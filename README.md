@@ -63,6 +63,10 @@ docs/             documentação detalhada
 - [Renderização](docs/renderizacao.md)
 - [Formatos de arquivo](docs/formatos-de-arquivo.md)
 
+## Licença
+
+MIT. Veja o arquivo [LICENSE](LICENSE).
+
 ## Roadmap
 
 - [ ] Importação de modelos (FBX/OBJ/glTF), áudio e texturas pelo editor
