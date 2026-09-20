@@ -10,7 +10,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 - Gizmo de mover/rotacionar/escalar (ImGuizmo) e seleção por clique na viewport
 - Undo/redo para as operações principais
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
-- Iluminação multi-luz (Point/Spot/Directional), normal map, sombras direcionais e SSAO
+- Iluminação PBR multi-luz (Point/Spot/Directional) com roughness/metallic, normal map, sombras direcionais e SSAO
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
 - Scripting em Lua com acesso a transform, física, input e raycast
 - Modo Play em janela separada, rodando uma cópia da cena
@@ -73,7 +73,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 
 - [ ] Importação de modelos (FBX/OBJ/glTF), áudio e texturas pelo editor
 - [ ] BSP/CSG e ferramentas de construção de mapas
-- [ ] Modelo de iluminação com especular/PBR (roughness e metallic já existem no material, mas ainda sem efeito)
+- [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX; ainda sem reflexão de ambiente/IBL)
 - [ ] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
 - [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger

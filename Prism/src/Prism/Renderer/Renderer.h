@@ -4,8 +4,8 @@
 // Renderer.h
 // API de desenho da engine (estatica). Desenha as primitivas embutidas
 // definidas em PrimitiveMesh (ver Components.h: Cube, Sphere, Capsule,
-// Cylinder, Plane) com um shader forward de iluminacao Lambert
-// multi-luz, materiais com textura, sombras direcionais e SSAO.
+// Cylinder, Plane) com um shader forward PBR (Cook-Torrance) multi-luz,
+// materiais com textura, sombras direcionais e SSAO.
 //
 // DrawScene() e o ponto de entrada: percorre as entidades da Scene e
 // executa todos os passes (sombra, pre-passe de geometria, SSAO, cor).
@@ -180,6 +180,26 @@ namespace Prism {
         // antes de qualquer DrawMesh() daquele framebuffer.
         static void SetCameraPosition(const float* worldPos);
 
+        // Exposicao (multiplicador de brilho aplicado em espaco LINEAR,
+        // ANTES do tone mapping ACES - ver ToneMapACES em s_FragmentSrc,
+        // Renderer.cpp). 1.0 = neutro (padrao). Valores > 1 clareiam a
+        // cena, < 1 escurecem; 0 (ou negativo) e ignorado e mantem o valor
+        // anterior, porque exposicao 0 deixaria a cena inteira preta.
+        //
+        // E estado GLOBAL do Renderer (nao por cena/por chamada), igual a
+        // SetCameraPosition: vale para toda DrawMesh/DrawScene seguinte, em
+        // qualquer framebuffer (viewport, preview de camera, janela de
+        // Play). Ainda nao exposto na UI do editor.
+        static void SetExposure(float exposure);
+        static float GetExposure();
+
+        // Nivel da luz ambiente fixa (sem GI/IBL), multiplicada pelo albedo
+        // e pelo SSAO no shader. Padrao 0.10. Aceita 0 (cena sem ambiente:
+        // so luzes iluminam), mas ignora valores negativos.
+        // Estado GLOBAL, igual a SetExposure. Ainda nao exposto na UI.
+        static void SetAmbient(float ambient);
+        static float GetAmbient();
+
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
         // GL_LINE_STRIP) em espaco de mundo, sem shading (cor solida via
@@ -346,6 +366,8 @@ namespace Prism {
         static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_FullscreenQuadVAOsByContext;
 
         static float s_CameraWorldPos[3];
+        static float s_Exposure;
+        static float s_Ambient;
 
         // VAO/VBO dedicados ao DrawLines() - o buffer e reescrito
         // (glBufferData) a cada chamada, ja que gizmos mudam de forma

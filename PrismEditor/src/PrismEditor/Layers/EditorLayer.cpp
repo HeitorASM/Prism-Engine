@@ -2336,7 +2336,7 @@ namespace PrismEditor {
                 renderTextureSlot("Roughness/Metallic", "G=roughness, B=metallic (glTF)", material.RoughnessMetallicPath, /*isSRGB*/ false);
                 ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f);
                 ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f);
-                ImGui::TextDisabled("(?) Os dois fatores acima ainda nao afetam a iluminacao (shader atual e Lambert difuso puro, sem termo especular/PBR) - ja ficam salvos no Material para quando esse calculo for adicionado.");
+                ImGui::TextDisabled("(?) Roughness: 0 = espelhado, 1 = fosco. Metallic: 0 = plastico/madeira/pedra, 1 = metal. Com um mapa carregado, o fator multiplica o mapa (G = roughness, B = metallic).");
             }
             if (!keepOpen)
                 m_CommandHistory.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MaterialComponent>>(m_SelectedEntity, "Material"));

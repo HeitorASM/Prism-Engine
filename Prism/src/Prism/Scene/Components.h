@@ -83,10 +83,9 @@ namespace Prism {
 
     // Material opcional de uma entidade - ver Renderer::DrawMesh/
     // s_FragmentSrc (Renderer.cpp) para o shader que consome estes dados.
-    // Hoje o shader usa AlbedoPath (+ AlbedoTint) e NormalPath;
-    // RoughnessMetallicPath, RoughnessFactor e MetallicFactor sao
-    // guardados mas ainda sem efeito, pois o shader e Lambert (sem
-    // termo especular). Component SEPARADO de MeshRendererComponent
+    // O shader usa AlbedoPath (+ AlbedoTint), NormalPath e
+    // RoughnessMetallicPath/RoughnessFactor/MetallicFactor num modelo PBR
+    // metallic/roughness (Cook-Torrance GGX). Component SEPARADO de MeshRendererComponent
     // (nao um campo a mais nele) de proposito: nem toda entidade visivel
     // precisa de controle fino de material (objetos de bloqueio de nivel
     // ficam bem so com MeshRendererComponent::Color) - manter os dois components

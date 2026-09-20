@@ -14,7 +14,8 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 ## Iluminação
 
 - Até **16 luzes** por frame (`MAX_LIGHTS`): Point, Spot e Directional.
-- Modelo **Lambert** (só difuso). Não há componente especular.
+- Modelo **PBR metallic/roughness** (Cook-Torrance): distribuição GGX, geometria Smith (Schlick-GGX) e Fresnel-Schlick, com difuso Lambert e conservação de energia (`kD = (1 - F) * (1 - metallic)`). Sem `MaterialComponent`, a entidade usa roughness 1 e metallic 0 (fosca, visual equivalente ao Lambert antigo).
+- **Ambiente** fixo (`Renderer::SetAmbient`, padrão 0.10), multiplicado por albedo e SSAO. Não há reflexão de ambiente/IBL: **metais ficam escuros** onde nenhuma luz os atinge, e metais muito rugosos perdem energia (limitação conhecida do Smith de espalhamento único).
 - Faces de costas para a câmera são descartadas no fragment shader (`discard`) em vez de usar `glCullFace`, porque as primitivas (`PrimitiveMeshFactory`) não têm winding order consistente entre si. Normalizar o winding e migrar para `glCullFace` é uma otimização possível.
 
 ## Materiais
@@ -25,9 +26,13 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 |---|---|
 | `AlbedoPath` | textura de cor (sRGB), multiplicada por `AlbedoTint` |
 | `NormalPath` | normal map em tangent-space (linear) |
-| `RoughnessMetallicPath`, `RoughnessFactor`, `MetallicFactor` | **guardados, mas ainda sem efeito**: o shader não tem termo especular |
+| `RoughnessMetallicPath`, `RoughnessFactor`, `MetallicFactor` | mapa em convenção glTF (G = roughness, B = metallic, linear); os fatores multiplicam o mapa ou valem sozinhos sem ele |
 
 Caminhos são relativos a `Assets/`; vazio significa "sem textura". Texturas são carregadas com stb_image e mantidas em cache por (caminho, sRGB).
+
+## Pipeline de cor
+
+A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Na saída: exposição (`Renderer::SetExposure`, padrão 1.0) → tone mapping ACES → linear para sRGB. A conversão é feita no shader de cena, e não num passe final, porque gizmos de linha e o clear color são desenhados depois no mesmo framebuffer, já em espaço de tela.
 
 ## Sombras
 

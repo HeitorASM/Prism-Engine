@@ -29,6 +29,8 @@ namespace Prism {
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
     float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
+    float Renderer::s_Exposure = 1.0f;
+    float Renderer::s_Ambient = 0.10f;
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
@@ -328,6 +330,17 @@ namespace Prism {
         uniform sampler2D u_RoughnessMetallicMap;
         uniform bool u_HasRoughnessMetallicMap;
 
+        // Fatores PBR - multiplicam o mapa (quando existe) ou valem sozinhos
+        // (sem mapa). SEM MaterialComponent, o lado C++ envia roughness=1 e
+        // metallic=0 (ver Renderer::DrawMesh): a superficie fica 100% fosca
+        // e o especular some, o que reproduz o visual Lambert de antes.
+        uniform float u_Roughness;
+        uniform float u_Metallic;
+
+        // Nivel do ambiente fixo (sem GI). Era 0.25 hardcoded; agora e
+        // uniform para ajuste sem tocar no shader - ver Renderer::SetAmbient.
+        uniform float u_Ambient;
+
         #define MAX_LIGHTS 16
         #define LIGHT_TYPE_POINT       0
         #define LIGHT_TYPE_SPOT        1
@@ -468,7 +481,40 @@ namespace Prism {
         // isso comparando o indice do loop com o indice retornado por
         // Renderer::RenderShadowPass/DrawScene). Point/Spot e outras
         // luzes Directional sem CastShadows nunca chamam CalculateShadow.
-        vec3 CalculateLight(GPULight light, vec3 normal, vec3 worldPos, bool applyShadow) {
+        // --- BRDF Cook-Torrance (PBR metallic/roughness) ------------------
+        // Especular = D * G * F / (4 * N.L * N.V), com:
+        //   D: distribuicao de normais GGX/Trowbridge-Reitz (forma do brilho)
+        //   G: geometria Smith com Schlick-GGX (auto-sombreamento de micro-facetas)
+        //   F: Fresnel-Schlick (mais reflexo em angulos rasantes)
+        // Tudo em espaco LINEAR (ver pipeline de cor acima).
+        const float PI = 3.14159265359;
+
+        float DistributionGGX(float NdotH, float roughness) {
+            float a  = roughness * roughness;   // remapeamento "Disney": alpha = roughness^2
+            float a2 = a * a;
+            float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+            return a2 / (PI * d * d);
+        }
+
+        float GeometrySchlickGGX(float NdotX, float roughness) {
+            // k para luz DIRETA (analitica): (r+1)^2 / 8 (Epic/Unreal).
+            float r = roughness + 1.0;
+            float k = (r * r) / 8.0;
+            return NdotX / (NdotX * (1.0 - k) + k);
+        }
+
+        float GeometrySmith(float NdotV, float NdotL, float roughness) {
+            return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+        }
+
+        vec3 FresnelSchlick(float cosTheta, vec3 F0) {
+            return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+        }
+
+        // 'albedo', 'roughness' e 'metallic' sao por-fragmento (ja resolvidos
+        // em main() a partir de textura/fatores); 'viewDir' aponta do
+        // fragmento para a camera.
+        vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, float roughness, float metallic, vec3 worldPos, bool applyShadow) {
             vec3 lightDir;
             float attenuation = 1.0;
 
@@ -496,13 +542,48 @@ namespace Prism {
                 }
             }
 
-            float diffuse = max(dot(normal, lightDir), 0.0);
+            float NdotL = max(dot(normal, lightDir), 0.0);
 
             float shadow = 0.0;
             if (applyShadow && u_HasShadow)
                 shadow = CalculateShadow(worldPos, normal, lightDir);
 
-            return light.Color * light.Intensity * diffuse * attenuation * (1.0 - shadow);
+            // Sem contribuicao (de costas para a luz): evita divisao/calculo inutil.
+            if (NdotL <= 0.0)
+                return vec3(0.0);
+
+            vec3 halfVec = normalize(viewDir + lightDir);
+            float NdotV  = max(dot(normal, viewDir), 0.0001); // nunca 0: aparece no denominador
+            float NdotH  = max(dot(normal, halfVec), 0.0);
+            float VdotH  = max(dot(viewDir, halfVec), 0.0);
+
+            // Piso de rugosidade: com roughness ~0 o GGX vira um ponto
+            // infinitamente fino (e uma luz direcional/pontual nao tem area),
+            // sumindo ou explodindo em fireflies. 0.04 e o piso usual.
+            float r = clamp(roughness, 0.04, 1.0);
+
+            // F0 = refletancia a 0 grau: dieletricos ~4% (cinza), metais usam
+            // a propria cor do albedo (metais tingem o reflexo).
+            vec3 F0 = mix(vec3(0.04), albedo, metallic);
+
+            float D = DistributionGGX(NdotH, r);
+            float G = GeometrySmith(NdotV, NdotL, r);
+            vec3  F = FresnelSchlick(VdotH, F0);
+
+            vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.0001);
+
+            // Conservacao de energia: o que e refletido (F) nao pode tambem
+            // ser difuso; metais nao tem difuso (kD -> 0 com metallic = 1).
+            vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+            vec3 diffuse = kD * albedo / PI;
+
+            // radiance * BRDF * N.L. O 'PI' do difuso e cancelado pela
+            // convencao "luz de intensidade 1 = superficie branca em 1.0":
+            // multiplicamos por PI abaixo para que Intensity=1 continue
+            // significando o mesmo brilho de antes (Lambert sem /PI). Sem
+            // isso, todas as cenas existentes ficariam ~3x mais escuras.
+            vec3 radiance = light.Color * light.Intensity * attenuation * (1.0 - shadow);
+            return (diffuse * PI + specular * PI) * radiance * NdotL;
         }
 
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
@@ -513,6 +594,63 @@ namespace Prism {
         uniform sampler2D u_AOMap;
         uniform bool u_HasAO;
         uniform vec2 u_ScreenSize;
+
+        // --- Pipeline de cor: linear -> tela ------------------------------
+        // Toda a matematica de iluminacao neste shader acontece em espaco
+        // LINEAR (e o unico em que somar/multiplicar luz faz sentido
+        // fisico). Mas duas pontas do pipeline NAO estao em linear:
+        //
+        //  ENTRADA: cores escolhidas pelo usuario no color picker (u_BaseColor:
+        //    MeshRendererComponent::Color / MaterialComponent::AlbedoTint)
+        //    estao em sRGB - o que o usuario ve no seletor. Texturas de albedo
+        //    ja sao convertidas pela GPU (GL_SRGB8_ALPHA8, ver Texture.cpp),
+        //    entao SO a cor solida precisa de conversao manual (SrgbToLinear).
+        //
+        //  SAIDA: o framebuffer e GL_RGBA8 comum (nao GL_SRGB8_ALPHA8) e o
+        //    ImGui/monitor exibem o valor cru como se fosse sRGB. Sem
+        //    converter de volta (LinearToSrgb), a imagem sai mais escura e
+        //    com contraste errado - e qualquer luz com Intensity > 1 estoura
+        //    para branco chapado, sem gradacao.
+        //
+        // Isto e feito AQUI (e nao num passe de pos-processamento) de
+        // proposito: gizmos de linha (s_LineFragmentSrc), o clear color e a
+        // UI sao desenhados no mesmo framebuffer DEPOIS de DrawScene, com
+        // cores ja escolhidas em espaco de tela - um passe final sobre o
+        // framebuffer inteiro os corromperia.
+        //
+        // u_Exposure: multiplicador de brilho antes do tone mapping (1.0 =
+        // neutro). Ainda nao exposto no editor - ver Renderer::SetExposure.
+        uniform float u_Exposure;
+
+        vec3 SrgbToLinear(vec3 c) {
+            // Curva sRGB exata (nao o atalho pow(c, 2.2)): trecho linear
+            // perto do preto + trecho de potencia 2.4 no resto.
+            bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
+            vec3 low  = c / 12.92;
+            vec3 high = pow((c + 0.055) / 1.055, vec3(2.4));
+            return mix(high, low, vec3(cutoff));
+        }
+
+        vec3 LinearToSrgb(vec3 c) {
+            c = clamp(c, 0.0, 1.0);
+            bvec3 cutoff = lessThanEqual(c, vec3(0.0031308));
+            vec3 low  = c * 12.92;
+            vec3 high = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+            return mix(high, low, vec3(cutoff));
+        }
+
+        // Tone mapping ACES (aproximacao de Krzysztof Narkowicz): comprime
+        // valores HDR (>1.0) numa curva em "S" filmica em vez de cortar
+        // bruscamente em 1.0 - luzes fortes ganham gradacao de brilho e
+        // as sombras ganham contraste. Entrada e saida em espaco LINEAR.
+        vec3 ToneMapACES(vec3 x) {
+            const float a = 2.51;
+            const float b = 0.03;
+            const float c = 2.43;
+            const float d = 0.59;
+            const float e = 0.14;
+            return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+        }
 
         void main() {
             vec3 normal = normalize(v_Normal);
@@ -554,11 +692,36 @@ namespace Prism {
             if (u_HasAO)
                 ao = texture(u_AOMap, gl_FragCoord.xy / u_ScreenSize).r;
 
-            vec3 lightAccum = vec3(0.25) * ao;
+            // u_BaseColor vem do color picker (sRGB) - converte para linear
+            // ANTES de multiplicar por luz/textura. A textura de albedo
+            // NAO passa por SrgbToLinear: ja chega linear da GPU
+            // (GL_SRGB8_ALPHA8), converter de novo seria conversao dupla.
+            vec3 albedo = SrgbToLinear(u_BaseColor);
+            if (u_HasAlbedoMap)
+                albedo *= texture(u_AlbedoMap, v_UV).rgb;
+
+            // Roughness/metallic: convencao glTF (G = roughness, B = metallic),
+            // texturas LINEARES. Os fatores multiplicam o mapa; sem mapa,
+            // valem sozinhos.
+            float roughness = u_Roughness;
+            float metallic  = u_Metallic;
+            if (u_HasRoughnessMetallicMap) {
+                vec3 rm = texture(u_RoughnessMetallicMap, v_UV).rgb;
+                roughness *= rm.g;
+                metallic  *= rm.b;
+            }
+
+            // Ambiente: albedo * u_Ambient * AO. Multiplicar pelo albedo (e
+            // nao somar cinza puro) e o que faz a sombra manter a COR do
+            // material em vez de lavar para cinza. Metais quase nao tem
+            // difuso, entao o ambiente tambem escurece com metallic (sem
+            // reflexao de ambiente/IBL, seria um metal "preto" - ver TODO).
+            vec3 lightAccum = vec3(0.0);
+            vec3 ambient = albedo * u_Ambient * ao * (1.0 - metallic);
 
             for (int i = 0; i < u_LightCount; i++) {
                 bool applyShadow = (i == u_ShadowCasterLightIndex);
-                lightAccum += CalculateLight(u_Lights[i], normal, v_WorldPos, applyShadow);
+                lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos, applyShadow);
             }
 
             // u_BaseColor ja chega pronto do lado C++ como AlbedoTint
@@ -567,11 +730,12 @@ namespace Prism {
             // so MULTIPLICAR por cima, exatamente como a doc de
             // MaterialComponent::AlbedoTint descreve (tint sozinho = cor
             // solida; com textura, module o resultado da amostragem).
-            vec3 albedo = u_BaseColor;
-            if (u_HasAlbedoMap)
-                albedo *= texture(u_AlbedoMap, v_UV).rgb;
-
-            vec3 color = albedo * lightAccum;
+            // Cor final em linear -> exposicao -> tone mapping -> sRGB.
+            // 'lightAccum' ja e radiancia refletida (BRDF aplicado por luz);
+            // so o ambiente (ja multiplicado por albedo acima) soma por fora.
+            vec3 color = (ambient + lightAccum) * u_Exposure;
+            color = ToneMapACES(color);
+            color = LinearToSrgb(color);
             o_Color = vec4(color, 1.0);
         }
     )";
@@ -767,6 +931,10 @@ namespace Prism {
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
         s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
+        // Sem este envio, u_Exposure valeria 0.0 (padrao de uniform nao
+        // setado em GLSL) e a cena inteira sairia preta - ver s_FragmentSrc.
+        s_BasicShader->SetFloat("u_Exposure", s_Exposure);
+        s_BasicShader->SetFloat("u_Ambient", s_Ambient);
 
         // Com 'material' fornecido, AlbedoTint manda (ver comentario em
         // Renderer.h) - 'color' (MeshRendererComponent::Color) e ignorado
@@ -803,21 +971,36 @@ namespace Prism {
                 s_BasicShader->SetInt("u_HasNormalMap", 0);
             }
 
-            // RoughnessMetallicMap carregado/vinculado (slot 4) para
-            // manter o cache e os slots consistentes com Albedo/Normal
-            // acima, mas u_RoughnessMetallicMap/u_HasRoughnessMetallicMap
-            // AINDA NAO sao lidos por CalculateLight no fragment shader -
-            // o modelo de iluminacao atual e Lambert puro (difuso), sem
-            // termo especular/PBR que dependa de roughness/metallic (ver
-            // CalculateLight, s_FragmentSrc acima). RoughnessFactor/
-            // MetallicFactor (e este mapa) ficam PRONTOS no dado do
-            // Material para quando o shader ganhar um termo especular.
+            // RoughnessMetallicMap (slot 4): canal G = roughness, canal B =
+            // metallic (convencao glTF), lido em main() e repassado a
+            // CalculateLight (Cook-Torrance) - ver s_FragmentSrc acima.
             Texture2D* roughnessMetallic = GetOrLoadTexture(material->RoughnessMetallicPath, /*isSRGB*/ false);
-            if (roughnessMetallic && roughnessMetallic->IsValid())
+            if (roughnessMetallic && roughnessMetallic->IsValid()) {
                 roughnessMetallic->Bind(4);
+                s_BasicShader->SetInt("u_RoughnessMetallicMap", 4);
+                s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 1);
+            } else {
+                s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 0);
+            }
+
+            // Fatores PBR: multiplicam o mapa acima quando existe, ou valem
+            // sozinhos (sem mapa). Clamp defensivo: valores fora de [0,1]
+            // (ex: editados a mao num .prismmat) nao devem quebrar o BRDF.
+            s_BasicShader->SetFloat("u_Roughness", glm::clamp(material->RoughnessFactor, 0.0f, 1.0f));
+            s_BasicShader->SetFloat("u_Metallic", glm::clamp(material->MetallicFactor, 0.0f, 1.0f));
         } else {
             s_BasicShader->SetInt("u_HasAlbedoMap", 0);
             s_BasicShader->SetInt("u_HasNormalMap", 0);
+            s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 0);
+
+            // Entidade SEM MaterialComponent: totalmente fosca e nao
+            // metalica (roughness=1, metallic=0). Nao enviar nada deixaria
+            // os dois em 0.0 (padrao de uniform GLSL) = ESPELHO METALICO
+            // preto. Com 1/0 o resultado fica ~igual ao Lambert antigo
+            // (ver CalculateLight em s_FragmentSrc), entao cenas existentes
+            // nao mudam de aparencia.
+            s_BasicShader->SetFloat("u_Roughness", 1.0f);
+            s_BasicShader->SetFloat("u_Metallic", 0.0f);
         }
 
         // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
@@ -864,6 +1047,29 @@ namespace Prism {
         s_CameraWorldPos[0] = worldPos[0];
         s_CameraWorldPos[1] = worldPos[1];
         s_CameraWorldPos[2] = worldPos[2];
+    }
+
+    void Renderer::SetExposure(float exposure) {
+        // Ignora 0/negativo em vez de aceitar: exposicao <= 0 zera (ou
+        // inverte) toda a cor antes do tone mapping - cena preta sem
+        // nenhuma pista de por que. Manter o valor anterior e mais seguro.
+        if (exposure > 0.0f)
+            s_Exposure = exposure;
+    }
+
+    float Renderer::GetExposure() {
+        return s_Exposure;
+    }
+
+    void Renderer::SetAmbient(float ambient) {
+        // Diferente de SetExposure, 0 e valido (cena so com luzes). So
+        // negativo e rejeitado: ambiente negativo subtrairia luz.
+        if (ambient >= 0.0f)
+            s_Ambient = ambient;
+    }
+
+    float Renderer::GetAmbient() {
+        return s_Ambient;
     }
 
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
