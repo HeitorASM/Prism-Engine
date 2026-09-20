@@ -67,6 +67,8 @@ docs/             documentação detalhada
 
 MIT. Veja o arquivo [LICENSE](LICENSE).
 
+Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
 ## Roadmap
 
 - [ ] Importação de modelos (FBX/OBJ/glTF), áudio e texturas pelo editor
