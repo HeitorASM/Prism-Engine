@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
 #include <algorithm> 
+#include <cmath>
 #include <string>    
 #include <limits>   
 
@@ -70,13 +71,27 @@ namespace Prism {
         uniform mat4 u_ViewProjection;
         uniform mat4 u_Model;
 
+        // Matriz normal = transpose(inverse(mat3(u_Model))), calculada UMA
+        // vez por objeto na CPU (Renderer::ComputeNormalMatrix) em vez de
+        // por vertice aqui. Com escala NAO uniforme, mat3(u_Model) distorce
+        // a normal (ela deixa de ser perpendicular a superficie - erro de
+        // ~50 graus com escala 3x1x1, ~90 em objetos achatados), o que
+        // aparece no especular PBR como brilho torto. Com escala uniforme as
+        // duas matrizes dao a mesma DIRECAO, entao cenas existentes nao mudam.
+        uniform mat3 u_NormalMatrix;
+
         out vec3 v_Normal;
         out vec3 v_WorldPos;
         out vec2 v_UV;
         out vec3 v_Tangent;
 
         void main() {
-            v_Normal = mat3(u_Model) * a_Normal;
+            v_Normal = u_NormalMatrix * a_Normal;
+            // A TANGENTE continua com mat3(u_Model), de proposito: ela e um
+            // vetor AO LONGO da superficie e transforma como qualquer outro
+            // vetor do modelo. Usar a matriz normal nela a deixaria de novo
+            // nao-perpendicular a normal (~87 graus de desvio) e quebraria a
+            // base TBN do normal map.
             v_Tangent = mat3(u_Model) * a_Tangent;
             v_UV = a_UV;
             vec4 worldPos = u_Model * vec4(a_Position, 1.0);
@@ -136,20 +151,20 @@ namespace Prism {
         uniform mat4 u_View;
         uniform mat4 u_Model;
 
-        // Normal transformada para VIEW-SPACE (nao world-space) - ver
-        // comentario grande em GeometryBuffer.h sobre o motivo. A matriz
-        // normal correta seria transpose(inverse(mat3(u_View * u_Model)))
-        // para lidar com escala nao-uniforme sem distorcer a normal -
-        // omitido aqui de proposito (mat3(u_View * u_Model) direto) pela
-        // mesma razao ja documentada em s_VertexSrc (o shader principal):
-        // esta engine ainda nao aplica escala nao-uniforme em nenhum fluxo
-        // de edicao hoje, entao a versao mais simples e barata e
-        // equivalente na pratica. Revisitar junto se/quando escala
-        // nao-uniforme for suportada.
+        // Matriz normal em VIEW-SPACE: transpose(inverse(mat3(u_View *
+        // u_Model))), calculada na CPU (Renderer::ComputeNormalMatrix) uma
+        // vez por objeto. A versao antiga usava mat3(u_View * u_Model)
+        // direto, sob a justificativa de que a engine nao aplicava escala
+        // nao-uniforme - mas o editor permite (gizmo de escalar e campo
+        // "Escala" com eixos independentes), e nesse caso a normal sai
+        // distorcida e o SSAO escurece os lugares errados. Ver tambem
+        // s_VertexSrc (shader principal).
+        uniform mat3 u_ViewNormalMatrix;
+
         out vec3 v_ViewNormal;
 
         void main() {
-            v_ViewNormal = normalize(mat3(u_View * u_Model) * a_Normal);
+            v_ViewNormal = normalize(u_ViewNormalMatrix * a_Normal);
             gl_Position = u_ViewProjection * u_Model * vec4(a_Position, 1.0);
         }
     )";
@@ -921,6 +936,32 @@ namespace Prism {
         return result;
     }
 
+    // Matriz normal (transpose(inverse(mat3))) de 'model'. Ver o comentario
+    // de u_NormalMatrix em s_VertexSrc para o PORQUE.
+    //
+    // Casos que NAO podem virar NaN: um eixo de escala exatamente 0 (o
+    // gizmo de escalar e um .prismmap editado a mao chegam nisso, mesmo o
+    // campo "Escala" limitando em 0.01) torna a matriz singular, e a
+    // inversa dela vira inf/NaN - a normal com NaN deixa o objeto preto ou
+    // piscando. Nesses casos devolve mat3(model) (o comportamento antigo):
+    // o objeto colapsou num plano/linha/ponto, entao nao ha "normal certa"
+    // a preservar. Escala NEGATIVA (espelho) funciona normalmente: o
+    // determinante negativo nao e singular, e a inversa-transposta espelha
+    // a normal junto com a geometria.
+    static glm::mat3 ComputeNormalMatrix(const glm::mat4& model) {
+        glm::mat3 m3(model);
+        float det = glm::determinant(m3);
+        if (!std::isfinite(det) || std::abs(det) < 1e-12f)
+            return m3;
+
+        glm::mat3 n = glm::transpose(glm::inverse(m3));
+        for (int c = 0; c < 3; c++)
+            for (int r = 0; r < 3; r++)
+                if (!std::isfinite(n[c][r]))
+                    return m3;
+        return n;
+    }
+
     void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
         if (!s_BasicShader) return;
 
@@ -930,6 +971,13 @@ namespace Prism {
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
+        {
+            // Sem este envio, u_NormalMatrix valeria zero (padrao de uniform
+            // nao setado): normal (0,0,0) => normalize() vira NaN no fragment
+            // shader e o objeto sai preto. Ver s_VertexSrc.
+            glm::mat3 normalMatrix = ComputeNormalMatrix(glm::make_mat4(model));
+            s_BasicShader->SetMat3("u_NormalMatrix", glm::value_ptr(normalMatrix));
+        }
         s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
         // Sem este envio, u_Exposure valeria 0.0 (padrao de uniform nao
         // setado em GLSL) e a cena inteira sairia preta - ver s_FragmentSrc.
@@ -1373,6 +1421,12 @@ namespace Prism {
             auto& meshRenderer = meshView.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
             s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(model));
+            {
+                // View-space: a matriz normal e a de (view * model), nao so
+                // a do model - a normal chega ao SSAO ja em view-space.
+                glm::mat3 viewNormalMatrix = ComputeNormalMatrix(glm::make_mat4(view) * model);
+                s_GeometryPrePassShader->SetMat3("u_ViewNormalMatrix", glm::value_ptr(viewNormalMatrix));
+            }
 
             Mesh* mesh = s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
             if (!mesh) continue;

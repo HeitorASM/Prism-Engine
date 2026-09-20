@@ -75,6 +75,11 @@ namespace Prism {
         glUniformMatrix4fv(location, 1, GL_FALSE, matrix4x4);
     }
 
+    void Shader::SetMat3(const std::string& name, const float* matrix3x3) const {
+        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        glUniformMatrix3fv(location, 1, GL_FALSE, matrix3x3);
+    }
+
     void Shader::SetFloat3(const std::string& name, float x, float y, float z) const {
         int location = glGetUniformLocation(m_RendererID, name.c_str());
         glUniform3f(location, x, y, z);

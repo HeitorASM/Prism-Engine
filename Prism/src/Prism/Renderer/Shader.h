@@ -30,6 +30,11 @@ namespace Prism {
         void Unbind() const;
 
         void SetMat4(const std::string& name, const float* matrix4x4) const;
+
+        // 'matrix3x3' aponta para 9 floats em ordem column-major (o mesmo
+        // layout de glm::mat3 / glm::value_ptr). Usado para a matriz normal
+        // (ver u_NormalMatrix em Renderer.cpp).
+        void SetMat3(const std::string& name, const float* matrix3x3) const;
         void SetFloat3(const std::string& name, float x, float y, float z) const;
 
         // 'x'/'y' - usado hoje so por u_ScreenSize (Renderer::DrawMesh) e

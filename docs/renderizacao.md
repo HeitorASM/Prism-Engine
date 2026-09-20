@@ -30,6 +30,14 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 
 Caminhos são relativos a `Assets/`; vazio significa "sem textura". Texturas são carregadas com stb_image e mantidas em cache por (caminho, sRGB).
 
+## Matriz normal
+
+A normal é transformada por `transpose(inverse(mat3(model)))` (`u_NormalMatrix`, calculada uma vez por objeto na CPU em `Renderer::ComputeNormalMatrix`), e não por `mat3(model)`. Com escala **não uniforme** a segunda distorce a normal (ela deixa de ser perpendicular à superfície: cerca de 50° de erro com escala 3×1×1) e o brilho especular sai torto. Com escala uniforme as duas dão a mesma direção. O prepass do SSAO faz o mesmo em view-space (`u_ViewNormalMatrix`, a matriz normal de `view * model`).
+
+A **tangente** continua usando `mat3(model)` de propósito: ela é um vetor ao longo da superfície, e usar a matriz normal nela quebraria a base TBN do normal map.
+
+Se o determinante da matriz é zero (um eixo de escala em 0), a inversa não existe e `ComputeNormalMatrix` devolve `mat3(model)` para não gerar NaN. Escala negativa (espelho) funciona normalmente.
+
 ## Pipeline de cor
 
 A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Na saída: exposição (`Renderer::SetExposure`, padrão 1.0) → tone mapping ACES → linear para sRGB. A conversão é feita no shader de cena, e não num passe final, porque gizmos de linha e o clear color são desenhados depois no mesmo framebuffer, já em espaço de tela.
