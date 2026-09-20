@@ -1,5 +1,3 @@
-// glad SEMPRE primeiro, antes de qualquer header que possa incluir GL/GLFW.
-// Ver nota extensa sobre isso em Prism/src/Prism/Renderer/OpenGLContext.cpp
 #include <glad/gl.h>
 #include "GlfwWindow.h"
 

@@ -193,12 +193,31 @@ namespace Prism {
         static void SetExposure(float exposure);
         static float GetExposure();
 
-        // Nivel da luz ambiente fixa (sem GI/IBL), multiplicada pelo albedo
-        // e pelo SSAO no shader. Padrao 0.10. Aceita 0 (cena sem ambiente:
-        // so luzes iluminam), mas ignora valores negativos.
+        // Intensidade do AMBIENTE (o gradiente de 3 cores abaixo). Padrao
+        // 0.10 = brilho MEDIO do ambiente, o mesmo do cinza uniforme que o
+        // gradiente substituiu: cenas existentes mantem o brilho medio, e
+        // ganham variacao ceu/chao nas superficies e, principalmente, reflexo
+        // nos metais (antes eles ficavam pretos sem luz direta). Aceita 0
+        // (cena sem ambiente: so luzes iluminam), mas ignora valores
+        // negativos. Multiplicado pelo albedo (difuso) e pelo SSAO.
         // Estado GLOBAL, igual a SetExposure. Ainda nao exposto na UI.
         static void SetAmbient(float ambient);
         static float GetAmbient();
+
+        // Cores do gradiente de ambiente, em sRGB (o que o color picker
+        // mostra; o shader converte para linear). zenith = ceu (direcao +Y),
+        // horizon = linha do horizonte, ground = chao (direcao -Y). Cada
+        // ponteiro aponta para 3 floats (RGB); nullptr mantem a cor atual.
+        //
+        // O shader NAO precisa ser reajustado ao trocar as cores: a
+        // irradiancia e linear nelas (ver EnvironmentIrradiance em
+        // Renderer.cpp). Valores fora de [0,1] sao limitados a esse intervalo.
+        //
+        // E um gradiente ANALITICO, nao um skybox: nao ha reflexo de objetos
+        // da cena nem de imagem HDR. Quando existir IBL de verdade, as
+        // funcoes Environment* do shader sao o ponto de troca.
+        static void SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground);
+        static void GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround);
 
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
@@ -368,6 +387,9 @@ namespace Prism {
         static float s_CameraWorldPos[3];
         static float s_Exposure;
         static float s_Ambient;
+        static float s_EnvZenith[3];
+        static float s_EnvHorizon[3];
+        static float s_EnvGround[3];
 
         // VAO/VBO dedicados ao DrawLines() - o buffer e reescrito
         // (glBufferData) a cada chamada, ja que gizmos mudam de forma

@@ -73,7 +73,9 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 
 - [ ] Importação de modelos (FBX/OBJ/glTF), áudio e texturas pelo editor
 - [ ] BSP/CSG e ferramentas de construção de mapas
-- [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX; ainda sem reflexão de ambiente/IBL)
+- [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
+- [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
+- [ ] Reflexão de ambiente com IBL de verdade (skybox HDR, irradiance/prefiltered maps)
 - [ ] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
 - [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger

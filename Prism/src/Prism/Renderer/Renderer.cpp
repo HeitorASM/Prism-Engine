@@ -32,6 +32,12 @@ namespace Prism {
     float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
     float Renderer::s_Exposure = 1.0f;
     float Renderer::s_Ambient = 0.10f;
+    // Cores do gradiente de ambiente (sRGB, como o color picker). Padrao:
+    // ceu azul, horizonte claro, chao escuro - as cores contra as quais as
+    // constantes do shader foram validadas (ver EnvironmentIrradiance).
+    float Renderer::s_EnvZenith[3]  = { 0.36f, 0.55f, 0.95f };
+    float Renderer::s_EnvHorizon[3] = { 0.80f, 0.85f, 0.90f };
+    float Renderer::s_EnvGround[3]  = { 0.22f, 0.20f, 0.18f };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
@@ -352,9 +358,21 @@ namespace Prism {
         uniform float u_Roughness;
         uniform float u_Metallic;
 
-        // Nivel do ambiente fixo (sem GI). Era 0.25 hardcoded; agora e
-        // uniform para ajuste sem tocar no shader - ver Renderer::SetAmbient.
+        // Ambiente = gradiente vertical analitico de 3 cores (zenite / horizonte /
+        // chao), sem textura nem cubemap - ver EnvironmentColor() e
+        // Renderer::SetEnvironmentColors. u_Ambient e a INTENSIDADE dele
+        // (padrao 0.10, o mesmo do ambiente cinza uniforme que ele
+        // substituiu: o brilho MEDIO das cenas existentes nao muda).
         uniform float u_Ambient;
+        uniform vec3 u_EnvZenith;   // sRGB (como o picker) - convertido para linear em main()
+        uniform vec3 u_EnvHorizon;
+        uniform vec3 u_EnvGround;
+        // Fator que faz u_Ambient valer o brilho MEDIO do ambiente com QUALQUER
+        // paleta: u_Ambient / (luminancia media da irradiancia). Calculado
+        // na CPU (Renderer::ComputeEnvironmentNormalization) porque depende
+        // das tres cores - uma constante fixa aqui so estaria certa para uma
+        // paleta especifica (com o azul padrao, 1.45x errada).
+        uniform float u_EnvScale;
 
         #define MAX_LIGHTS 16
         #define LIGHT_TYPE_POINT       0
@@ -667,6 +685,91 @@ namespace Prism {
             return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
         }
 
+        // --- Ambiente: gradiente analitico (substituto barato de IBL) -------
+        //
+        // O ambiente depende so da altura y = direcao.y (+1 = ceu, 0 =
+        // horizonte, -1 = chao): uma mistura suave (smoothstep) entre as tres
+        // cores de u_Env*. Isso permite calcular TUDO de forma fechada, sem
+        // amostrar textura:
+        //   - EnvironmentColor(y):     o ambiente visto numa direcao (reflexo
+        //                              perfeito, para metais lisos)
+        //   - EnvironmentIrradiance(): a luz difusa que chega numa normal
+        //   - EnvironmentBRDF():       fracao do reflexo (escala/bias do Fresnel)
+        // As constantes abaixo foram ajustadas contra integracao numerica; ver
+        // docs/renderizacao.md (secao "Ambiente") para os erros medidos.
+        //
+        // Sem cubemap/HDR: e uma APROXIMACAO. Nao ha reflexo de objetos da
+        // cena nem de um skybox real - so o gradiente. Quando existir IBL de
+        // verdade, estas tres funcoes sao o ponto de troca.
+        // Cores do gradiente em LINEAR, preenchidas no inicio de main() a
+        // partir de u_Env* (sRGB). Globais (e nao parametros) para as tres
+        // funcoes abaixo continuarem com a assinatura simples.
+        vec3 g_EnvZenith;
+        vec3 g_EnvHorizon;
+        vec3 g_EnvGround;
+
+        vec3 EnvironmentColor(float y) {
+            float up = clamp(y, 0.0, 1.0);
+            float dn = clamp(-y, 0.0, 1.0);
+            float su = up * up * (3.0 - 2.0 * up);   // smoothstep: sem "linha" dura no horizonte
+            float sd = dn * dn * (3.0 - 2.0 * dn);
+            return (y >= 0.0) ? mix(g_EnvHorizon, g_EnvZenith, su)
+                              : mix(g_EnvHorizon, g_EnvGround, sd);
+        }
+
+        // Irradiancia difusa numa normal com componente vertical ny. A
+        // integral do gradiente e LINEAR nas tres cores, entao ela e
+        //   zenite*Wz(ny) + horizonte*Wh(ny) + chao*Wg(ny)
+        // com tres pesos escalares (polinomios de grau 2 em ny, soma sempre
+        // 1). Por isso funciona com QUALQUER paleta, sem reajustar
+        // constantes (erro maximo ~0.009, medido inclusive com uma paleta de
+        // por-do-sol totalmente diferente).
+        vec3 EnvironmentIrradiance(float ny) {
+            float ny2 = ny * ny;
+            float wz = 0.202896 + 0.350002 * ny + 0.141758 * ny2;
+            float wh = 0.594209                  - 0.283512 * ny2;
+            float wg = 0.202896 - 0.350002 * ny + 0.141758 * ny2;
+            return g_EnvZenith * wz + g_EnvHorizon * wh + g_EnvGround * wg;
+        }
+
+        // Termo BRDF do especular de ambiente (o que uma LUT faria): devolve
+        // (A, B) tal que reflexo = F0 * A + B. Base: aproximacao de Karis
+        // (Unreal 4, SIGGRAPH 2014) + correcao polinomial propria, porque o
+        // polinomio original de Karis erra ate 25 niveis de 255 em
+        // rugosidade alta olhando de frente (medido). A correcao foi ajustada
+        // para 0.2 <= roughness <= 1; abaixo disso ela extrapola, por isso o
+        // resultado e RESTRITO fisicamente (A em [0,1], A + B <= 1) - sem
+        // essa restricao, um espelho olhado de frente refletiria ate 23% mais
+        // luz do que recebe.
+        vec2 EnvironmentBRDF(float roughness, float NdotV) {
+            const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+            const vec4 c1 = vec4( 1.0,  0.0425,  1.04, -0.04);
+            vec4 r = roughness * c0 + c1;
+            float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+            vec2 ab = vec2(-1.04, 1.04) * a004 + r.zw;
+
+            float omv = 1.0 - NdotV;
+            float r2 = roughness * roughness;
+            ab.x += -0.261181 + 0.417586 * NdotV + 0.108976 * NdotV * NdotV
+                    + 0.673558 * roughness - 0.782264 * roughness * NdotV - 0.307961 * r2;
+            ab.y +=  0.028508 - 0.197511 * omv + 0.294312 * omv * omv - 0.284201 * omv * omv * omv
+                    - 0.044720 * roughness + 0.201709 * roughness * omv;
+
+            float A = clamp(ab.x, 0.0, 1.0);
+            float B = clamp(ab.y, 0.0, 1.0 - A);
+            return vec2(A, B);
+        }
+
+        // Especular do ambiente: mistura entre o reflexo nitido (rugosidade
+        // 0: EnvironmentColor na direcao refletida) e a irradiancia
+        // (rugosidade 1: o ambiente inteiro borrado), com peso roughness^1.25
+        // (melhor expoente medido: erro medio ~1.5 niveis de 255 contra a
+        // integral exata do lobo GGX).
+        vec3 EnvironmentSpecular(vec3 R, float roughness) {
+            float w = pow(roughness, 1.25);
+            return mix(EnvironmentColor(R.y), EnvironmentIrradiance(R.y), w);
+        }
+
         void main() {
             vec3 normal = normalize(v_Normal);
             vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
@@ -726,13 +829,45 @@ namespace Prism {
                 metallic  *= rm.b;
             }
 
-            // Ambiente: albedo * u_Ambient * AO. Multiplicar pelo albedo (e
-            // nao somar cinza puro) e o que faz a sombra manter a COR do
-            // material em vez de lavar para cinza. Metais quase nao tem
-            // difuso, entao o ambiente tambem escurece com metallic (sem
-            // reflexao de ambiente/IBL, seria um metal "preto" - ver TODO).
+            // Ambiente = difuso + especular do gradiente (ver
+            // EnvironmentColor e cia, acima).
+            //
+            // DIFUSO: albedo * irradiancia, so para a parte nao metalica.
+            //   u_EnvScale normaliza a irradiancia (calculada na CPU a partir
+            //   das cores atuais), e u_Ambient (0.10) fica sendo o brilho
+            //   MEDIO, exatamente como era com o cinza uniforme. O
+            //   albedo multiplica (em vez de somar cinza) para a sombra manter
+            //   a COR do material. Ganha a variacao topo/fundo (~1.6x).
+            //   O kD tira do difuso a parte que virou reflexo (Fresnel),
+            //   como em CalculateLight.
+            //
+            // ESPECULAR: F * EnvironmentSpecular(R). E ISTO que impede o
+            //   metal preto: sem luz direta, um metal reflete o ambiente. F0
+            //   como em CalculateLight; (A, B) e o termo BRDF de Karis
+            //   corrigido, que depende de roughness e do angulo de visao.
+            //
+            // O SSAO (ao) multiplica os dois: oclusao bloqueia luz ambiente e
+            // reflexo de ambiente, nunca a luz direta (ver comentario acima).
             vec3 lightAccum = vec3(0.0);
-            vec3 ambient = albedo * u_Ambient * ao * (1.0 - metallic);
+
+            // As cores do gradiente vem do color picker (sRGB) - mesma regra
+            // do u_BaseColor: converte para linear ANTES de qualquer conta.
+            g_EnvZenith  = SrgbToLinear(u_EnvZenith);
+            g_EnvHorizon = SrgbToLinear(u_EnvHorizon);
+            g_EnvGround  = SrgbToLinear(u_EnvGround);
+
+            float NdotVenv = max(dot(normal, viewDir), 0.0001);
+            vec3 F0env = mix(vec3(0.04), albedo, metallic);
+            vec2 envAB = EnvironmentBRDF(clamp(roughness, 0.04, 1.0), NdotVenv);
+            vec3 Fenv = F0env * envAB.x + vec3(envAB.y);
+
+            vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metallic);
+            vec3 ambientDiffuse = kDenv * albedo * EnvironmentIrradiance(normal.y) * u_EnvScale * ao;
+
+            vec3 R = reflect(-viewDir, normal);
+            vec3 ambientSpecular = Fenv * EnvironmentSpecular(R, clamp(roughness, 0.04, 1.0)) * u_EnvScale * ao;
+
+            vec3 ambient = ambientDiffuse + ambientSpecular;
 
             for (int i = 0; i < u_LightCount; i++) {
                 bool applyShadow = (i == u_ShadowCasterLightIndex);
@@ -962,6 +1097,34 @@ namespace Prism {
         return n;
     }
 
+    static float SrgbChannelToLinear(float c) {
+        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    }
+
+    // Fator u_EnvScale: u_Ambient dividido pela luminancia MEDIA da
+    // irradiancia do gradiente (media sobre a esfera de normais). Como a
+    // irradiancia e linear nas tres cores, a media tambem: as medias dos
+    // pesos do ceu / horizonte / chao sao 0.250148 / 0.499705 / 0.250148
+    // (medias exatas dos polinomios de EnvironmentIrradiance, com E[ny]=0 e
+    // E[ny^2]=1/3; conferido contra integracao numerica em 5 paletas, erro
+    // maximo 5e-6). Luminancia Rec.709 sobre as cores em LINEAR.
+    //
+    // Paleta totalmente preta => luminancia media 0 => dividir daria infinito.
+    // Nesse caso o ambiente e preto de qualquer jeito (todas as cores sao 0),
+    // entao devolve 0 e nada e somado.
+    static float ComputeEnvironmentNormalization(float ambient, const float* zenithSrgb, const float* horizonSrgb, const float* groundSrgb) {
+        auto lum = [](const float* srgb) {
+            float r = SrgbChannelToLinear(srgb[0]);
+            float g = SrgbChannelToLinear(srgb[1]);
+            float b = SrgbChannelToLinear(srgb[2]);
+            return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        };
+        float meanLum = lum(zenithSrgb) * 0.250148f + lum(horizonSrgb) * 0.499705f + lum(groundSrgb) * 0.250148f;
+        if (!(meanLum > 1e-6f))
+            return 0.0f;
+        return ambient / meanLum;
+    }
+
     void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
         if (!s_BasicShader) return;
 
@@ -983,6 +1146,13 @@ namespace Prism {
         // setado em GLSL) e a cena inteira sairia preta - ver s_FragmentSrc.
         s_BasicShader->SetFloat("u_Exposure", s_Exposure);
         s_BasicShader->SetFloat("u_Ambient", s_Ambient);
+        // As tres cores do gradiente de ambiente. Sem estes envios elas
+        // valeriam (0,0,0) e o ambiente inteiro (difuso e reflexo dos
+        // metais) sairia preto. Ver EnvironmentColor em s_FragmentSrc.
+        s_BasicShader->SetFloat3("u_EnvZenith",  s_EnvZenith[0],  s_EnvZenith[1],  s_EnvZenith[2]);
+        s_BasicShader->SetFloat3("u_EnvHorizon", s_EnvHorizon[0], s_EnvHorizon[1], s_EnvHorizon[2]);
+        s_BasicShader->SetFloat3("u_EnvGround",  s_EnvGround[0],  s_EnvGround[1],  s_EnvGround[2]);
+        s_BasicShader->SetFloat("u_EnvScale", ComputeEnvironmentNormalization(s_Ambient, s_EnvZenith, s_EnvHorizon, s_EnvGround));
 
         // Com 'material' fornecido, AlbedoTint manda (ver comentario em
         // Renderer.h) - 'color' (MeshRendererComponent::Color) e ignorado
@@ -1118,6 +1288,28 @@ namespace Prism {
 
     float Renderer::GetAmbient() {
         return s_Ambient;
+    }
+
+    void Renderer::SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground) {
+        // nullptr = mantem a cor atual (permite trocar so o ceu, por exemplo).
+        // Limita a [0,1]: o picker so produz esse intervalo, e um valor
+        // fora dele (NaN incluido) viraria luz negativa/infinita no shader.
+        auto assign = [](float* dst, const float* src) {
+            if (!src) return;
+            for (int i = 0; i < 3; i++) {
+                float v = src[i];
+                dst[i] = std::isfinite(v) ? std::min(std::max(v, 0.0f), 1.0f) : dst[i];
+            }
+        };
+        assign(s_EnvZenith, zenith);
+        assign(s_EnvHorizon, horizon);
+        assign(s_EnvGround, ground);
+    }
+
+    void Renderer::GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround) {
+        if (outZenith)  for (int i = 0; i < 3; i++) outZenith[i]  = s_EnvZenith[i];
+        if (outHorizon) for (int i = 0; i < 3; i++) outHorizon[i] = s_EnvHorizon[i];
+        if (outGround)  for (int i = 0; i < 3; i++) outGround[i]  = s_EnvGround[i];
     }
 
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {

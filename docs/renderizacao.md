@@ -15,7 +15,7 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 
 - Até **16 luzes** por frame (`MAX_LIGHTS`): Point, Spot e Directional.
 - Modelo **PBR metallic/roughness** (Cook-Torrance): distribuição GGX, geometria Smith (Schlick-GGX) e Fresnel-Schlick, com difuso Lambert e conservação de energia (`kD = (1 - F) * (1 - metallic)`). Sem `MaterialComponent`, a entidade usa roughness 1 e metallic 0 (fosca, visual equivalente ao Lambert antigo).
-- **Ambiente** fixo (`Renderer::SetAmbient`, padrão 0.10), multiplicado por albedo e SSAO. Não há reflexão de ambiente/IBL: **metais ficam escuros** onde nenhuma luz os atinge, e metais muito rugosos perdem energia (limitação conhecida do Smith de espalhamento único).
+- **Ambiente**: gradiente analítico de 3 cores (ver a seção "Ambiente" abaixo), multiplicado por albedo e SSAO. Metais refletem o gradiente em vez de ficarem pretos onde nenhuma luz os atinge. Metais muito rugosos ainda perdem energia (limitação conhecida do Smith de espalhamento único).
 - Faces de costas para a câmera são descartadas no fragment shader (`discard`) em vez de usar `glCullFace`, porque as primitivas (`PrimitiveMeshFactory`) não têm winding order consistente entre si. Normalizar o winding e migrar para `glCullFace` é uma otimização possível.
 
 ## Materiais
@@ -29,6 +29,26 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 | `RoughnessMetallicPath`, `RoughnessFactor`, `MetallicFactor` | mapa em convenção glTF (G = roughness, B = metallic, linear); os fatores multiplicam o mapa ou valem sozinhos sem ele |
 
 Caminhos são relativos a `Assets/`; vazio significa "sem textura". Texturas são carregadas com stb_image e mantidas em cache por (caminho, sRGB).
+
+## Ambiente
+
+O ambiente é um **gradiente vertical analítico** de 3 cores (zênite, horizonte, chão), sem textura nem cubemap. Como ele depende só da altura `y` da direção, tudo é calculado em forma fechada no shader (`EnvironmentColor`, `EnvironmentIrradiance`, `EnvironmentBRDF`, `EnvironmentSpecular`):
+
+- **Difuso**: `albedo * irradiância(normal.y)`. A irradiância é linear nas 3 cores (`zênite*Wz + horizonte*Wh + chão*Wg`, com 3 pesos escalares de grau 2 em `normal.y`), então **qualquer paleta funciona sem reajustar constantes**.
+- **Especular**: `F * mix(env(R), irradiância(R.y), roughness^1.25)`. É o que impede o metal preto: sem luz direta, um metal reflete o ambiente.
+- **Termo BRDF** `(A, B)`: aproximação de Karis (Unreal 4) mais uma correção polinomial própria, restrita fisicamente (`A` em [0,1], `A+B <= 1`).
+
+API: `Renderer::SetEnvironmentColors(zenith, horizon, ground)` (sRGB, o que o color picker mostra; o shader converte para linear) e `Renderer::SetAmbient` (a **intensidade**). O padrão é 0.10, e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`).
+
+**Precisão medida** (contra integração numérica): irradiância, erro máximo 0.009 (0.008 com uma paleta de pôr do sol, sem reajuste); especular, erro médio 1.5 níveis de 255; termo BRDF, `A` com erro médio 0.018.
+
+**Limites conhecidos:**
+
+- É uma **aproximação**, não IBL: não há reflexo de objetos da cena nem de imagem HDR. As funções `Environment*` do shader são o ponto de troca quando existir IBL de verdade.
+- O ambiente agora tem **cor**. Com o gradiente padrão (céu azul), um material quente (o laranja padrão) recebe cerca de **7% menos** brilho de ambiente que com o cinza uniforme antigo, e um azul puro cerca de 49% mais. Materiais neutros (cinza, branco) ficam idênticos. Para reproduzir o visual antigo, use as 3 cores iguais.
+- Superfícies foscas ganham pouca variação topo/fundo (cerca de 1.7x); o contraste aparece nos metais.
+- O ajuste do termo BRDF vale para `0.2 <= roughness <= 1`. Abaixo disso ele extrapola e o resultado é apenas limitado fisicamente (sem valores impossíveis, mas menos preciso).
+- Com as 3 cores em preto, o ambiente é zero (a normalização devolve 0 em vez de dividir por zero).
 
 ## Matriz normal
 
