@@ -25,6 +25,17 @@ Ao abrir o editor, a tela inicial permite criar ou abrir um projeto. O último m
 - **Conteúdo do Projeto**: navega pelos arquivos do projeto. Duplo clique numa pasta entra nela; duplo clique num `.prismmap` carrega o mapa.
 - **Editor de Script**: edição de `.lua` com syntax highlight.
 
+### Menu Renderização
+
+Na barra de menus, ao lado de **Janela**. Ao clicar, abre um painel com:
+
+- **Exposição** (0.1 a 8, escala logarítmica): brilho final da imagem, aplicado antes do tone mapping. 1.0 é neutro.
+- **Intensidade** (0 a 1): brilho médio da luz ambiente. Com 0, só as luzes iluminam.
+- **Céu**, **Horizonte** e **Chão**: as três cores do gradiente de ambiente.
+- **Restaurar padrão**.
+
+As mudanças aparecem **ao vivo** na viewport e na janela de Play. Ficam salvas **no projeto** (`.prismproj`), não na cena: cada projeto tem o seu visual, e mudar isso não marca o mapa como "com alterações não salvas" nem entra no undo/redo. O arquivo só é gravado quando você para de mexer (mouse solto e cerca de 0,35 s sem editar), não a cada frame do arrasto, e o que ficou pendente é gravado ao fechar o editor.
+
 ## Atalhos
 
 | Atalho | Ação |
@@ -102,3 +113,4 @@ O botão **Play** na barra de menu abre uma **janela separada do sistema operaci
 - Os campos de Light, Collider, RigidBody, Camera e a troca de mesh não geram comandos de undo individuais. Geram undo: Transform, cor, criar/duplicar/excluir entidade, reparentar, instanciar prefab, carregar material e adicionar/remover component.
 - Não há copiar/colar de subárvores.
 - Não há resolução configurável para a janela de Play.
+- Os ajustes do menu Renderização não entram no undo/redo (Ctrl+Z não os desfaz); use **Restaurar padrão**.

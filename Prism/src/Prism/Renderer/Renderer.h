@@ -219,6 +219,16 @@ namespace Prism {
         static void SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground);
         static void GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround);
 
+        // Aplica de uma vez os ajustes de renderizacao de um projeto
+        // (exposicao, intensidade e cores do ambiente - ver RenderSettings em
+        // Project.h). Equivale a chamar SetExposure, SetAmbient e
+        // SetEnvironmentColors com os campos de 'settings', com as mesmas
+        // regras de cada uma (valores invalidos sao ignorados). O editor
+        // chama isto ao abrir um projeto e a cada edicao no menu
+        // "Renderizacao"; um futuro modo Runtime deve chama-lo ao carregar o
+        // projeto, para o jogo exportado ter o mesmo visual do editor.
+        static void ApplyRenderSettings(const RenderSettings& settings);
+
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
         // GL_LINE_STRIP) em espaco de mundo, sem shading (cor solida via

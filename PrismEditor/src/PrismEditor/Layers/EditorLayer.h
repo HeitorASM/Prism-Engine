@@ -217,6 +217,22 @@ namespace PrismEditor {
         // frame futuro, quando o usuario confirmar o nome.
         bool TrySaveActiveScene();
 
+        // --- Menu "Renderizacao" (barra de menus) --------------------------
+        //
+        // Exposicao, intensidade do ambiente e as 3 cores do gradiente. Os
+        // valores vivem no Project ativo (RenderSettings, gravados no
+        // .prismproj) - NAO na cena: mudar o visual nao marca o mapa como
+        // "com alteracoes nao salvas" e nao entra no undo/redo.
+        // Cada edicao e aplicada ao Renderer na hora (a viewport mostra ao
+        // vivo); o .prismproj e gravado por FlushRenderSettingsSave.
+        void RenderRenderSettingsMenu();
+
+        // Grava o .prismproj se algum ajuste do menu mudou e o usuario
+        // parou de mexer (mouse solto ha uns instantes) - assim arrastar um
+        // slider nao reescreve o arquivo a cada frame. Chamado todo frame
+        // por RenderMenuBar.
+        void FlushRenderSettingsSave();
+
         // Desenha o popup modal "Criar Prefab" (mesmo padrao de
         // RenderSaveAsPopup) - pede o nome do arquivo, chama
         // Prism::PrefabSerializer::Serialize(m_PrefabToCreateFrom, ...) ao
@@ -631,6 +647,13 @@ namespace PrismEditor {
         // deixar o proximo pedido de fechamento passar sem perguntar de
         // novo.
         bool m_AllowWindowClose = false;
+
+        // Menu "Renderizacao": ha ajustes ainda nao gravados no .prismproj, e
+        // quando foi a ultima edicao (ImGui::GetTime) - ver
+        // FlushRenderSettingsSave. Tambem no FIM da classe, pelo mesmo motivo
+        // do bloco acima.
+        bool m_RenderSettingsNeedSave = false;
+        double m_RenderSettingsLastEdit = 0.0;
     };
 
 }

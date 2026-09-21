@@ -38,7 +38,7 @@ O ambiente é um **gradiente vertical analítico** de 3 cores (zênite, horizont
 - **Especular**: `F * mix(env(R), irradiância(R.y), roughness^1.25)`. É o que impede o metal preto: sem luz direta, um metal reflete o ambiente.
 - **Termo BRDF** `(A, B)`: aproximação de Karis (Unreal 4) mais uma correção polinomial própria, restrita fisicamente (`A` em [0,1], `A+B <= 1`).
 
-API: `Renderer::SetEnvironmentColors(zenith, horizon, ground)` (sRGB, o que o color picker mostra; o shader converte para linear) e `Renderer::SetAmbient` (a **intensidade**). O padrão é 0.10, e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`).
+API: `Renderer::SetEnvironmentColors(zenith, horizon, ground)` (sRGB, o que o color picker mostra; o shader converte para linear) e `Renderer::SetAmbient` (a **intensidade**). O editor edita tudo isso no menu **Renderização** e guarda no `.prismproj` (`RenderSettings` em `Project.h`); `Renderer::ApplyRenderSettings` aplica o conjunto de uma vez, e um modo Runtime deve chamá-la ao carregar o projeto para o jogo ter o mesmo visual do editor. O padrão é 0.10, e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`).
 
 **Precisão medida** (contra integração numérica): irradiância, erro máximo 0.009 (0.008 com uma paleta de pôr do sol, sem reajuste); especular, erro médio 1.5 níveis de 255; termo BRDF, `A` com erro médio 0.018.
 

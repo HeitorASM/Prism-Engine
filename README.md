@@ -7,6 +7,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 ## Recursos
 
 - Editor com viewport, hierarquia em árvore, propriedades, console, content browser e editor de scripts
+- Menu de renderização no editor (exposição e ambiente), salvo por projeto
 - Gizmo de mover/rotacionar/escalar (ImGuizmo) e seleção por clique na viewport
 - Undo/redo para as operações principais e aviso de alterações não salvas ao fechar o editor ou trocar de mapa
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast

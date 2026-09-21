@@ -30,14 +30,14 @@ namespace Prism {
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
     float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
-    float Renderer::s_Exposure = 1.0f;
-    float Renderer::s_Ambient = 0.10f;
-    // Cores do gradiente de ambiente (sRGB, como o color picker). Padrao:
-    // ceu azul, horizonte claro, chao escuro - as cores contra as quais as
-    // constantes do shader foram validadas (ver EnvironmentIrradiance).
-    float Renderer::s_EnvZenith[3]  = { 0.36f, 0.55f, 0.95f };
-    float Renderer::s_EnvHorizon[3] = { 0.80f, 0.85f, 0.90f };
-    float Renderer::s_EnvGround[3]  = { 0.22f, 0.20f, 0.18f };
+    // Valores padrao: vem de RenderSettings (Project.h), a fonte UNICA da
+    // verdade - o "Restaurar padrao" do editor e este arranque usam os mesmos
+    // numeros, entao nunca divergem. As cores sao sRGB (como o color picker).
+    float Renderer::s_Exposure = RenderSettings{}.Exposure;
+    float Renderer::s_Ambient = RenderSettings{}.Ambient;
+    float Renderer::s_EnvZenith[3]  = { RenderSettings{}.EnvZenith[0],  RenderSettings{}.EnvZenith[1],  RenderSettings{}.EnvZenith[2] };
+    float Renderer::s_EnvHorizon[3] = { RenderSettings{}.EnvHorizon[0], RenderSettings{}.EnvHorizon[1], RenderSettings{}.EnvHorizon[2] };
+    float Renderer::s_EnvGround[3]  = { RenderSettings{}.EnvGround[0],  RenderSettings{}.EnvGround[1],  RenderSettings{}.EnvGround[2] };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
@@ -1271,7 +1271,9 @@ namespace Prism {
         // Ignora 0/negativo em vez de aceitar: exposicao <= 0 zera (ou
         // inverte) toda a cor antes do tone mapping - cena preta sem
         // nenhuma pista de por que. Manter o valor anterior e mais seguro.
-        if (exposure > 0.0f)
+        // isfinite: +inf passaria em 'exposure > 0' e faria o tone mapping
+        // devolver NaN (tela toda preta ou piscando).
+        if (std::isfinite(exposure) && exposure > 0.0f)
             s_Exposure = exposure;
     }
 
@@ -1282,7 +1284,8 @@ namespace Prism {
     void Renderer::SetAmbient(float ambient) {
         // Diferente de SetExposure, 0 e valido (cena so com luzes). So
         // negativo e rejeitado: ambiente negativo subtrairia luz.
-        if (ambient >= 0.0f)
+        // isfinite pelo mesmo motivo de SetExposure (+inf passaria em >= 0).
+        if (std::isfinite(ambient) && ambient >= 0.0f)
             s_Ambient = ambient;
     }
 
@@ -1310,6 +1313,12 @@ namespace Prism {
         if (outZenith)  for (int i = 0; i < 3; i++) outZenith[i]  = s_EnvZenith[i];
         if (outHorizon) for (int i = 0; i < 3; i++) outHorizon[i] = s_EnvHorizon[i];
         if (outGround)  for (int i = 0; i < 3; i++) outGround[i]  = s_EnvGround[i];
+    }
+
+    void Renderer::ApplyRenderSettings(const RenderSettings& settings) {
+        SetExposure(settings.Exposure);
+        SetAmbient(settings.Ambient);
+        SetEnvironmentColors(settings.EnvZenith, settings.EnvHorizon, settings.EnvGround);
     }
 
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
