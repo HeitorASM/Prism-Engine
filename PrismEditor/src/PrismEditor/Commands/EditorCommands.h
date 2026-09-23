@@ -332,6 +332,15 @@ namespace PrismEditor {
     // material explicitamente: MaterialSerializer::Deserialize so
     // preenche campos de textura/fatores, nao ha uma forma natural de
     // "desfazer" um Load senao devolvendo o valor de antes.
+    //
+    // VINCULO VIVO (ver MaterialComponent::LinkedAsset, Components.h):
+    // este comando tambem LIGA o vinculo, resolvendo 'assetPath' para um
+    // AssetID via Project::GetAssetRegistry() (etapa 1 - ver
+    // Assets/AssetRegistry.h). Se o caminho nao resolver para nenhum
+    // asset conhecido (fora da pasta de Assets do projeto, ou um Refresh
+    // ainda nao rodou sobre um arquivo recem-criado por fora do editor),
+    // os campos ainda sao carregados normalmente, so que SEM vinculo -
+    // equivalente ao comportamento de antes desta funcionalidade existir.
     class LoadMaterialAssetCommand : public Prism::Command {
     public:
         LoadMaterialAssetCommand(Prism::Entity entity, std::filesystem::path assetPath)
@@ -343,6 +352,7 @@ namespace PrismEditor {
             m_Before = m_Entity.GetComponent<Prism::MaterialComponent>();
             Prism::MaterialComponent loaded;
             if (Prism::MaterialSerializer::Deserialize(m_AssetPath, loaded)) {
+                loaded.LinkedAsset = ResolveAssetID();
                 m_Entity.GetComponent<Prism::MaterialComponent>() = loaded;
                 m_Loaded = true;
             }
@@ -356,6 +366,20 @@ namespace PrismEditor {
         std::string GetName() const override { return "Carregar Material de Asset"; }
 
     private:
+        // AssetID{} (invalido) se nao houver Project ativo ou o caminho
+        // nao resolver para um asset conhecido - Execute() ja trata isso
+        // como "sem vinculo", entao esta funcao nunca precisa falhar,
+        // so devolver invalido nesses casos.
+        Prism::AssetID ResolveAssetID() const {
+            auto project = Prism::Project::GetActive();
+            if (!project)
+                return {};
+            std::string relative = project->GetAssetRegistry().ToRelative(m_AssetPath);
+            if (relative.empty())
+                return {};
+            return project->GetAssetRegistry().IdForPath(relative);
+        }
+
         Prism::Entity m_Entity;
         std::filesystem::path m_AssetPath;
         Prism::MaterialComponent m_Before;

@@ -1,4 +1,5 @@
 #include "ContentBrowserPanel.h"
+#include <Prism/Assets/AssetMeta.h>
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
@@ -30,6 +31,13 @@ namespace PrismEditor {
 
         for (const auto& dirEntry : std::filesystem::directory_iterator(m_CurrentDirectory, ec)) {
             if (ec) break;
+
+            // Os .meta guardam a identidade dos assets (ver Assets/AssetMeta.h)
+            // e nao sao coisa que o usuario deva ver nem manipular a mao -
+            // ficam ocultos, como na Unity/Godot. Mover/renomear um asset
+            // por fora do editor deve levar o .meta junto (ver AssetMeta.h).
+            if (!dirEntry.is_directory() && Prism::AssetMetaFile::IsMetaFile(dirEntry.path()))
+                continue;
 
             Entry entry;
             entry.Path = dirEntry.path();
@@ -91,6 +99,10 @@ namespace PrismEditor {
 
         ImGui::SameLine();
         if (ImGui::Button("Atualizar")) {
+            // Reconcilia a identidade dos assets com o disco ANTES de reler a
+            // pasta: arquivos novos ganham .meta, movidos mantem o ID (ver
+            // Assets/AssetRegistry.h).
+            project->GetAssetRegistry().Refresh();
             RefreshEntries();
         }
 

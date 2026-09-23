@@ -50,7 +50,9 @@ Prism/            engine (biblioteca estática)
     Physics/      PhysicsEngine (Jolt)
     ImGui/        integração do ImGui
     Project/      Project e ProjectSerializer (.prismproj)
+    Assets/       AssetID, AssetMeta, AssetRegistry (identidade dos assets, .meta)
 PrismEditor/      executável do editor
+tests/            testes automatizados, opt-in (ver docs/arquitetura.md)
 vendor/           dependências (glad e stb locais; o resto via FetchContent)
 docs/             documentação detalhada
 ```

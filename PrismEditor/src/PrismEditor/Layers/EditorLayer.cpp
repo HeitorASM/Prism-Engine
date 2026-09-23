@@ -111,9 +111,20 @@ namespace PrismEditor {
             return false;
         }
 
+        // Grava qualquer edicao de material vinculado ainda pendente
+        // ANTES de trocar m_ActiveScene - depois da troca,
+        // m_MaterialLinkDirtyEntity apontaria para uma entidade da Scene
+        // ANTIGA (m_Entity::m_Scene e um ponteiro cru - ver Entity.h -
+        // que fica dangling assim que o Ref<Scene> antigo e substituido e
+        // sua ultima referencia se desfaz). FlushMaterialLinkSave() logo
+        // depois so limparia a pendencia com seguranca (HasComponent
+        // checaria um ponteiro morto), sem nunca gravar a edicao.
+        FlushMaterialLinkSave();
+
         m_ActiveScene = serializer.GetScene();
         m_CurrentMapPath = mapPath;
         m_SelectedEntity = {};
+        m_MaterialLinkDirtyEntity = {}; // ver comentario acima - nunca aponta para a Scene recem-substituida
         m_CommandHistory.Clear();
         MarkSceneClean();
         return true;
@@ -126,9 +137,14 @@ namespace PrismEditor {
         if (m_PlayWindow.IsOpen())
             OnStopButtonClicked(); // ver comentario identico em LoadScene()
 
+        // Ver comentario identico em LoadScene() sobre por que isto vem
+        // ANTES de substituir m_ActiveScene.
+        FlushMaterialLinkSave();
+
         m_ActiveScene = Prism::Scene::Create("Nova Cena");
         m_CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
         m_SelectedEntity = {};
+        m_MaterialLinkDirtyEntity = {}; // ver comentario em LoadScene()
         m_CommandHistory.Clear();
 
         MarkSceneClean();
@@ -161,8 +177,17 @@ namespace PrismEditor {
         // cena de exemplo em memoria, igual antes de existir persistencia.
         // "Salvar Mapa"/"Salvar Como" (ver abaixo) e o que grava isso no
         // disco - m_CurrentMapPath fica vazio ate la.
+        //
+        // Sem edicao de material pendente possivel aqui na pratica (este
+        // e o PRIMEIRO m_ActiveScene da sessao - OnAttach chama
+        // LoadOrCreateScene uma unica vez), mas Flush+zera mesmo assim,
+        // pelo MESMO motivo de seguranca de LoadScene()/NewMap() (ver
+        // comentario la sobre Entity::m_Scene ser um ponteiro cru) - caso
+        // este metodo um dia passe a ser chamado de novo em outro ponto.
+        FlushMaterialLinkSave();
         m_ActiveScene = Prism::Scene::Create("Cena de exemplo");
         m_CurrentMapPath.clear();
+        m_MaterialLinkDirtyEntity = {};
 
         Prism::Entity cube = m_ActiveScene->CreateEntity("Cubo");
         cube.GetComponent<Prism::TransformComponent>().Translation = { -1.2f, 0.0f, 0.0f };
@@ -624,6 +649,22 @@ namespace PrismEditor {
                 auto& material = m_SelectedEntity.GetComponent<Prism::MaterialComponent>();
                 if (!Prism::MaterialSerializer::Serialize(material, previewPath))
                     PRISM_ERROR("Falha ao salvar material '", name, "' - ver console para detalhes.");
+                else if (project) {
+                    // O arquivo recem-criado (ou sobrescrito) ainda nao
+                    // tem AssetID nenhum atribuido enquanto o
+                    // AssetRegistry nao varrer de novo (ver
+                    // Assets/AssetRegistry.h) - sem isto, o usuario
+                    // arrastaria este .prismmat para vincular a outra
+                    // entidade (fluxo natural logo apos salvar) e
+                    // LoadMaterialAssetCommand::ResolveAssetID falharia
+                    // silenciosamente (o material carregaria os campos
+                    // mas SEM vinculo), ate um "Atualizar" manual no
+                    // Content Browser. Refresh() e idempotente e barato
+                    // (ver AssetRegistry::Refresh) - seguro de chamar
+                    // aqui toda vez.
+                    project->GetAssetRegistry().Refresh();
+                    m_ContentBrowser.RefreshEntries();
+                }
                 ImGui::CloseCurrentPopup();
             }
             else if (cancelled) {
@@ -847,6 +888,26 @@ namespace PrismEditor {
             m_RenderSettingsNeedSave = false;
             Prism::Project::SaveActive();
         }
+
+        // Mesmo raciocinio para uma edicao de material vinculado ainda
+        // pendente (a espera do debounce de FlushMaterialLinkSave) - grava
+        // direto no .prismmat, sem esperar mais nenhum frame que nao vai
+        // vir. Ao contrario do bloco acima (que grava em
+        // Project::SaveActive, o .prismproj), MaterialSerializer::Serialize
+        // so mexe no arquivo do asset - seguro de chamar aqui mesmo
+        // durante a destruicao do Application (mesmo motivo do comentario
+        // grande no topo desta funcao: nao usa Application::Get()).
+        if (m_MaterialLinkDirtyEntity && m_MaterialLinkDirtyEntity.HasComponent<Prism::MaterialComponent>()) {
+            auto& material = m_MaterialLinkDirtyEntity.GetComponent<Prism::MaterialComponent>();
+            if (material.LinkedAsset == m_MaterialLinkDirtyAsset) {
+                if (auto project = Prism::Project::GetActive()) {
+                    std::filesystem::path assetPath = project->GetAssetRegistry().AbsolutePath(m_MaterialLinkDirtyAsset);
+                    if (!assetPath.empty())
+                        Prism::MaterialSerializer::Serialize(material, assetPath);
+                }
+            }
+        }
+        m_MaterialLinkDirtyEntity = {};
     }
 
     void EditorLayer::OnUpdate(float deltaTime) {
@@ -1520,6 +1581,149 @@ namespace PrismEditor {
             PRISM_ERROR("Nao foi possivel gravar os ajustes de renderizacao no projeto.");
     }
 
+    void EditorLayer::MarkMaterialLinkDirty(Prism::Entity entity) {
+        if (!entity || !entity.HasComponent<Prism::MaterialComponent>())
+            return;
+
+        Prism::AssetID linked = entity.GetComponent<Prism::MaterialComponent>().LinkedAsset;
+        if (!linked.IsValid())
+            return; // material independente (sem vinculo) - nada a gravar em arquivo nenhum
+
+        // Trocou de entidade/material com uma pendencia diferente ainda
+        // no ar: grava a pendencia ANTERIOR antes de comecar a rastrear a
+        // nova, senao aquela edicao anterior seria perdida (nunca mais
+        // teriamos m_MaterialLinkDirtyEntity apontando para ela).
+        if (m_MaterialLinkDirtyEntity && (m_MaterialLinkDirtyEntity != entity || m_MaterialLinkDirtyAsset != linked))
+            FlushMaterialLinkSave();
+
+        m_MaterialLinkDirtyEntity = entity;
+        m_MaterialLinkDirtyAsset = linked;
+        m_MaterialLinkLastEdit = ImGui::GetTime();
+    }
+
+    void EditorLayer::FlushMaterialLinkSave() {
+        if (!m_MaterialLinkDirtyEntity)
+            return;
+
+        // Mesmo debounce de FlushRenderSettingsSave (ver comentario la):
+        // arrastar um slider de Roughness/Metallic ou o color picker do
+        // Albedo Tint dispara MarkMaterialLinkDirty a cada frame enquanto
+        // o mouse esta apertado - sem esperar o mouse soltar E um
+        // intervalo sem edicao, gravariamos o arquivo dezenas de vezes
+        // por segundo.
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            return;
+        if (ImGui::GetTime() - m_MaterialLinkLastEdit < kRenderSettingsSaveDelay)
+            return;
+
+        Prism::Entity entity = m_MaterialLinkDirtyEntity;
+        Prism::AssetID asset = m_MaterialLinkDirtyAsset;
+        m_MaterialLinkDirtyEntity = {};
+        m_MaterialLinkDirtyAsset = {};
+
+        // A entidade pode ter sido apagada (Delete/Undo de criacao) ou o
+        // Material removido dela enquanto a edicao esperava o debounce -
+        // sem vinculo nenhum mais para gravar, so descarta a pendencia.
+        if (!entity || !entity.HasComponent<Prism::MaterialComponent>())
+            return;
+        auto& material = entity.GetComponent<Prism::MaterialComponent>();
+        if (material.LinkedAsset != asset)
+            return; // o vinculo mudou (Carregar/Desvincular) entre a edicao e este flush - a pendencia antiga nao vale mais
+
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return;
+        std::filesystem::path assetPath = project->GetAssetRegistry().AbsolutePath(asset);
+        if (assetPath.empty()) {
+            // O arquivo do asset sumiu (apagado/movido sem o .meta - ver
+            // Assets/AssetRegistry.h) desde que o vinculo foi criado. Nao
+            // ha onde gravar; a entidade continua com o AssetID antigo
+            // (nao desvinculamos sozinhos - o usuario pode ter so movido
+            // o arquivo e um Refresh do Content Browser ainda resolve).
+            PRISM_ERROR("Vinculo de material aponta para um asset que nao existe mais - a edicao NAO foi salva em arquivo (o material continua vinculado; use Desvincular ou restaure o arquivo).");
+            return;
+        }
+
+        if (!Prism::MaterialSerializer::Serialize(material, assetPath))
+            PRISM_ERROR("Falha ao gravar o material vinculado em '", assetPath.string(), "' - ver console para detalhes.");
+        else
+            // Registra a hora que ACABAMOS DE GRAVAR: ReconcileLinkedMaterial
+            // (chamado no mesmo frame, logo depois, por RenderScene) usa
+            // este valor para saber que ja processou esta escrita e nao
+            // precisa reler o arquivo que ele mesmo produziu - ver
+            // comentario grande em ReconcileLinkedMaterial sobre por que
+            // isto NAO e um eco perdido (outras entidades com o mesmo
+            // AssetID ainda sao atualizadas normalmente, e o mtime real do
+            // disco e o que decide isso, nao uma flag "fui eu que salvei").
+            m_MaterialLinkFileTimes[asset] = std::filesystem::last_write_time(assetPath);
+    }
+
+    void EditorLayer::ReconcileLinkedMaterial() {
+        // Nenhum material foi vinculado ainda nesta sessao (projeto novo,
+        // ou ninguem usou "Carregar de Asset"/arrastar um .prismmat) -
+        // nem precisa varrer a Scene.
+        if (m_MaterialLinkFileTimes.empty())
+            return;
+
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return;
+
+        // 'stale': materiais vinculados cujo ARQUIVO no disco e mais novo
+        // que a ultima vez que os lemos - preenchido na primeira passada
+        // (barata: so stat, nenhum arquivo aberto) e usado na segunda
+        // (que efetivamente re-le e aplica) para nao misturar as duas.
+        std::unordered_map<Prism::AssetID, Prism::MaterialComponent> reloaded;
+        std::error_code ec;
+
+        for (auto& [asset, lastKnown] : m_MaterialLinkFileTimes) {
+            std::filesystem::path assetPath = project->GetAssetRegistry().AbsolutePath(asset);
+            if (assetPath.empty())
+                continue; // asset sumiu - ver mesmo caso em FlushMaterialLinkSave; nada a recarregar
+
+            std::filesystem::file_time_type currentTime = std::filesystem::last_write_time(assetPath, ec);
+            if (ec || currentTime == lastKnown)
+                continue; // sem mudanca desde a ultima vez que processamos (inclui o que NOS mesmos acabamos de gravar - ver FlushMaterialLinkSave)
+
+            Prism::MaterialComponent loaded;
+            if (Prism::MaterialSerializer::Deserialize(assetPath, loaded)) {
+                reloaded[asset] = loaded;
+                lastKnown = currentTime; // atualiza o cache MESMO em caso de falha logo abaixo, para nao tentar reler o mesmo arquivo quebrado todo frame
+            }
+            else {
+                lastKnown = currentTime;
+            }
+        }
+
+        if (reloaded.empty())
+            return;
+
+        // Aplica em TODA entidade da Scene ativa com um desses AssetIDs -
+        // deliberadamente TODAS, nao so a que estava selecionada quando o
+        // arquivo mudou: e exatamente isto que faz o vinculo ser "vivo"
+        // entre VARIAS entidades (ver MaterialComponent::LinkedAsset,
+        // Components.h) em vez de uma relacao 1-para-1.
+        //
+        // NAO usa CommandHistory aqui: esta e uma sincronizacao de baixo
+        // nivel entre arquivo e entidades ja vinculadas (equivalente ao
+        // hot-reload de uma textura), nao uma acao do usuario sobre ESTA
+        // entidade especifica - um Ctrl+Z logo depois desfaria a ultima
+        // acao real do usuario (a edicao original que gerou o arquivo),
+        // nao este reflexo em cascata, que e reconstituido de qualquer
+        // forma na proxima reconciliacao.
+        auto view = m_ActiveScene->GetRegistry().view<Prism::MaterialComponent>();
+        for (auto handle : view) {
+            auto& material = view.get<Prism::MaterialComponent>(handle);
+            auto it = reloaded.find(material.LinkedAsset);
+            if (it == reloaded.end())
+                continue;
+
+            Prism::AssetID keepLinked = material.LinkedAsset; // Deserialize nao toca em LinkedAsset (ver MaterialSerializer.h) - preservado de qualquer forma, guardado so por clareza
+            material = it->second;
+            material.LinkedAsset = keepLinked;
+        }
+    }
+
     void EditorLayer::RenderRenderSettingsMenu() {
         // Sem projeto ativo nao ha onde guardar os valores: nao mostra o menu.
         auto project = Prism::Project::GetActive();
@@ -1570,6 +1774,17 @@ namespace PrismEditor {
 
     void EditorLayer::RenderMenuBar() {
         FlushRenderSettingsSave();
+
+        // Vinculo vivo de Material (ver comentario grande em
+        // MaterialSerializer.h e EditorLayer.h): grava a edicao pendente
+        // desta entidade (se o debounce ja passou) e depois releva
+        // qualquer .prismmat vinculado que tenha mudado no disco desde a
+        // ultima vez - NESTA ORDEM, para que uma gravacao feita agora
+        // mesmo ja conte como "processada" (m_MaterialLinkFileTimes
+        // atualizado) antes da releitura rodar no mesmo frame, evitando
+        // reler desnecessariamente o arquivo que acabamos de escrever.
+        FlushMaterialLinkSave();
+        ReconcileLinkedMaterial();
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("Arquivo")) {
@@ -2497,11 +2712,61 @@ namespace PrismEditor {
                 // jeitos de chegar no mesmo resultado, mesmo espirito dos
                 // slots de textura abaixo (arrastar OU digitar o path).
                 //
-                // SEM VINCULO VIVO com o arquivo (ver comentario grande em
-                // MaterialSerializer.h) - isto e uma copia pontual dos
-                // campos, nao uma referencia compartilhada; editar o
-                // .prismmat depois nao afeta entidades que ja carregaram
-                // dele antes.
+                // VINCULO VIVO (ver comentario grande em
+                // MaterialSerializer.h e MaterialComponent::LinkedAsset,
+                // Components.h): "Carregar de Asset"/arrastar LIGA o
+                // vinculo com aquele arquivo - toda edicao abaixo passa a
+                // ser gravada nele automaticamente (com um pequeno atraso,
+                // ver EditorLayer::FlushMaterialLinkSave), e qualquer OUTRA
+                // entidade vinculada ao mesmo arquivo se atualiza sozinha
+                // (ver ReconcileLinkedMaterial). O selo dourado "Vinculado"
+                // abaixo e o unico sinal permanente disso - sem ele, nada
+                // aqui indicaria que estas edicoes saem da tela.
+                bool isLinked = material.LinkedAsset.IsValid();
+                if (isLinked) {
+                    auto project = Prism::Project::GetActive();
+                    std::filesystem::path linkedPath = project ? project->GetAssetRegistry().AbsolutePath(material.LinkedAsset) : std::filesystem::path{};
+                    // Path vazio: o AssetID nao resolve mais (arquivo
+                    // apagado/movido sem o .meta - ver Assets/AssetRegistry.h).
+                    // O vinculo continua tecnicamente presente no
+                    // component (FlushMaterialLinkSave decide o que fazer
+                    // ao tentar gravar), mas o selo avisa em vermelho em
+                    // vez de fingir que esta tudo bem.
+                    bool linkBroken = linkedPath.empty();
+                    ImVec4 badgeColor = linkBroken ? ImVec4(0.85f, 0.35f, 0.35f, 1.0f) : ImVec4(0.95f, 0.75f, 0.20f, 1.0f); // dourado = vinculado, vermelho = vinculo quebrado
+                    ImGui::TextColored(badgeColor, linkBroken ? "[Vinculo quebrado]" : "[Vinculado]");
+                    if (ImGui::IsItemHovered()) {
+                        // Duas chamadas distintas (nao uma string de
+                        // formato condicional com argumento fixo) - a
+                        // string de 'linkBroken' nao usa %s nenhum, e
+                        // ImGui::SetTooltip e IM_FMTARGS-anotado
+                        // (-Wformat reclamaria de um argumento sobrando
+                        // se so o texto mudasse com o mesmo argumento).
+                        if (linkBroken)
+                            ImGui::SetTooltip("Este material esta vinculado a um asset que nao foi encontrado.\nEdicoes NAO serao salvas em arquivo ate o vinculo ser corrigido ou desfeito.");
+                        else
+                            ImGui::SetTooltip("Este material esta vinculado a:\n%s\n\nEditar qualquer campo abaixo atualiza o arquivo, e qualquer\noutra entidade vinculada ao mesmo material acompanha a mudanca.",
+                                linkedPath.filename().string().c_str());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Desvincular")) {
+                        // Desfaz APENAS o vinculo - os valores atuais dos
+                        // campos permanecem intactos na entidade, so
+                        // param de ser uma "view" do arquivo (equivalente
+                        // a "Make Unique" na Unity ou desconectar um
+                        // recurso herdado na Godot). Undo simples (nao um
+                        // Command dedicado): reverter isto e so voltar a
+                        // marcar LinkedAsset, o mesmo custo de reabrir o
+                        // asset - nao justifica um Command so para isto.
+                        material.LinkedAsset = {};
+                        if (m_MaterialLinkDirtyEntity == m_SelectedEntity)
+                            m_MaterialLinkDirtyEntity = {}; // descarta qualquer edicao pendente deste material - nao ha mais arquivo vinculado para gravar
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Transforma este material numa copia independente. As texturas e valores atuais sao mantidos, mas deixam de acompanhar o arquivo.");
+                    ImGui::Separator();
+                }
+
                 if (ImGui::Button("Salvar como Asset...")) {
                     m_ShowSaveMaterialPopup = true;
                     std::string suggested = m_SelectedEntity.HasComponent<Prism::TagComponent>()
@@ -2516,6 +2781,13 @@ namespace PrismEditor {
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_MATERIAL_PATH")) {
                         std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                        // Uma edicao pendente do vinculo ANTERIOR (se
+                        // havia um) precisa ser gravada antes de trocar
+                        // de arquivo - senao FlushMaterialLinkSave, no
+                        // proximo frame, gravaria os valores NOVOS
+                        // (recem-carregados) no asset ANTIGO por engano.
+                        if (m_MaterialLinkDirtyEntity == m_SelectedEntity)
+                            FlushMaterialLinkSave();
                         m_CommandHistory.Execute(Prism::CreateScope<LoadMaterialAssetCommand>(m_SelectedEntity, pathString));
                     }
                     ImGui::EndDragDropTarget();
@@ -2541,6 +2813,17 @@ namespace PrismEditor {
 
                 auto renderTextureSlot = [&](const char* label, const char* hint, std::string& path, bool isSRGB) {
                     ImGui::PushID(label);
+
+                    // Detecta mudanca em 'path' (drop, "Limpar" ou edicao
+                    // manual, todos abaixo) comparando com o valor de
+                    // ENTRADA desta chamada - mais simples e mais
+                    // confiavel que instrumentar cada um dos 3 pontos que
+                    // escrevem em 'path' individualmente (e novos pontos
+                    // futuros ja ficam cobertos de graca). MarkMaterialLinkDirty
+                    // e um no-op se este material nao estiver vinculado
+                    // (ver comentario la), entao chamar sempre aqui embaixo
+                    // e seguro mesmo fora do caso vinculado.
+                    std::string pathBefore = path;
 
                     Prism::Texture2D* texture = path.empty() ? nullptr : Prism::Renderer::GetOrLoadTexture(path, isSRGB);
                     bool hasValidTexture = texture && texture->IsValid();
@@ -2626,13 +2909,18 @@ namespace PrismEditor {
                             path = buffer;
                         ImGui::TreePop();
                     }
+
+                    if (path != pathBefore)
+                        MarkMaterialLinkDirty(m_SelectedEntity);
+
                     ImGui::EndGroup();
 
                     ImGui::PopID();
                     };
 
                 renderTextureSlot("Albedo", "Cor base (RGB)", material.AlbedoPath, /*isSRGB*/ true);
-                ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint));
+                if (ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint)))
+                    MarkMaterialLinkDirty(m_SelectedEntity);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Multiplica a textura de Albedo (ou serve como cor solida, se nenhuma textura estiver configurada acima).");
 
@@ -2641,8 +2929,10 @@ namespace PrismEditor {
 
                 ImGui::Separator();
                 renderTextureSlot("Roughness/Metallic", "G=roughness, B=metallic (glTF)", material.RoughnessMetallicPath, /*isSRGB*/ false);
-                ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f);
-                ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f);
+                if (ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f))
+                    MarkMaterialLinkDirty(m_SelectedEntity);
+                if (ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f))
+                    MarkMaterialLinkDirty(m_SelectedEntity);
                 ImGui::TextDisabled("(?) Roughness: 0 = espelhado, 1 = fosco. Metallic: 0 = plastico/madeira/pedra, 1 = metal. Com um mapa carregado, o fator multiplica o mapa (G = roughness, B = metallic).");
             }
             if (!keepOpen)

@@ -14,14 +14,30 @@
 // arquivo mais simples que existe na engine (sem lista de entidades, sem
 // ComponentRegistry, sem RelationshipComponent).
 //
-// ASSIM COMO PREFAB (ver PrefabSerializer.h), NAO ha vinculo vivo entre o
-// arquivo e as entidades que carregaram dele - "Carregar de Asset" COPIA
-// os campos para o MaterialComponent da entidade selecionada no momento;
-// editar o .prismmat depois nao propaga automaticamente para entidades
-// que ja carregaram dele antes. Um sistema de referencia compartilhada
-// (todas as entidades apontando para o MESMO material em memoria,
-// mudanca em uma reflete em todas) e uma funcionalidade maior que ainda
-// nao existe.
+// VINCULO VIVO (ver MaterialComponent::LinkedAsset em Components.h): este
+// serializador so grava/le os SEIS campos de material listados acima -
+// NUNCA o AssetID de ninguem. O vinculo entre uma entidade e este arquivo
+// vive em MaterialComponent::LinkedAsset (na entidade, resolvido via
+// Project::GetAssetRegistry() - ver Assets/AssetRegistry.h), nunca AQUI
+// no arquivo: um .prismmat nao sabe, e nao precisa saber, quais entidades
+// apontam para ele hoje. Por isso Deserialize() preenche 'outMaterial'
+// SEM tocar em LinkedAsset - quem decide se o resultado fica vinculado
+// e o chamador (ver EditorLayer::RenderPropertiesPanel, secao Material):
+//   - "Carregar de Asset" / soltar um .prismmat no painel: LIGA o vinculo
+//     (seta LinkedAsset com o AssetID do arquivo solto/escolhido).
+//   - "Salvar como Asset...": NAO liga vinculo nenhum - e uma copia
+//     pontual dos valores atuais para um arquivo novo (ou existente,
+//     sobrescrevendo), mesmo com a entidade ja estando vinculada a OUTRO
+//     asset; ligar o vinculo ao arquivo recem-salvo seria uma segunda
+//     acao implicita que o botao nunca prometeu.
+// Enquanto vinculado, EditorLayer::FlushMaterialLinkSave() grava os seis
+// campos de volta neste MESMO arquivo (debounce, mesmo padrao de
+// FlushRenderSettingsSave) a cada edicao no painel, e
+// EditorLayer::ReconcileLinkedMaterial() releva o arquivo (comparando a
+// hora de modificacao) para refletir a mudanca em QUALQUER OUTRA entidade
+// com o mesmo LinkedAsset - inclusive entidades que nunca tocaram no
+// painel Material, so tem o mesmo AssetID herdado de um prefab (ver nota
+// em PrefabSerializer.cpp) ou carregado independentemente.
 // ============================================================================
 
 #include "../Core/Base.h"

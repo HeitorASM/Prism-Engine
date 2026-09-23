@@ -21,6 +21,7 @@ O projeto tem dois alvos CMake:
 | `Physics/` | `PhysicsEngine` (Jolt) |
 | `ImGui/` | `ImGuiLayer` |
 | `Project/` | `Project`, `ProjectSerializer` |
+| `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry` |
 
 ## Cena e ECS
 
@@ -50,6 +51,30 @@ Para adicionar um component novo:
 4. Escreva a UI dele na Properties panel (`EditorLayer.cpp`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
 
 `RelationshipComponent` fica fora do registro: usa índice posicional do pai na serialização e nunca aparece no menu.
+
+## Identidade de assets
+
+`Assets/` dá a cada arquivo de asset uma identidade estável, independente do caminho. É a base do "vínculo vivo" entre instâncias e seus prefabs/materiais (ver o roadmap): uma referência gravada como `AssetID` continua válida depois de mover ou renomear o arquivo, o que um caminho de texto não garante.
+
+- `AssetID`: 64 bits aleatórios; o valor `0` significa "sem asset".
+- `AssetMeta`/`AssetMetaFile`: lê e grava o `.meta` ao lado de cada asset (formato em [formatos-de-arquivo.md](formatos-de-arquivo.md#meta)).
+- `AssetRegistry`: índice `AssetID ↔ caminho`. `Refresh()` varre a pasta e reconcilia com os `.meta`. Cada `Project` tem o seu (`Project::GetAssetRegistry()`), já varrido quando `Project::New`/`Load` retornam. O botão **Atualizar** do painel Conteúdo do Projeto chama `Refresh()`.
+
+O módulo não depende de OpenGL, GLFW nem EnTT, de propósito: compila e é testado isoladamente (ver abaixo).
+
+Neste estágio a identidade **existe mas ainda não é usada**: `MaterialComponent`, `ScriptComponent` e os serializadores continuam referenciando arquivos por caminho. Migrá-los para `AssetID` é o passo seguinte.
+
+## Testes
+
+Os testes são opt-in e não afetam o build normal:
+
+```bash
+cmake -B build -S . -DPRISM_BUILD_TESTS=ON
+cmake --build build --target PrismAssetTests
+ctest --test-dir build --output-on-failure
+```
+
+`PrismAssetTests` compila só `Assets/` e `Project/`, sem GPU, GLFW ou Jolt. Cobre `AssetID`, o formato do `.meta`, todos os casos de reconciliação do `AssetRegistry` e um ciclo real `Project::New` → `Project::Load` com assets movidos entre as duas etapas.
 
 ## Undo/redo
 

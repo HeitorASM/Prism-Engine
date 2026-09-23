@@ -1,8 +1,23 @@
 #include "Project.h"
 #include "ProjectSerializer.h"
 #include "../Core/Log.h"
+#include <string>
 
 namespace Prism {
+
+    // Aponta o AssetRegistry para a pasta de assets do projeto e faz a
+    // varredura inicial (cria os .meta que faltam). Compartilhado por New e
+    // Load para os dois caminhos terminarem no MESMO estado.
+    static void InitializeAssetRegistry(Project& project) {
+        project.GetAssetRegistry().SetRoot(project.GetAssetDirectory());
+        AssetRefreshReport report = project.GetAssetRegistry().Refresh();
+
+        PRISM_CORE_INFO("Assets: ", report.Registered, " registrado(s)",
+            report.NewlyCreated > 0 ? " (" + std::to_string(report.NewlyCreated) + " novo(s))" : std::string(),
+            ".");
+        for (const std::string& orphan : report.OrphanMetas)
+            PRISM_CORE_WARN("Assets: .meta orfao (o asset nao existe mais): ", orphan);
+    }
 
     Ref<Project> Project::New(const std::filesystem::path& directory, const std::string& name) {
         std::error_code ec;
@@ -42,6 +57,8 @@ namespace Prism {
             return nullptr;
         }
 
+        InitializeAssetRegistry(*project);
+
         s_ActiveProject = project;
         PRISM_CORE_INFO("Projeto \"", name, "\" criado em ", directory.string());
         return project;
@@ -57,6 +74,8 @@ namespace Prism {
 
         project->m_ProjectFilePath = projectFilePath;
         project->m_ProjectDirectory = projectFilePath.parent_path();
+
+        InitializeAssetRegistry(*project);
 
         s_ActiveProject = project;
         PRISM_CORE_INFO("Projeto \"", project->m_Config.Name, "\" carregado de ", projectFilePath.string());

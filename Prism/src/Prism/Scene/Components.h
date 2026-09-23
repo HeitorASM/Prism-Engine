@@ -15,6 +15,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp> // glm::yawPitchRoll (extensao GTX, header separado do gtc/quaternion)
 #include <entt/entt.hpp>
+#include "../Assets/AssetID.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -113,6 +114,22 @@ namespace Prism {
         glm::vec3 AlbedoTint = { 1.0f, 1.0f, 1.0f };
         float RoughnessFactor = 0.5f; // 0 = espelhado, 1 = totalmente difuso/fosco
         float MetallicFactor = 0.0f;  // 0 = dieletrico (plastico/madeira/pedra), 1 = metal puro
+
+        // VINCULO VIVO com um asset .prismmat (ver Assets/AssetID.h e
+        // MaterialSerializer.h). Invalido (AssetID{} / IsValid()==false,
+        // o default) significa "copia independente" - o comportamento de
+        // sempre, sem mudanca nenhuma. Quando valido, os campos acima
+        // SAO uma copia local para renderizar, mas o editor trata este
+        // MaterialComponent como uma VIEW do arquivo apontado por
+        // LinkedAsset: editar qualquer campo aqui grava no arquivo
+        // (com debounce, ver EditorLayer::FlushMaterialLinkSave), e o
+        // arquivo sendo recarregado atualiza esta e QUALQUER OUTRA
+        // entidade com o mesmo LinkedAsset (ver
+        // EditorLayer::ReconcileLinkedMaterial). E so um AssetID cru:
+        // nao inclui logica de I/O aqui de proposito, para Components.h
+        // continuar sem depender de arquivo/disco (mesmo espirito de
+        // AlbedoPath/NormalPath sendo string, nao um objeto Texture).
+        AssetID LinkedAsset;
 
         MaterialComponent() = default;
         MaterialComponent(const MaterialComponent&) = default;

@@ -6,6 +6,7 @@
 | `.prismmap` | cena completa | binário | `Maps/` |
 | `.prismprefab` | entidade e subárvore | binário | `Assets/Prefabs/` |
 | `.prismmat` | um material | binário | `Assets/Materials/` |
+| `.meta` | identidade de um asset | texto (`Chave=Valor`) | ao lado de cada asset |
 
 Os arquivos binários usam little-endian e começam com um cabeçalho `magic` (4 bytes) + `versão` (uint32).
 
@@ -61,6 +62,38 @@ Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry`,
 - Versão atual: **1** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`)
 
 Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`.
+
+## `.meta`
+
+Um `.meta` acompanha **cada asset** e guarda a sua identidade estável (`AssetID`). O nome é o do asset **mais** `.meta`: `Rock.png` → `Rock.png.meta` (a extensão original é mantida, para `Rock.png` e `Rock.jpg` não disputarem o mesmo arquivo).
+
+```
+# Prism asset meta - nao apague; guarda a identidade do asset.
+Version=1
+ID=8f3a1c5d2b7e9041
+Type=Texture
+```
+
+- `ID`: exatamente 16 dígitos hexadecimais (64 bits). `0000000000000000` é reservado para "sem asset" e nunca é válido.
+- `Type`: deduzido da extensão (`Texture`, `Material`, `Prefab`, `Scene`, `Script`, `Model`, `Audio`). Se divergir da extensão, o `.meta` é corrigido na próxima varredura, mantendo o `ID`.
+- Texto e legível de propósito: gera diffs pequenos no Git. **Deve ir para o controle de versão** junto com o asset, senão cada colega gera IDs diferentes para o mesmo arquivo.
+- Chaves desconhecidas são ignoradas na leitura (uma versão futura pode acrescentar campos).
+- A gravação é atômica (arquivo temporário + rename): um crash nunca deixa um `.meta` pela metade.
+
+### Mover e renomear assets
+
+Mover ou renomear um asset **sempre junto com o seu `.meta`** preserva o ID, e portanto toda referência a ele. Casos que a varredura (`AssetRegistry::Refresh`) trata:
+
+| Situação | Resultado |
+|---|---|
+| Asset novo, sem `.meta` | ganha um ID novo e um `.meta` |
+| Asset + `.meta` movidos juntos | **mesmo ID**, caminho novo |
+| Só o asset movido (sem o `.meta`) | ganha ID novo; o `.meta` antigo vira órfão |
+| `.meta` sem asset (órfão) | reportado no log; **nunca** apagado automaticamente |
+| `.meta` corrompido | aviso e ID novo |
+| Dois `.meta` com o mesmo ID (asset copiado com o `.meta`) | o primeiro em ordem alfabética mantém o ID; os demais ganham ID novo |
+
+> Os `.meta` ficam ocultos no painel Conteúdo do Projeto. Mover/renomear arquivos pelo Explorer do sistema exige levar o `.meta` junto; o painel ainda não move nem renomeia arquivos.
 
 ## Compatibilidade
 

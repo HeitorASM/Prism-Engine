@@ -14,6 +14,7 @@
 // ============================================================================
 
 #include "../Core/Base.h"
+#include "../Assets/AssetRegistry.h"
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -115,6 +116,16 @@ namespace Prism {
         RenderSettings& GetRenderSettings() { return m_RenderSettings; }
         const RenderSettings& GetRenderSettings() const { return m_RenderSettings; }
 
+        // Indice de identidade dos assets deste projeto (AssetID <-> caminho,
+        // ver Assets/AssetRegistry.h). Pertence ao Project: e recriado junto
+        // com ele, e sempre aponta para GetAssetDirectory() deste projeto.
+        // Ja vem VARRIDO quando Project::New/Load retornam - todo asset ja
+        // tem um .meta com ID. Chame GetAssetRegistry().Refresh() de novo
+        // para reconciliar mudancas feitas no disco com o editor aberto
+        // (arquivos novos, movidos ou removidos).
+        AssetRegistry& GetAssetRegistry() { return m_AssetRegistry; }
+        const AssetRegistry& GetAssetRegistry() const { return m_AssetRegistry; }
+
         static Ref<Project> GetActive() { return s_ActiveProject; }
 
         // Cria um novo projeto do zero: cria a pasta, a estrutura de subpastas
@@ -147,6 +158,11 @@ namespace Prism {
         // corrupcao de heap, o mesmo bug que ja ocorreu no EditorLayer.h.
         // No fim, o layout de tudo que ja existia continua identico.
         RenderSettings m_RenderSettings;
+
+        // Tambem NO FIM, pelo mesmo motivo do m_RenderSettings acima - e
+        // DEPOIS dele, para que o layout de tudo que ja existia continue
+        // identico.
+        AssetRegistry m_AssetRegistry;
 
         inline static Ref<Project> s_ActiveProject;
 

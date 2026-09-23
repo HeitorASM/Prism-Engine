@@ -33,6 +33,17 @@ namespace Prism {
     // bump aqui nao deveria forcar um bump la e vice-versa, mesmo que hoje
     // os dois numeros comecem alinhados por coincidencia (ambos refletem
     // o mesmo ComponentRegistry::GetAll() atual).
+    //
+    // MaterialComponent::LinkedAsset (ver Components.h e
+    // EditorLayer::ReconcileLinkedMaterial) e gravado/lido pelo MESMO
+    // callback de ComponentRegistry - nao ha campo extra a versionar
+    // aqui so por causa dele. Efeito pratico: se a raiz (ou um filho) do
+    // prefab tem um material VINCULADO a um .prismmat, cada instancia
+    // criada por Instantiate() nasce com o MESMO vinculo - editar aquele
+    // material afeta todas as instancias do prefab que ainda nao
+    // desvincularam (ver botao "Desvincular" no painel Material), alem
+    // de qualquer outra entidade fora do prefab que aponte para o mesmo
+    // asset. Isto e intencional: o vinculo e do MATERIAL, nao do prefab.
     static constexpr uint32_t kPrefabFormatVersion = 1;
     static constexpr char kMagic[4] = { 'P', 'P', 'F', 'B' };
 

@@ -81,12 +81,14 @@ namespace Prism {
                 WriteRaw(out, c.AlbedoTint);
                 WriteRaw(out, c.RoughnessFactor);
                 WriteRaw(out, c.MetallicFactor);
+                WriteRaw(out, c.LinkedAsset); // AssetID e so um uint64_t (trivialmente copiavel) - ver Assets/AssetID.h
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
                 bool ok = ReadString(in, c.AlbedoPath) && ReadString(in, c.NormalPath)
                        && ReadString(in, c.RoughnessMetallicPath) && ReadRaw(in, c.AlbedoTint)
-                       && ReadRaw(in, c.RoughnessFactor) && ReadRaw(in, c.MetallicFactor);
+                       && ReadRaw(in, c.RoughnessFactor) && ReadRaw(in, c.MetallicFactor)
+                       && ReadRaw(in, c.LinkedAsset);
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
                     return false;

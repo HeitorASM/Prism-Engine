@@ -47,12 +47,23 @@ namespace PrismEditor {
 
         void OnImGuiRender();
 
+        // Releva 'm_CurrentDirectory' do disco (reconciliando .meta novos/
+        // orfaos - ver Assets/AssetRegistry.h - fica a cargo do CHAMADOR:
+        // esta funcao so relista os arquivos, nao mexe no AssetRegistry).
+        // Publico porque outros paineis podem alterar o conteudo desta
+        // mesma pasta por fora deste painel - ex: EditorLayer::
+        // RenderSaveMaterialPopup grava um novo .prismmat dentro de
+        // Assets/Materials e chama isto para o arquivo aparecer aqui sem
+        // esperar o usuario clicar "Atualizar" manualmente. O botao
+        // "Atualizar" do proprio painel (ver RenderToolbar) chama o
+        // mesmo metodo.
+        void RefreshEntries();
+
     private:
         void RenderToolbar();
         void RenderGrid();
 
         void NavigateTo(const std::filesystem::path& directory);
-        void RefreshEntries();
 
     private:
         std::filesystem::path m_CurrentDirectory;

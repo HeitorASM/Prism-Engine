@@ -35,6 +35,10 @@ namespace Prism {
     //   v10 MaterialComponent, registrado entre MeshRendererComponent e
     //       LightComponent (a ordem de registro no ComponentRegistry,
     //       ver ComponentRegistry::GetAll(), determina a ordem no arquivo)
+    //   v11 MaterialComponent::LinkedAsset (AssetID, ver Assets/AssetID.h) -
+    //       vinculo vivo com um .prismmat (ver MaterialSerializer.h e
+    //       EditorLayer::ReconcileLinkedMaterial). Invalido (0) para todo
+    //       material que ja existia antes desta versao.
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -47,7 +51,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 10;
+    static constexpr uint32_t kSceneFormatVersion = 11;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

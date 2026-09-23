@@ -15,3 +15,10 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DPRISM_DEBUG")
 add_subdirectory(vendor)
 add_subdirectory(Prism)
 add_subdirectory(PrismEditor)
+
+# Testes automatizados: opt-in (nao afetam o build normal). Ver tests/CMakeLists.txt.
+option(PRISM_BUILD_TESTS "Compila os testes automatizados" OFF)
+if(PRISM_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
