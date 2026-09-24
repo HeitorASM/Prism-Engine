@@ -1,5 +1,27 @@
 #pragma once
 
+// ============================================================================
+// AssetID.h
+// Identidade ESTAVEL de um asset. Um caminho de arquivo NAO serve como
+// identidade: renomear ou mover "Rock.png" quebraria toda referencia
+// gravada em mapas/prefabs/materiais. Com um AssetID gravado no .meta ao
+// lado do arquivo (ver AssetMeta.h), o asset continua o MESMO mesmo depois
+// de mudar de pasta ou de nome - e o mesmo papel do "uid://" da Godot e do
+// GUID da Unity.
+//
+// 64 bits aleatorios (nao 128 como um UUID completo): a chance de colisao
+// entre N assets e ~N^2 / 2^65 - para 1 milhao de assets, na ordem de
+// 3e-8. Em troca, um AssetID e um uint64_t trivialmente copiavel: cabe no
+// ComponentRegistry::WriteRaw/ReadRaw sem formato novo, e serve direto
+// como chave de unordered_map.
+//
+// O valor 0 e RESERVADO como "sem asset" (referencia vazia). Nunca e
+// gerado por AssetID::Generate().
+//
+// Sem dependencia de OpenGL/EnTT/GLFW de proposito - este modulo precisa
+// compilar e ser testavel sozinho.
+// ============================================================================
+
 #include <cstdint>
 #include <string>
 #include <functional>

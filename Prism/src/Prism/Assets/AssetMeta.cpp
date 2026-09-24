@@ -74,18 +74,20 @@ namespace Prism {
         if (!in.is_open())
             return false;
 
+        // Le para uma copia LOCAL e so devolve em caso de sucesso - mesma
+        // garantia "nunca deixa pela metade" de MaterialSerializer::Deserialize.
         AssetMeta parsed;
         bool haveID = false;
 
         std::string line;
         while (std::getline(in, line)) {
-            line = Trim(line); 
+            line = Trim(line); // tambem remove o '\r' de arquivos CRLF (Windows)
             if (line.empty() || line[0] == '#')
                 continue;
 
             size_t eq = line.find('=');
             if (eq == std::string::npos)
-                continue; 
+                continue; // linha sem '=' nao e Chave=Valor: ignora
 
             std::string key = Trim(line.substr(0, eq));
             std::string value = Trim(line.substr(eq + 1));
@@ -100,6 +102,7 @@ namespace Prism {
             else if (key == "Type") {
                 parsed.Type = AssetTypeFromString(value);
             }
+            // demais chaves: ignoradas de proposito (ver comentario no .h)
         }
 
         if (!haveID || !parsed.ID.IsValid())
@@ -119,6 +122,9 @@ namespace Prism {
         if (metaPath.has_parent_path())
             std::filesystem::create_directories(metaPath.parent_path(), ec);
 
+        // Escrita atomica: temporario ao lado + rename. rename sobre um
+        // arquivo existente e atomico no mesmo volume (POSIX e, no Windows,
+        // std::filesystem::rename usa MoveFileEx com REPLACE_EXISTING).
         std::filesystem::path tempPath = metaPath;
         tempPath += ".tmp";
 

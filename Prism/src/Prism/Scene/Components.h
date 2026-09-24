@@ -422,6 +422,43 @@ namespace Prism {
         RelationshipComponent(const RelationshipComponent&) = default;
     };
 
+    // --- Vinculo vivo de PREFAB (ver Scene/PrefabSyncer.h para a logica) ---
+    // Igual em espirito ao vinculo vivo de MATERIAL (MaterialComponent::
+    // LinkedAsset), mas para uma SUBARVORE inteira de entidades em vez de
+    // um struct unico - por isso sao DOIS components, nao um so:
+    //
+    //   PrefabInstanceRootComponent: so na RAIZ da subarvore instanciada.
+    //   "Esta entidade e a raiz de uma instancia do prefab X."
+    //
+    //   PrefabInstanceMemberComponent: em TODA entidade da subarvore
+    //   (raiz inclusive) - "esta entidade corresponde ao indice N dentro
+    //   do arquivo .prismprefab de origem". E o que permite ao
+    //   PrefabSyncer (ver Scene/PrefabSyncer.h) casar cada entidade da
+    //   instancia com a entidade correspondente ao reler o arquivo -
+    //   MESMO indice posicional que PrefabSerializer ja usa para o
+    //   indice-de-pai (ver CollectSubtree em PrefabSerializer.cpp).
+    //
+    // NENHUM dos dois entra na comparacao de "este component esta
+    // overridado?" (ver PrefabSyncer.h) - sao meta-dados do VINCULO em
+    // si, nao conteudo visual/de gameplay do prefab. Por isso ficam de
+    // fora de ComponentRegistry::GetAll() tambem (ver comentario grande
+    // em ComponentRegistration.cpp sobre o que NAO e registrado la e por
+    // que) - SceneSerializer::Serialize/Deserialize os trata como um
+    // bloco a parte, do mesmo jeito que ja faz com RelationshipComponent.
+    struct PrefabInstanceRootComponent {
+        AssetID SourceAsset; // o .prismprefab de origem (invalido = nunca deveria acontecer numa entidade com este component - ver PrefabSyncer)
+
+        PrefabInstanceRootComponent() = default;
+        PrefabInstanceRootComponent(const PrefabInstanceRootComponent&) = default;
+    };
+
+    struct PrefabInstanceMemberComponent {
+        uint32_t IndexInPrefab = 0; // indice posicional dentro do .prismprefab (0 = a propria raiz, por construcao de PrefabSerializer::CollectSubtree)
+
+        PrefabInstanceMemberComponent() = default;
+        PrefabInstanceMemberComponent(const PrefabInstanceMemberComponent&) = default;
+    };
+
     // Slot de script anexado a uma entidade. Guarda QUAL arquivo .lua esta
     // associado a ela; quem carrega e executa e o ScriptEngine (ver
     // Scripting/ScriptEngine.h), durante o Play.

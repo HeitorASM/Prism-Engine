@@ -20,17 +20,25 @@
 // so que para N < total-da-cena entidades (a raiz + seus descendentes) em
 // vez de TODAS as entidades da Scene.
 //
-// O QUE ISTO NAO E (ainda): nao ha "prefab instance" vinculada ao arquivo
-// original - instanciar um Prefab cria entidades NORMAIS na Scene, sem
-// nenhum link de volta ao .prismprefab. Editar o Prefab depois NAO
-// atualiza instancias ja colocadas em cenas (equivalente a "unpacked
-// scene instance" da Godot, ou a quebrar o vinculo com o Prefab na Unity).
-// Um sistema de instancias vinculadas/atualizacao em cascata ainda nao
-// existe.
+// VINCULO VIVO com instancias (ver Scene/PrefabSyncer.h para a logica
+// completa): Instantiate() agora tambem marca a raiz criada com
+// PrefabInstanceRootComponent (o AssetID deste .prismprefab) e TODA
+// entidade da subarvore (raiz inclusive) com PrefabInstanceMemberComponent
+// (o indice posicional dela dentro deste arquivo - ver Components.h).
+// Esta classe (PrefabSerializer) continua sem saber NADA sobre
+// sincronizacao - so gera/consome o arquivo em si; PrefabSyncer e quem
+// usa esses dois components depois para decidir "o que mudou no arquivo
+// desde a instanciacao, e o que a instancia overridou por conta propria".
+// Um .prismprefab em si NUNCA contem PrefabInstanceRootComponent/
+// PrefabInstanceMemberComponent (eles nao passam por ComponentRegistry,
+// ver Components.h) - mesmo salvando um prefab a partir de uma entidade
+// que ela mesma e instancia de outro prefab (aninhamento), o arquivo
+// resultante fica limpo desses dois components.
 // ============================================================================
 
 #include "../Core/Base.h"
 #include "Entity.h"
+#include "../Assets/AssetID.h"
 #include <filesystem>
 
 namespace Prism {
@@ -53,7 +61,21 @@ namespace Prism {
         // RAIZ recem-criada (Entity invalida em caso de falha, e nenhuma
         // entidade e criada nesse caso - falha e tudo-ou-nada, igual
         // SceneSerializer::Deserialize).
-        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath);
+        //
+        // 'sourceAsset': o AssetID (ver Assets/AssetID.h) deste MESMO
+        // .prismprefab, resolvido pelo CHAMADOR via
+        // Project::GetAssetRegistry() - PrefabSerializer nao conhece
+        // Project/AssetRegistry (ficaria acoplado ao editor), entao nao
+        // resolve isso sozinho. Se valido, a raiz criada ganha
+        // PrefabInstanceRootComponent (ver Components.h e
+        // Scene/PrefabSyncer.h) e toda a subarvore ganha
+        // PrefabInstanceMemberComponent com o indice posicional dela
+        // dentro deste arquivo - e isto que liga a instancia ao arquivo
+        // para PrefabSyncer sincronizar depois. Invalido (o default) =
+        // instancia SEM vinculo, exatamente o comportamento de antes do
+        // vinculo vivo existir (uma subarvore de entidades comuns, sem
+        // nenhum link de volta ao arquivo).
+        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset = {});
     };
 
 }

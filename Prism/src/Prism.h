@@ -30,6 +30,7 @@
 #include "Prism/Scene/Raycast.h"
 #include "Prism/Scene/SceneSerializer.h"
 #include "Prism/Scene/PrefabSerializer.h"
+#include "Prism/Scene/PrefabSyncer.h"
 #include "Prism/Scene/MaterialSerializer.h"
 #include "Prism/Scripting/ScriptEngine.h"
 #include "Prism/Physics/PhysicsEngine.h"

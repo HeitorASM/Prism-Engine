@@ -167,7 +167,7 @@ namespace Prism {
         return true;
     }
 
-    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath) {
+    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset) {
         ComponentRegistry::RegisterAll();
 
         std::ifstream in(filepath, std::ios::binary);
@@ -250,6 +250,15 @@ namespace Prism {
             }
             parentIndices.push_back(parentIndex);
             createdEntities.push_back(entity);
+
+            // Marca esta entidade como membro da instancia (indice 'i'
+            // dentro DESTE arquivo) se um AssetID foi passado - ver
+            // comentario grande no .h sobre 'sourceAsset'. Feito aqui, ja
+            // dentro do loop de criacao, para toda entidade da subarvore
+            // (nao so a raiz) ganhar o indice de uma vez, sem precisar de
+            // outro loop separado so para isto.
+            if (sourceAsset.IsValid())
+                entity.AddComponent<PrefabInstanceMemberComponent>().IndexInPrefab = i;
         }
 
         // Segunda passada: resolve os indices de pai em chamadas reais de
@@ -262,7 +271,27 @@ namespace Prism {
             targetScene.SetParent(createdEntities[i], createdEntities[(uint32_t)parentIndex]);
         }
 
-        PRISM_CORE_INFO("Prefab instanciado de: ", filepath.string(), " (", entityCount, " entidade(s)).");
+        // A RAIZ (indice 0, ver CollectSubtree em Serialize) tambem ganha
+        // PrefabInstanceRootComponent - e ela quem representa a instancia
+        // inteira para o resto do editor (ver PrefabSyncer.h e
+        // EditorLayer::RenderHierarchyNode para o selo visual). So a raiz,
+        // nao cada filho: um filho ja tem PrefabInstanceMemberComponent
+        // (marcado no loop acima) para PrefabSyncer saber comparar seus
+        // components, mas nao precisa saber sozinho qual e o AssetID de
+        // origem - isso e responsabilidade da raiz da subarvore dele.
+        if (sourceAsset.IsValid())
+            createdEntities[0].AddComponent<PrefabInstanceRootComponent>().SourceAsset = sourceAsset;
+
+        // So loga quando 'sourceAsset' e valido, ou seja, so na instancia
+        // "de verdade" que o usuario ve na cena (drag-and-drop, etc). Com
+        // AssetID invalido isto e so PrefabSyncer::LoadPrefabForComparison
+        // recarregando o arquivo numa Scene temporaria - acontece TODO
+        // FRAME enquanto o painel Prefab estiver aberto (ver
+        // EditorLayer::RenderPrefabInstanceSection) e qualquer nivel de
+        // log (o Log nao filtra TRACE) inundaria o console sem servir de
+        // nada: nao e uma instancia nova, so uma releitura interna.
+        if (sourceAsset.IsValid())
+            PRISM_CORE_INFO("Prefab instanciado de: ", filepath.string(), " (", entityCount, " entidade(s)).");
         return createdEntities[0]; // indice 0 e sempre a raiz (ver CollectSubtree em Serialize)
     }
 

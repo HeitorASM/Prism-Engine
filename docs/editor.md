@@ -96,7 +96,14 @@ Limite conhecido: duas entidades com conteúdo 100% idêntico (mesmo nome, trans
 - **Instanciar**: arraste um `.prismprefab` do Content Browser para a Hierarquia (vira raiz, ou filho se solto sobre um node) ou para a Viewport (vira raiz, na origem).
 - **Materiais**: na seção Material da Propriedades, "Salvar como Asset..." grava um `.prismmat`; arrastar um `.prismmat` para o painel o carrega. Arrastar uma imagem para um slot de textura a atribui.
 
-Instanciar um prefab ou carregar um material é uma **cópia pontual**: editar o arquivo depois não atualiza o que já foi instanciado.
+Instâncias de prefab mantêm um vínculo com o `.prismprefab` de origem. Selecionar a raiz **ou qualquer filho** da instância mostra a seção **Prefab** nas Propriedades:
+
+- **Divergências** lista os components (incluindo o **Transform dos filhos**) que foram alterados na instância em relação ao arquivo.
+- **Aplicar ao Prefab** grava o valor da instância de volta no `.prismprefab`. É assim que uma edição feita numa instância passa a valer para as outras cenas.
+- **Reverter** descarta a alteração e volta ao valor do arquivo; **Sincronizar com o Prefab** atualiza os components que não divergem.
+- O Transform da **raiz** nunca conta como divergência: reposicionar a instância na cena é sempre livre.
+
+Carregar um material é uma **cópia pontual** (a menos que fique vinculado a um `.prismmat`).
 
 ## Modo Play
 

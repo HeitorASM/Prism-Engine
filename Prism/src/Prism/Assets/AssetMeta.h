@@ -14,7 +14,7 @@
 //     ID=8f3a1c5d2b7e9041
 //     Type=Texture
 //
-// PS: mover/renomear um asset SEMPRE junto com o
+// REGRA DE OURO PARA O USUARIO: mover/renomear um asset SEMPRE junto com o
 // seu .meta preserva o ID (e todas as referencias a ele). Apagar so o .meta
 // gera um ID novo na proxima varredura - e as referencias antigas ficam
 // penduradas (o AssetRegistry avisa disso).

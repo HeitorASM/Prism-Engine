@@ -39,6 +39,13 @@ namespace Prism {
     //       vinculo vivo com um .prismmat (ver MaterialSerializer.h e
     //       EditorLayer::ReconcileLinkedMaterial). Invalido (0) para todo
     //       material que ja existia antes desta versao.
+    //   v12 PrefabInstanceRootComponent/PrefabInstanceMemberComponent
+    //       (ver Components.h e Scene/PrefabSyncer.h) - vinculo vivo de
+    //       PREFAB. Tratados como bloco a parte (como RelationshipComponent
+    //       na nota abaixo), NAO via ComponentRegistry - ver comentario
+    //       grande em Components.h sobre por que ficam de fora do
+    //       registro. Formato por entidade: [bool hasRoot][AssetID se
+    //       true][bool hasMember][uint32_t IndexInPrefab se true].
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -51,7 +58,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 11;
+    static constexpr uint32_t kSceneFormatVersion = 12;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -167,6 +174,21 @@ namespace Prism {
             }
             WriteRaw(out, parentIndex);
 
+            // PrefabInstanceRootComponent/PrefabInstanceMemberComponent -
+            // adicionados na v12 (ver Components.h e Scene/PrefabSyncer.h).
+            // Bloco a parte (fora do ComponentRegistry), mesmo tratamento
+            // de RelationshipComponent acima - ver comentario de
+            // kSceneFormatVersion.
+            bool hasPrefabRoot = m_Scene->GetRegistry().all_of<PrefabInstanceRootComponent>(handle);
+            WriteRaw(out, hasPrefabRoot);
+            if (hasPrefabRoot)
+                WriteRaw(out, m_Scene->GetRegistry().get<PrefabInstanceRootComponent>(handle).SourceAsset);
+
+            bool hasPrefabMember = m_Scene->GetRegistry().all_of<PrefabInstanceMemberComponent>(handle);
+            WriteRaw(out, hasPrefabMember);
+            if (hasPrefabMember)
+                WriteRaw(out, m_Scene->GetRegistry().get<PrefabInstanceMemberComponent>(handle).IndexInPrefab);
+
             if (!out) writeFailed = true;
         });
 
@@ -259,6 +281,24 @@ namespace Prism {
                     if (has)
                         info.Serialize(out, entity);
                 }
+
+                // PrefabInstanceRootComponent/PrefabInstanceMemberComponent
+                // (v12) - fora do ComponentRegistry (ver Components.h),
+                // entao entram aqui manualmente, mesmo tratamento que o
+                // bloco por-entidade de Serialize() usa. Sem isto,
+                // instanciar um prefab ou aplicar/reverter um override
+                // (ver PrefabSyncer.h) nao mudaria o fingerprint - a cena
+                // pareceria "sem alteracoes" para MarkSceneClean/IsDirty
+                // mesmo tendo mudado de verdade.
+                bool hasPrefabRoot = entity.HasComponent<PrefabInstanceRootComponent>();
+                WriteRaw(out, hasPrefabRoot);
+                if (hasPrefabRoot)
+                    WriteRaw(out, entity.GetComponent<PrefabInstanceRootComponent>().SourceAsset);
+                bool hasPrefabMember = entity.HasComponent<PrefabInstanceMemberComponent>();
+                WriteRaw(out, hasPrefabMember);
+                if (hasPrefabMember)
+                    WriteRaw(out, entity.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab);
+
                 if (!out)
                     return false;
             } // fecha (flush) antes de reler
@@ -441,6 +481,37 @@ namespace Prism {
             }
             parentIndices.push_back(parentIndex);
             createdEntities.push_back(entity);
+
+            // PrefabInstanceRootComponent/PrefabInstanceMemberComponent -
+            // ver bloco simetrico em Serialize() e comentario de
+            // kSceneFormatVersion (v12).
+            bool hasPrefabRoot = false;
+            if (!ReadRaw(in, hasPrefabRoot)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de instancia de prefab da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasPrefabRoot) {
+                AssetID sourceAsset;
+                if (!ReadRaw(in, sourceAsset)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (asset de origem do prefab da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                entity.AddComponent<PrefabInstanceRootComponent>().SourceAsset = sourceAsset;
+            }
+
+            bool hasPrefabMember = false;
+            if (!ReadRaw(in, hasPrefabMember)) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de membro de prefab da entidade ", i, "): ", filepath.string());
+                return false;
+            }
+            if (hasPrefabMember) {
+                uint32_t indexInPrefab = 0;
+                if (!ReadRaw(in, indexInPrefab)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (indice de prefab da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                entity.AddComponent<PrefabInstanceMemberComponent>().IndexInPrefab = indexInPrefab;
+            }
         }
 
         // Segunda passada: resolve os indices de pai em chamadas reais de

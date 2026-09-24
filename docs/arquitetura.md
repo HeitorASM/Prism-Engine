@@ -62,7 +62,27 @@ Para adicionar um component novo:
 
 O módulo não depende de OpenGL, GLFW nem EnTT, de propósito: compila e é testado isoladamente (ver abaixo).
 
-Neste estágio a identidade **existe mas ainda não é usada**: `MaterialComponent`, `ScriptComponent` e os serializadores continuam referenciando arquivos por caminho. Migrá-los para `AssetID` é o passo seguinte.
+## Vínculo vivo de Material
+
+`MaterialComponent::LinkedAsset` (um `AssetID`) marca um material como uma *view* de um `.prismmat`, em vez de uma cópia independente. Editar qualquer campo no painel Material grava no arquivo (com um pequeno atraso, `EditorLayer::FlushMaterialLinkSave`), e `EditorLayer::ReconcileLinkedMaterial` releva o arquivo (comparando a hora de modificação) e propaga para **toda** entidade vinculada ao mesmo asset, todo frame. O painel mostra um selo **[Vinculado]** (ou **[Vínculo quebrado]**, se o asset sumiu) com um botão **Desvincular**.
+
+`LoadMaterialAssetCommand` (arrastar um `.prismmat`, ou "Carregar de Asset") liga o vínculo, resolvendo o caminho via `AssetRegistry`. "Salvar como Asset" nunca liga vínculo — é sempre uma cópia pontual.
+
+## Vínculo vivo de Prefab
+
+Igual em espírito ao de Material, mas para uma **subárvore** de entidades em vez de um struct único — por isso usa dois components (`PrefabInstanceRootComponent` na raiz, `PrefabInstanceMemberComponent` em toda a subárvore) e uma classe dedicada, `Scene/PrefabSyncer.h`.
+
+**Override por component inteiro** (não por campo, como Godot/Unity): `PrefabSyncer::Diff` relê o `.prismprefab` numa `Scene` temporária e compara, por entidade da instância, os bytes serializados de cada `Component` contra o correspondente no arquivo (casados por `PrefabInstanceMemberComponent::IndexInPrefab`). Divergem → *overridado* (nunca sobrescrito por um sync). Idênticos → pode ser atualizado.
+
+- `PrefabSyncer::UpdateAll`: aplica o prefab atual em todo Component não overridado da instância.
+- `PrefabSyncer::RevertComponent`: descarta o override de **um** Component específico.
+- `PrefabSyncer::ApplyComponentToPrefab`: inverso — grava o valor atual da instância de volta no arquivo (não propaga para outras instâncias automaticamente; é uma ação explícita).
+
+Os três comandos equivalentes (`SyncPrefabInstanceCommand`, `RevertPrefabComponentCommand`, `ApplyPrefabComponentCommand`, em `EditorCommands.h`) passam pelo `CommandHistory` (Undo/Redo), exceto a escrita do arquivo em si no último, que é irreversível por Ctrl+Z.
+
+**Limitação conhecida:** `TransformComponent` (como `TagComponent`) nunca passa pelo `ComponentRegistry`, então nunca entra nesta comparação — mover/girar uma entidade da instância nunca conta como override, mas por isso um ajuste de posição feito no prefab também nunca sincroniza para instâncias já existentes.
+
+`PrefabInstanceRootComponent`/`PrefabInstanceMemberComponent` nunca são registrados no `ComponentRegistry` (ver comentário em `ComponentRegistration.cpp`): um `.prismprefab` nunca contém esses dois components, mesmo salvo a partir de uma entidade que já é ela mesma uma instância (aninhamento). `SceneSerializer` os grava como bloco à parte no `.prismmap` (`kSceneFormatVersion` 12).
 
 ## Testes
 

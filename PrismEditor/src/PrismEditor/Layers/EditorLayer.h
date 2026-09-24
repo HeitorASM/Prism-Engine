@@ -261,6 +261,25 @@ namespace PrismEditor {
         void FlushMaterialLinkSave();
         void ReconcileLinkedMaterial();
 
+        // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
+        // PrefabInstanceMemberComponent, ver Components.h e
+        // Scene/PrefabSyncer.h) ------------------------------------------
+        //
+        // Ao contrario do vinculo de Material (que grava sozinho, com
+        // debounce, a cada edicao - ver FlushMaterialLinkSave acima),
+        // aqui NADA e automatico: sincronizar/aplicar/reverter sao acoes
+        // EXPLICITAS do usuario (via os tres Commands em EditorCommands.h
+        // - SyncPrefabInstanceCommand, RevertPrefabComponentCommand,
+        // ApplyPrefabComponentCommand), porque mexem em varios Components
+        // de uma vez e precisam de Undo/Redo de verdade. O que ESTA
+        // funcao faz automaticamente e so DETECTAR e AVISAR: compara a
+        // instancia contra o arquivo (Prism::PrefabSyncer::Diff, barato
+        // o bastante para chamar todo frame - ver comentario no .cpp) e
+        // desenha o selo/contagem de divergencias no painel Prefab
+        // (RenderPrefabInstanceSection) - a decisao de agir e sempre do
+        // usuario, atraves dos botoes daquela secao.
+        void RenderPrefabInstanceSection();
+
         // Desenha o popup modal "Criar Prefab" (mesmo padrao de
         // RenderSaveAsPopup) - pede o nome do arquivo, chama
         // Prism::PrefabSerializer::Serialize(m_PrefabToCreateFrom, ...) ao

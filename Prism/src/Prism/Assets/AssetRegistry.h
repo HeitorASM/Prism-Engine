@@ -18,7 +18,11 @@
 //                                  assets teriam a mesma identidade
 //
 // CAMINHOS sao guardados RELATIVOS a pasta de assets, com '/' como
-// separador em qualquer plataforma ("Textures/Rock.png").
+// separador em qualquer plataforma ("Textures/Rock.png"). Assim o mesmo
+// valor serve de chave no Windows e no Linux, e e o que se grava em disco.
+//
+// Nao tem dependencia de Project/OpenGL/EnTT: recebe a pasta raiz por
+// parametro, para ser testavel isoladamente.
 // ============================================================================
 
 #include "AssetID.h"
