@@ -126,8 +126,49 @@ namespace PrismEditor {
         m_SelectedEntity = {};
         m_MaterialLinkDirtyEntity = {}; // ver comentario acima - nunca aponta para a Scene recem-substituida
         m_CommandHistory.Clear();
+        SyncAllPrefabInstances();
         MarkSceneClean();
         return true;
+    }
+
+    void EditorLayer::SyncAllPrefabInstances() {
+        // Propaga mudancas feitas no(s) .prismprefab desde a ultima vez
+        // que este mapa foi salvo: toda instancia (PrefabInstanceRootComponent)
+        // na Scene recem-carregada e sincronizada com o arquivo atual, na
+        // hora do carregamento (nao a cada frame como ReconcileLinkedMaterial
+        // faz para material - Diff/UpdateAll releem o arquivo inteiro numa
+        // Scene temporaria, mais caro que o simples stat de mtime que o
+        // material usa, entao rodar isto continuamente pesaria para
+        // prefabs grandes/muitas instancias). PrefabSyncer::UpdateAll
+        // preserva os overrides (Components ja divergentes na instancia
+        // NUNCA sao tocados - ver PrefabSyncer.h), entao isto e seguro de
+        // chamar mesmo que a instancia tenha edicoes locais nao aplicadas.
+        //
+        // NAO usa CommandHistory aqui - mesmo raciocinio de
+        // ReconcileLinkedMaterial: isto e sincronizacao de baixo nivel no
+        // MOMENTO DE ABRIR o mapa, nao uma acao do usuario para desfazer
+        // com Ctrl+Z (que neste ponto ainda nem tem historico - ver
+        // m_CommandHistory.Clear() logo acima).
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return;
+
+        auto view = m_ActiveScene->GetRegistry().view<Prism::PrefabInstanceRootComponent>();
+        int updatedInstances = 0;
+        for (auto handle : view) {
+            Prism::Entity instanceRoot(handle, m_ActiveScene.get());
+            auto& root = view.get<Prism::PrefabInstanceRootComponent>(handle);
+            std::filesystem::path prefabPath = project->GetAssetRegistry().AbsolutePath(root.SourceAsset);
+            if (prefabPath.empty())
+                continue; // vinculo quebrado (arquivo sumiu) - painel Prefab ja avisa isto na UI, nada a fazer aqui
+
+            int updatedComponents = Prism::PrefabSyncer::UpdateAll(instanceRoot, prefabPath);
+            if (updatedComponents > 0)
+                updatedInstances++;
+        }
+
+        if (updatedInstances > 0)
+            PRISM_INFO(updatedInstances, " instancia(s) de prefab atualizada(s) ao carregar o mapa (mudancas nao-overridadas do(s) prefab(s) de origem).");
     }
 
     void EditorLayer::NewMap() {
@@ -2688,17 +2729,30 @@ namespace PrismEditor {
                     ImGui::SetTooltip("O .prismprefab de origem nao foi encontrado (apagado ou movido sem o .meta - ver Assets/AssetRegistry.h).\nEsta instancia continua funcionando normalmente, mas nao pode mais ser sincronizada.");
             }
             else {
-                // Compara a instancia contra o arquivo TODO FRAME que este
-                // painel estiver visivel - Diff() rele o .prismprefab
-                // inteiro numa Scene temporaria (ver PrefabSyncer::
-                // LoadPrefabForComparison), o que e mais pesado que a
-                // simples comparacao de mtime que ReconcileLinkedMaterial
-                // usa para Material. Aceitavel aqui porque so roda
-                // enquanto o painel Prefab estiver ABERTO E esta entidade
-                // SELECIONADA (nao para toda instancia da Scene, todo
-                // frame, como o Material faz) - o custo e proporcional ao
-                // tamanho de UMA subarvore de prefab, tipicamente pequena.
-                Prism::PrefabDiffResult diff = Prism::PrefabSyncer::Diff(instanceRoot, prefabPath);
+                // Cache por mtime (mesmo espirito do cache de Material -
+                // ver m_MaterialLinkFileTimes/ReconcileLinkedMaterial):
+                // Diff() rele o .prismprefab inteiro numa Scene temporaria
+                // e compara byte a byte (ver PrefabSyncer::
+                // LoadPrefabForComparison), caro para chamar TODO FRAME
+                // enquanto o painel fica aberto. So recalcula quando a
+                // raiz selecionada muda OU o arquivo no disco mudou desde
+                // o ultimo calculo - qualquer clique nos botoes abaixo
+                // (Sync/Revert/Apply/Recriar) altera a instancia e/ou o
+                // arquivo, entao invalidamos o cache no fim de cada um
+                // deles tambem (ver comentario junto a cada botao).
+                std::error_code fileTimeEc;
+                std::filesystem::file_time_type currentFileTime = std::filesystem::last_write_time(prefabPath, fileTimeEc);
+                bool cacheValid = !fileTimeEc
+                    && m_PrefabDiffCachedRoot == instanceRoot
+                    && m_PrefabDiffCachedFileTime == currentFileTime;
+
+                if (!cacheValid) {
+                    m_PrefabDiffCache = Prism::PrefabSyncer::Diff(instanceRoot, prefabPath);
+                    m_PrefabDiffCachedRoot = instanceRoot;
+                    if (!fileTimeEc)
+                        m_PrefabDiffCachedFileTime = currentFileTime;
+                }
+                Prism::PrefabDiffResult& diff = m_PrefabDiffCache;
 
                 if (!diff.Valid) {
                     ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.35f, 1.0f), "Nao foi possivel comparar com o prefab.");
@@ -2744,7 +2798,26 @@ namespace PrismEditor {
                     if (!diff.StructureMatches) {
                         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "A estrutura do prefab mudou (entidades adicionadas/removidas).");
                         if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("Sincronizar atualiza os Components das entidades correspondentes, mas nao traz entidades novas nem remove as que sumiram do prefab.\nPara refletir a nova estrutura, recrie a instancia (Excluir + Instanciar de novo)\nou use \"Aplicar Estrutura ao Prefab\" para gravar a estrutura DESTA instancia no arquivo.");
+                            ImGui::SetTooltip("Sincronizar atualiza os Components das entidades correspondentes, mas nao traz entidades novas nem remove as que sumiram do prefab.\nUse \"Recriar Instancia\" para trazer a estrutura NOVA do prefab para ca (perde os overrides desta instancia)\nou \"Aplicar Estrutura ao Prefab\" para gravar a estrutura DESTA instancia no arquivo (efeito oposto).");
+
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Recriar Instancia")) {
+                            // 'instanceRoot' e destruida dentro deste
+                            // Execute() (ver RecreateInstanceCommand) - a
+                            // entidade selecionada muda para a raiz NOVA e
+                            // saimos da funcao imediatamente, antes que
+                            // qualquer codigo abaixo (Sincronizar/
+                            // Divergencias/etc) tente reusar 'instanceRoot'
+                            // ou 'diff' (que referenciam a subarvore
+                            // ANTIGA, agora destruida) neste mesmo frame.
+                            auto command = Prism::CreateScope<RecreateInstanceCommand>(m_ActiveScene, instanceRoot, prefabPath);
+                            RecreateInstanceCommand* raw = command.get();
+                            m_CommandHistory.Execute(std::move(command));
+                            m_SelectedEntity = raw->GetInstantiatedEntity();
+                            return;
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Destroi esta instancia e a recria do zero a partir do prefab ATUAL - a nova estrutura (filhos adicionados/removidos no arquivo) passa a valer aqui.\nPerde os overrides locais desta instancia (Transform/Components que voce mudou so nela). Posicao e pai na cena sao preservados. Ctrl+Z desfaz.");
                     }
                     if (hasNewEntities) {
                         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "%d entidade(s) nova(s) nesta instancia (nao estao no prefab).", (int)(instanceEntityCount - instanceMemberCount));
@@ -2772,6 +2845,7 @@ namespace PrismEditor {
                         // logica de habilitar/desabilitar em troca de um
                         // clique ocasionalmente redundante.
                         m_CommandHistory.Execute(Prism::CreateScope<SyncPrefabInstanceCommand>(instanceRoot, prefabPath));
+                        m_PrefabDiffCachedRoot = {}; // instancia mudou - forca recalcular o Diff no proximo frame (ver cache acima)
                     }
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Atualiza todos os Components NAO divergentes desta instancia (e de seus filhos) com o valor atual do prefab.\nComponents que ja divergem (overridados) nao sao tocados.");
@@ -2779,13 +2853,14 @@ namespace PrismEditor {
                     ImGui::SameLine();
                     if (ImGui::Button("Aplicar Estrutura ao Prefab")) {
                         m_CommandHistory.Execute(Prism::CreateScope<ApplyPrefabStructureCommand>(instanceRoot, prefabPath));
+                        m_PrefabDiffCachedRoot = {}; // arquivo mudou - forca recalcular o Diff no proximo frame (ver cache acima)
                         if (project) {
                             project->GetAssetRegistry().Refresh();
                             m_ContentBrowser.RefreshEntries();
                         }
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Regrava o arquivo do prefab com a estrutura DESTA instancia: filhos adicionados passam a existir no prefab, filhos removidos deixam de existir.\nO Transform da raiz (posicao na cena) nao e gravado.\nNao afeta outras instancias ja existentes em outras cenas e nao pode ser desfeito por Ctrl+Z.");
+                        ImGui::SetTooltip("Regrava o arquivo do prefab com a estrutura DESTA instancia: filhos adicionados passam a existir no prefab, filhos removidos deixam de existir.\nO Transform da raiz (posicao na cena) nao e gravado.\nNao afeta outras instancias ja existentes em outras cenas (sincronize-as depois). Ctrl+Z desfaz.");
 
                     if (overrideCount > 0 && ImGui::TreeNodeEx("Divergencias", ImGuiTreeNodeFlags_None)) {
                         // 'd' NAO e const pelo mesmo motivo de
@@ -2808,6 +2883,7 @@ namespace PrismEditor {
                                 uint32_t index = d.InstanceEntity.HasComponent<Prism::PrefabInstanceMemberComponent>()
                                     ? d.InstanceEntity.GetComponent<Prism::PrefabInstanceMemberComponent>().IndexInPrefab : 0;
                                 m_CommandHistory.Execute(Prism::CreateScope<RevertPrefabComponentCommand>(d.InstanceEntity, prefabPath, index, d.ComponentName));
+                                m_PrefabDiffCachedRoot = {}; // instancia mudou - forca recalcular o Diff no proximo frame (ver cache acima)
                             }
                             if (ImGui::IsItemHovered())
                                 ImGui::SetTooltip("Descarta o valor atual deste Component na instancia e usa o do prefab.");
@@ -2823,6 +2899,7 @@ namespace PrismEditor {
                                 ImGui::SameLine();
                                 if (ImGui::SmallButton("Aplicar ao Prefab")) {
                                     m_CommandHistory.Execute(Prism::CreateScope<ApplyPrefabComponentCommand>(d.InstanceEntity, prefabPath, d.ComponentName));
+                                    m_PrefabDiffCachedRoot = {}; // arquivo mudou - forca recalcular o Diff no proximo frame (ver cache acima)
                                     // O arquivo mudou - mesma necessidade de
                                     // reconciliar o AssetRegistry/Content
                                     // Browser que RenderSaveMaterialPopup ja
@@ -2838,7 +2915,7 @@ namespace PrismEditor {
                                     }
                                 }
                                 if (ImGui::IsItemHovered())
-                                    ImGui::SetTooltip("Grava o valor ATUAL deste Component (da instancia) de volta no arquivo do prefab.\nNao afeta outras instancias deste prefab automaticamente - sincronize-as depois.");
+                                    ImGui::SetTooltip("Grava o valor ATUAL deste Component (da instancia) de volta no arquivo do prefab.\nNao afeta outras instancias deste prefab automaticamente - sincronize-as depois. Ctrl+Z desfaz.");
                             }
                             ImGui::PopID();
                         }

@@ -28,6 +28,7 @@
 #include <utility>
 #include <functional>
 #include <filesystem>
+#include <fstream> 
 
 namespace PrismEditor {
 
@@ -578,18 +579,66 @@ namespace PrismEditor {
     // por uma acao que grava um unico Component; o command ainda entra no
     // historico (para GetName() aparecer no menu Editar) mas Undo() so
     // avisa que a alteracao no arquivo nao pode ser desfeita por aqui.
+    // Le 'path' inteiro para um buffer de bytes (backup "burro" usado pelos
+    // Commands que gravam direto num .prismprefab - ApplyPrefabComponentCommand/
+    // ApplyPrefabStructureCommand abaixo). Devolve false se o arquivo nao
+    // existir/nao puder ser lido; 'out' fica vazio nesse caso (arquivo NOVO,
+    // sem nada para restaurar no Undo - ver uso abaixo).
+    inline bool ReadFileBytes(const std::filesystem::path& path, std::vector<char>& out) {
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in.is_open())
+            return false;
+        std::streamsize size = in.tellg();
+        if (size < 0)
+            return false;
+        in.seekg(0, std::ios::beg);
+        out.resize((size_t)size);
+        if (size > 0 && !in.read(out.data(), size))
+            return false;
+        return true;
+    }
+
+    // Inverso de ReadFileBytes - grava 'bytes' em 'path', sobrescrevendo.
+    inline bool WriteFileBytes(const std::filesystem::path& path, const std::vector<char>& bytes) {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open())
+            return false;
+        if (!bytes.empty())
+            out.write(bytes.data(), (std::streamsize)bytes.size());
+        return (bool)out;
+    }
+
     class ApplyPrefabComponentCommand : public Prism::Command {
     public:
         ApplyPrefabComponentCommand(Prism::Entity instanceEntity, std::filesystem::path prefabPath, std::string componentName)
             : m_InstanceEntity(instanceEntity), m_PrefabPath(std::move(prefabPath)), m_ComponentName(std::move(componentName)) {}
 
         void Execute() override {
+            // Backup dos bytes ANTES de gravar - e o que torna o Undo real
+            // (ver Undo() abaixo). 'm_HadBackup' distingue "arquivo nao
+            // existia" (nada a restaurar) de "falhou ao ler" (nao sabemos
+            // o estado anterior - melhor nao gravar do que gravar as
+            // cegas sem poder desfazer).
+            m_HadBackup = ReadFileBytes(m_PrefabPath, m_Backup);
+            if (!m_HadBackup && std::filesystem::exists(m_PrefabPath)) {
+                PRISM_ERROR("ApplyPrefabComponentCommand: nao foi possivel ler o prefab para backup - operacao cancelada por seguranca: ", m_PrefabPath.string());
+                return;
+            }
             m_Applied = Prism::PrefabSyncer::ApplyComponentToPrefab(m_InstanceEntity, m_PrefabPath, m_ComponentName);
         }
 
         void Undo() override {
-            if (m_Applied)
-                PRISM_ERROR("\"Aplicar ao Prefab\" grava direto no arquivo .prismprefab e nao pode ser desfeito por Ctrl+Z - restaure o arquivo manualmente (ou pelo controle de versao) se precisar reverter.");
+            if (!m_Applied)
+                return;
+            if (!m_HadBackup) {
+                // Nao havia arquivo antes desta operacao (caso raro/exotico) -
+                // nao ha para onde "voltar" alem de apagar o que foi criado.
+                std::error_code ec;
+                std::filesystem::remove(m_PrefabPath, ec);
+                return;
+            }
+            if (!WriteFileBytes(m_PrefabPath, m_Backup))
+                PRISM_ERROR("ApplyPrefabComponentCommand: falha ao restaurar o backup do prefab em Undo: ", m_PrefabPath.string());
         }
 
         std::string GetName() const override { return "Aplicar Component ao Prefab"; }
@@ -601,6 +650,8 @@ namespace PrismEditor {
         std::filesystem::path m_PrefabPath;
         std::string m_ComponentName;
         bool m_Applied = false;
+        bool m_HadBackup = false;
+        std::vector<char> m_Backup;
     };
 
     // "Aplicar Estrutura ao Prefab": regrava o .prismprefab inteiro a partir
@@ -614,6 +665,38 @@ namespace PrismEditor {
             : m_InstanceRoot(instanceRoot), m_PrefabPath(std::move(prefabPath)) {}
 
         void Execute() override {
+            // Mesmo backup "burro" (bytes crus) que ApplyPrefabComponentCommand
+            // usa - ver comentario la. Aqui e ainda mais importante: esta
+            // operacao regrava o arquivo INTEIRO (estrutura toda), entao um
+            // erro de clique custaria mais sem o backup.
+            m_HadBackup = ReadFileBytes(m_PrefabPath, m_Backup);
+            if (!m_HadBackup && std::filesystem::exists(m_PrefabPath)) {
+                PRISM_ERROR("ApplyPrefabStructureCommand: nao foi possivel ler o prefab para backup - operacao cancelada por seguranca: ", m_PrefabPath.string());
+                return;
+            }
+
+            // Backup tambem dos indices ATUAIS da instancia (PrefabSyncer::
+            // ApplyStructureToPrefab os REMARCA - ver comentario la) -
+            // precisamos devolve-los no Undo, senao a instancia ficaria
+            // com indices da estrutura NOVA apontando para o arquivo velho
+            // restaurado, dessincronizada de um jeito sutil (Diff casaria
+            // entidades erradas por indice).
+            m_MemberBackup.clear();
+            std::vector<Prism::Entity> stack{ m_InstanceRoot };
+            while (!stack.empty()) {
+                Prism::Entity e = stack.back();
+                stack.pop_back();
+                if (e.HasComponent<Prism::PrefabInstanceMemberComponent>())
+                    m_MemberBackup.push_back({ e, e.GetComponent<Prism::PrefabInstanceMemberComponent>().IndexInPrefab, true });
+                else
+                    m_MemberBackup.push_back({ e, 0, false });
+                for (size_t i = 0; i < e.GetChildCount(); i++) {
+                    Prism::Entity child = e.GetChildAt(i);
+                    if (child)
+                        stack.push_back(child);
+                }
+            }
+
             m_Applied = Prism::PrefabSyncer::ApplyStructureToPrefab(m_InstanceRoot, m_PrefabPath);
             if (m_Applied)
                 PRISM_INFO("Estrutura da instancia aplicada ao prefab: ", m_PrefabPath.filename().string());
@@ -622,8 +705,32 @@ namespace PrismEditor {
         }
 
         void Undo() override {
-            if (m_Applied)
-                PRISM_ERROR("\"Aplicar Estrutura ao Prefab\" grava direto no arquivo .prismprefab e nao pode ser desfeito por Ctrl+Z - restaure o arquivo manualmente (ou pelo controle de versao) se precisar reverter.");
+            if (!m_Applied)
+                return;
+
+            if (!m_HadBackup) {
+                std::error_code ec;
+                std::filesystem::remove(m_PrefabPath, ec);
+            }
+            else if (!WriteFileBytes(m_PrefabPath, m_Backup)) {
+                PRISM_ERROR("ApplyPrefabStructureCommand: falha ao restaurar o backup do prefab em Undo: ", m_PrefabPath.string());
+            }
+
+            // Devolve os indices de PrefabInstanceMemberComponent que a
+            // instancia tinha ANTES desta operacao (ver comentario em
+            // Execute() sobre por que isto e necessario).
+            for (auto& entry : m_MemberBackup) {
+                if (!entry.InstanceEntity)
+                    continue;
+                if (entry.HadMember) {
+                    if (!entry.InstanceEntity.HasComponent<Prism::PrefabInstanceMemberComponent>())
+                        entry.InstanceEntity.AddComponent<Prism::PrefabInstanceMemberComponent>();
+                    entry.InstanceEntity.GetComponent<Prism::PrefabInstanceMemberComponent>().IndexInPrefab = entry.IndexInPrefab;
+                }
+                else if (entry.InstanceEntity.HasComponent<Prism::PrefabInstanceMemberComponent>()) {
+                    entry.InstanceEntity.RemoveComponent<Prism::PrefabInstanceMemberComponent>();
+                }
+            }
         }
 
         std::string GetName() const override { return "Aplicar Estrutura ao Prefab"; }
@@ -631,9 +738,155 @@ namespace PrismEditor {
         bool WasApplied() const { return m_Applied; }
 
     private:
+        struct MemberBackup {
+            Prism::Entity InstanceEntity;
+            uint32_t IndexInPrefab = 0;
+            bool HadMember = false;
+        };
+
         Prism::Entity m_InstanceRoot;
         std::filesystem::path m_PrefabPath;
         bool m_Applied = false;
+        bool m_HadBackup = false;
+        std::vector<char> m_Backup;
+        std::vector<MemberBackup> m_MemberBackup;
+    };
+
+    // "Recriar Instancia": destroi a subarvore da instancia e instancia o
+    // prefab de novo do arquivo ATUAL, preservando pai e Transform da raiz -
+    // e o que o tooltip de "estrutura mudou" (ver EditorLayer.cpp, secao
+    // Prefab) ja sugeria fazer manualmente (Excluir + Instanciar de novo),
+    // automatizado com Undo de verdade. Usado quando StructureMatches==false
+    // (o prefab ganhou/perdeu entidades desde a instanciacao) e o usuario
+    // quer a estrutura NOVA nesta instancia especifica (perde os overrides
+    // dela - ao contrario de Sync, que preserva overrides mas nunca
+    // cria/remove entidade).
+    //
+    // ORDEM: no construtor (chamado com a entidade ANTIGA ainda viva),
+    // fazemos backup dela (pai, Transform da raiz, e a subarvore inteira
+    // serializada num arquivo temporario) - Execute() so DESTROI e
+    // recria a partir do arquivo atual; Undo() destroi a nova e restaura
+    // a antiga a partir do backup. Isto funciona simetricamente para
+    // qualquer numero de Undo/Redo, ao contrario de tentar decidir "qual
+    // e a raiz antiga" dentro de Execute (que so existe na entidade
+    // ORIGINAL, ja destruida a partir do primeiro Redo).
+    class RecreateInstanceCommand : public Prism::Command {
+    public:
+        RecreateInstanceCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity instanceRoot, std::filesystem::path prefabPath)
+            : m_Scene(scene), m_PrefabPath(std::move(prefabPath)), m_FirstRoot(instanceRoot) {
+            m_OldParent = instanceRoot.GetParent();
+            m_Transform = instanceRoot.GetComponent<Prism::TransformComponent>();
+
+            // Arquivo TEMPORARIO fora da pasta de Assets (nao deve
+            // aparecer no Content Browser nem ganhar AssetID - ver
+            // Assets/AssetRegistry.h, que so indexa a pasta de Assets do
+            // projeto) - guarda a subarvore ANTIGA inteira, com todos os
+            // overrides dela, para o Undo poder restaura-la exatamente
+            // como estava. Um ponteiro cru (this) no nome evita colisao
+            // entre varios Commands deste tipo no historico ao mesmo tempo.
+            m_OldBackupPath = std::filesystem::temp_directory_path() / ("prism_recreate_backup_" + std::to_string((uint64_t)(uintptr_t)this) + ".prismprefab");
+            m_HasOldBackup = Prism::PrefabSerializer::Serialize(instanceRoot, m_OldBackupPath);
+            if (!m_HasOldBackup)
+                PRISM_ERROR("RecreateInstanceCommand: falha ao fazer backup da instancia antiga - Undo nao vai poder restaura-la.");
+        }
+
+        ~RecreateInstanceCommand() override {
+            // O backup e so material de trabalho deste Command (nunca um
+            // asset do usuario) - limpa do disco temporario quando o
+            // Command sai do historico de Undo/Redo (CommandHistory
+            // descarta Commands antigos ao estourar o limite, ou ao criar
+            // uma nova acao depois de um Undo - ver Command.h).
+            if (!m_OldBackupPath.empty()) {
+                std::error_code ec;
+                std::filesystem::remove(m_OldBackupPath, ec);
+            }
+        }
+
+        void Execute() override {
+            // Redo (m_Instantiated != vazio de um Undo anterior) ou
+            // primeira execucao (m_Instantiated vazio, a entidade
+            // ORIGINAL passada ao construtor ainda e a raiz viva) - dos
+            // dois lados a raiz ATUAL a destruir e sempre a que este
+            // Command criou da ultima vez (ver Undo(), que preenche
+            // m_Instantiated de novo ao restaurar).
+            if (m_Instantiated) {
+                m_Scene->DestroyEntity(m_Instantiated);
+                m_Instantiated = {};
+            }
+            else if (m_FirstRoot) {
+                m_Scene->DestroyEntity(m_FirstRoot);
+                m_FirstRoot = {};
+            }
+
+            Prism::AssetID sourceAsset = ResolveAssetID();
+            m_Instantiated = Prism::PrefabSerializer::Instantiate(*m_Scene, m_PrefabPath, sourceAsset);
+            if (m_Instantiated) {
+                m_Instantiated.GetComponent<Prism::TransformComponent>() = m_Transform;
+                if (m_OldParent)
+                    m_Scene->SetParent(m_Instantiated, m_OldParent);
+            }
+            else {
+                PRISM_ERROR("RecreateInstanceCommand: falha ao instanciar '", m_PrefabPath.string(), "' - a instancia antiga foi removida e NADA a substituiu (ver backup temporario para recuperar manualmente).");
+            }
+        }
+
+        void Undo() override {
+            if (m_Instantiated) {
+                m_Scene->DestroyEntity(m_Instantiated);
+                m_Instantiated = {};
+            }
+            if (!m_HasOldBackup)
+                return;
+
+            // Reinstancia a partir do backup da subarvore ANTIGA - volta
+            // com os MESMOS overrides que tinha. Serialize() nao grava
+            // PrefabInstanceRootComponent/PrefabInstanceMemberComponent
+            // (ver PrefabSerializer::Serialize), entao passamos o MESMO
+            // AssetID de origem para o Instantiate deste backup remarcar
+            // esses components como se fosse uma instancia nova - mesmo
+            // valor que a instancia antiga ja tinha, entao o resultado e
+            // indistinguivel dela.
+            Prism::AssetID sourceAsset = ResolveAssetID();
+            Prism::Entity restored = Prism::PrefabSerializer::Instantiate(*m_Scene, m_OldBackupPath, sourceAsset);
+            if (!restored) {
+                PRISM_ERROR("RecreateInstanceCommand: falha ao restaurar a instancia antiga no Undo.");
+                return;
+            }
+            restored.GetComponent<Prism::TransformComponent>() = m_Transform;
+            if (m_OldParent)
+                m_Scene->SetParent(restored, m_OldParent);
+            m_Instantiated = restored; // um Redo() (Execute() de novo) destroi esta e recria a NOVA
+        }
+
+        std::string GetName() const override { return "Recriar Instancia de Prefab"; }
+
+        Prism::Entity GetInstantiatedEntity() const { return m_Instantiated; }
+
+    private:
+        Prism::AssetID ResolveAssetID() const {
+            auto project = Prism::Project::GetActive();
+            if (!project)
+                return {};
+            auto& registry = project->GetAssetRegistry();
+            std::string relative = registry.ToRelative(m_PrefabPath);
+            if (relative.empty())
+                return {};
+            Prism::AssetID id = registry.IdForPath(relative);
+            if (!id.IsValid()) {
+                registry.Refresh();
+                id = registry.IdForPath(relative);
+            }
+            return id;
+        }
+
+        Prism::Ref<Prism::Scene> m_Scene;
+        std::filesystem::path m_PrefabPath;
+        std::filesystem::path m_OldBackupPath;
+        bool m_HasOldBackup = false;
+        Prism::Entity m_OldParent;
+        Prism::TransformComponent m_Transform;
+        Prism::Entity m_FirstRoot; // nao usado apos a 1a Execute() - ver comentario la
+        Prism::Entity m_Instantiated; // a raiz ATUAL na Scene (novo apos Execute, restaurada apos Undo)
     };
 
     // Carrega um Material Asset (.prismmat - ver Prism::MaterialSerializer,

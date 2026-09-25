@@ -151,6 +151,12 @@ namespace PrismEditor {
         // de volta neste mesmo arquivo.
         bool LoadScene(const std::filesystem::path& mapPath);
 
+        // Chamado por LoadScene logo apos trocar m_ActiveScene: sincroniza
+        // TODA instancia de prefab da cena recem-carregada com o
+        // .prismprefab de origem atual (preserva overrides - ver
+        // PrefabSyncer::UpdateAll e o comentario grande na implementacao).
+        void SyncAllPrefabInstances();
+
         // Cria uma Scene nova vazia (so o nome, sem entidades) e a torna a
         // Scene ativa. m_CurrentMapPath e limpo - a proxima vez que "Salvar
         // Mapa" for usado, se comporta como "Salvar Como" (ainda nao ha
@@ -726,6 +732,19 @@ namespace PrismEditor {
         // dados). Tambem evita reprocessar (e re-logar) o mesmo asset uma
         // vez por entidade vinculada a ele; uma entrada por AssetID basta.
         std::unordered_map<Prism::AssetID, std::filesystem::file_time_type> m_MaterialLinkFileTimes;
+
+        // Cache do ultimo PrefabSyncer::Diff calculado pelo painel Prefab
+        // (ver RenderPrefabInstanceSection) - evita reler o .prismprefab
+        // inteiro numa Scene temporaria TODO FRAME enquanto o painel fica
+        // aberto (Diff() e mais caro que o simples stat que o cache de
+        // Material usa, ja que compara byte a byte cada Component - ver
+        // PrefabSyncer.h). Valido enquanto (a) a raiz selecionada for a
+        // MESMA de quando calculamos e (b) o mtime do arquivo nao mudou
+        // desde entao - qualquer uma das duas invalida o cache e forca
+        // um novo Diff (ver RenderPrefabInstanceSection).
+        Prism::Entity m_PrefabDiffCachedRoot;
+        std::filesystem::file_time_type m_PrefabDiffCachedFileTime{};
+        Prism::PrefabDiffResult m_PrefabDiffCache;
     };
 
 }
