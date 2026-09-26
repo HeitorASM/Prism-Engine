@@ -46,6 +46,11 @@ namespace Prism {
     //       grande em Components.h sobre por que ficam de fora do
     //       registro. Formato por entidade: [bool hasRoot][AssetID se
     //       true][bool hasMember][uint32_t IndexInPrefab se true].
+    //   v13 MeshRendererComponent::ModelAsset (AssetID, ver Assets/AssetID.h
+    //       e Assets/ModelLoader.h) - vinculo com um Model importado
+    //       (.obj/.fbx/.gltf/.glb). Invalido (0) para toda entidade salva
+    //       antes desta versao (equivale a "sem modelo importado, usa a
+    //       primitiva 'Mesh'" - o comportamento de sempre).
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -58,7 +63,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 12;
+    static constexpr uint32_t kSceneFormatVersion = 13;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

@@ -27,4 +27,16 @@ add_executable(PrismAssetTests
 target_include_directories(PrismAssetTests PRIVATE ${PRISM_SRC})
 target_compile_features(PrismAssetTests PRIVATE cxx_std_20)
 
+# /utf-8: mesmo motivo/padrao de Prism/CMakeLists.txt e
+# PrismEditor/CMakeLists.txt (ver comentario grande no CMakeLists.txt da
+# RAIZ) - este alvo tambem tem fontes em UTF-8 com acentos (ver
+# AssetTests.cpp, ex: "Pedra áspera.png" usado como teste de path).
+# PrismAssetTests nao linka o Assimp (compila so Assets/+Project/, ver
+# comentario no topo deste arquivo), entao nao ha colisao possivel aqui -
+# mesmo assim aplicada por target, nao globalmente, para manter UM SO
+# padrao em todo o repositorio (nunca add_compile_options() na raiz).
+if(MSVC)
+    target_compile_options(PrismAssetTests PRIVATE /utf-8)
+endif()
+
 add_test(NAME AssetTests COMMAND PrismAssetTests)

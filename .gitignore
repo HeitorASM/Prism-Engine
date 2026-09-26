@@ -3,6 +3,13 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+build/
+out/
+_deps/
+CMakeFiles/
+CMakeCache.txt
+CMakeUserPresets.json
+
 # User-specific files
 *.rsuser
 *.suo
@@ -74,8 +81,7 @@ StyleCopReport.xml
 *_p.c
 *_h.h
 *.ilk
-*.meta
-*.obj
+
 *.iobj
 *.pch
 *.pdb

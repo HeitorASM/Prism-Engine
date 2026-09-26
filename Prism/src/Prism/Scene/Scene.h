@@ -128,13 +128,16 @@ namespace Prism {
         // EditorLayer::RenderViewportPanel) - funciona tambem fora do modo
         // Play, ja que nao depende de nenhum corpo fisico existir.
         //
-        // O teste em si e contra a AABB (PrimitiveMeshFactory::GetLocalBounds),
-        // nao contra a geometria exata do mesh (triangulo a triangulo) -
-        // suficiente para picking tipico, mas significa que clicar num
-        // canto vazio da bounding box de uma esfera (fora da esfera de
-        // verdade, mas dentro do cubo que a envolve) ainda conta como acerto.
-        // Preciso o bastante pela imensa maioria dos casos; um teste exato
-        // por triangulo fica para se/quando fizer falta na pratica.
+        // O teste em si e contra a AABB (Mesh::GetLocalBoundsMin/Max, que
+        // vale tanto para primitivas quanto para modelos importados - ver
+        // MeshRendererComponent::ModelAsset e comentario grande em
+        // Mesh.h), nao contra a geometria exata do mesh (triangulo a
+        // triangulo) - suficiente para picking tipico, mas significa que
+        // clicar num canto vazio da bounding box de uma esfera (fora da
+        // esfera de verdade, mas dentro do cubo que a envolve) ainda
+        // conta como acerto. Preciso o bastante pela imensa maioria dos
+        // casos; um teste exato por triangulo fica para se/quando fizer
+        // falta na pratica.
         VisualRaycastHit VisualRaycast(const VisualRay& ray, float maxDistance = 1000.0f);
 
         // Chamado uma vez por frame pelo dono da Scene (hoje, EditorLayer).

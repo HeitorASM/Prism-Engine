@@ -41,12 +41,18 @@ namespace Prism {
             return; // idempotente - ver comentario em RegisterAll (ComponentRegistry.h)
 
         // --- MeshRendererComponent ------------------------------------------
+        // ModelAsset e gravado POR ULTIMO, depois de Mesh/Color - um arquivo
+        // de cena salvo ANTES deste campo existir simplesmente nao tem esses
+        // bytes no final; ver comentario de compatibilidade dentro do
+        // deserializador abaixo sobre como isso e tratado sem quebrar cenas
+        // antigas.
         Register<MeshRendererComponent>(
             "Mesh Renderer",
             [](std::ofstream& out, Entity e) {
                 auto& c = e.GetComponent<MeshRendererComponent>();
                 WriteRaw(out, c.Mesh);
                 WriteRaw(out, c.Color);
+                WriteRaw(out, c.ModelAsset); // AssetID e so um uint64_t (trivialmente copiavel) - mesmo padrao de MaterialComponent::LinkedAsset
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MeshRendererComponent>();
@@ -66,6 +72,21 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: PrimitiveMesh invalido na entidade ", entityIndex, ".");
                     return false;
                 }
+                // ModelAsset: campo ADICIONADO depois do formato original
+                // (Mesh+Color) ja existir. Diferente dos campos acima, uma
+                // falha de leitura aqui NAO e tratada como corrupcao fatal
+                // - kSceneFormatVersion (SceneSerializer.cpp) ja garante
+                // que arquivos de formato ANTIGO (sem este campo) sao
+                // rejeitados antes mesmo de chegar neste deserializador,
+                // entao, na pratica, qualquer arquivo que passe por aqui
+                // DEVE ter os 8 bytes de ModelAsset. Mesmo assim,
+                // ReadRaw falhando (EOF inesperado / arquivo truncado) so
+                // deixa c.ModelAsset no valor padrao (invalido = "sem
+                // modelo importado, usa a primitiva") em vez de abortar a
+                // entidade inteira - degradar graciosamente para "vira
+                // primitiva" e preferivel a perder a entidade toda por
+                // causa so do campo mais novo.
+                ReadRaw(in, c.ModelAsset);
                 return true;
             }
         );

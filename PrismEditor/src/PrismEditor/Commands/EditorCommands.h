@@ -952,6 +952,74 @@ namespace PrismEditor {
         bool m_Loaded = false; // false se Deserialize falhou (arquivo corrompido/inexistente) - Undo() nao faz nada nesse caso, pois Execute() tambem nao mudou nada
     };
 
+    // Vincula um Model Asset (.obj/.fbx/.gltf/.glb - ver
+    // Prism::ModelLoader, Prism/Assets/ModelLoader.h) ao
+    // MeshRendererComponent::ModelAsset de uma entidade - usado pelo
+    // drag-and-drop de um arquivo de modelo sobre o painel Mesh Renderer
+    // (ver EditorLayer.cpp, PayloadID "CONTENT_BROWSER_MODEL_PATH").
+    //
+    // Mais simples que LoadMaterialAssetCommand logo acima: nao ha
+    // "campos" a copiar do arquivo para o component (a geometria em si
+    // fica em cache no Renderer, ver Renderer::GetOrLoadModelMesh, nao
+    // dentro do MeshRendererComponent) - este comando so PRECISA trocar
+    // o AssetID guardado. A importacao de verdade (ler o arquivo, gerar
+    // vertices/indices) so acontece sob demanda, na proxima vez que a
+    // entidade for desenhada (ou tiver seu picking testado) - ver
+    // Renderer::ResolveMesh.
+    class LoadModelAssetCommand : public Prism::Command {
+    public:
+        LoadModelAssetCommand(Prism::Entity entity, std::filesystem::path assetPath)
+            : m_Entity(entity), m_AssetPath(std::move(assetPath)) {}
+
+        void Execute() override {
+            if (!m_Entity || !m_Entity.HasComponent<Prism::MeshRendererComponent>())
+                return;
+            auto& meshRenderer = m_Entity.GetComponent<Prism::MeshRendererComponent>();
+            m_Before = meshRenderer.ModelAsset;
+            meshRenderer.ModelAsset = ResolveAssetID();
+        }
+
+        void Undo() override {
+            if (m_Entity && m_Entity.HasComponent<Prism::MeshRendererComponent>())
+                m_Entity.GetComponent<Prism::MeshRendererComponent>().ModelAsset = m_Before;
+        }
+
+        std::string GetName() const override { return "Carregar Modelo de Asset"; }
+
+    private:
+        // Mesmo padrao de LoadMaterialAssetCommand::ResolveAssetID acima -
+        // AssetID{} (invalido) se nao houver Project ativo ou o caminho
+        // nao resolver para um asset conhecido (ex: arquivo copiado para
+        // dentro de Assets por fora do editor, antes de um Refresh
+        // rodar). Tenta um Refresh() como segunda chance (mesmo padrao de
+        // InstantiatePrefabCommand::ResolveAssetID) antes de desistir -
+        // arrastar um modelo recem-copiado para a pasta e um caso comum
+        // o bastante para valer a segunda tentativa.
+        Prism::AssetID ResolveAssetID() const {
+            auto project = Prism::Project::GetActive();
+            if (!project)
+                return {};
+            auto& registry = project->GetAssetRegistry();
+            std::string relative = registry.ToRelative(m_AssetPath);
+            if (relative.empty()) {
+                PRISM_WARN("Modelo fora da pasta de Assets do projeto - a entidade continua SEM modelo importado: ", m_AssetPath.string());
+                return {};
+            }
+            Prism::AssetID id = registry.IdForPath(relative);
+            if (!id.IsValid()) {
+                registry.Refresh();
+                id = registry.IdForPath(relative);
+            }
+            if (!id.IsValid())
+                PRISM_WARN("Nao foi possivel obter o AssetID do modelo - a entidade continua SEM modelo importado: ", m_AssetPath.string());
+            return id;
+        }
+
+        Prism::Entity m_Entity;
+        std::filesystem::path m_AssetPath;
+        Prism::AssetID m_Before;
+    };
+
     // Reparenta uma entidade (drag-and-drop na Hierarchy panel - ver
     // EditorLayer::RenderHierarchyNode). Guarda o pai ANTIGO no construtor
     // (antes de qualquer mudanca) para Undo() devolver exatamente para o

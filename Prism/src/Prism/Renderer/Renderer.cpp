@@ -5,12 +5,14 @@
 #include "../Core/Log.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
+#include "../Assets/ModelLoader.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
 #include <algorithm> 
 #include <cmath>
 #include <string>    
 #include <limits>   
+#include <filesystem>
 
 namespace Prism {
 
@@ -39,6 +41,7 @@ namespace Prism {
     float Renderer::s_EnvHorizon[3] = { RenderSettings{}.EnvHorizon[0], RenderSettings{}.EnvHorizon[1], RenderSettings{}.EnvHorizon[2] };
     float Renderer::s_EnvGround[3]  = { RenderSettings{}.EnvGround[0],  RenderSettings{}.EnvGround[1],  RenderSettings{}.EnvGround[2] };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
+    std::unordered_map<AssetID, Scope<Mesh>> Renderer::s_ModelMeshCache;
 
     // Shader minimo: posicao + normal, iluminacao direcional simples "fake"
     // (um unico dot product) so para as primitivas nao parecerem uma
@@ -1071,6 +1074,78 @@ namespace Prism {
         return result;
     }
 
+    Mesh* Renderer::GetOrLoadModelMesh(AssetID modelAsset) {
+        if (!modelAsset.IsValid())
+            return nullptr; // "sem modelo importado" - ver comentario em Renderer.h, sem logar erro
+
+        // find() (nao operator[]) para distinguir "entrada ausente" (nunca
+        // tentamos) de "entrada presente com Scope nulo" (ja tentamos e
+        // FALHOU - ver comentario grande em s_ModelMeshCache, Renderer.h)
+        // sem criar uma entrada nova so de consultar.
+        auto it = s_ModelMeshCache.find(modelAsset);
+        if (it != s_ModelMeshCache.end())
+            return it->second.get(); // pode ser nullptr de proposito (falha em cache)
+
+        auto project = Project::GetActive();
+        if (!project) {
+            // Nao deveria acontecer na pratica (nenhuma Scene existe sem
+            // Project - mesma guarda defensiva de GetOrLoadTexture), mas
+            // sem projeto ativo nao ha AssetRegistry para resolver o ID.
+            // NAO cacheia como falha permanente: um projeto pode ficar
+            // ativo logo em seguida (ex: durante a inicializacao), e essa
+            // falha e uma condicao transitoria, diferente de um arquivo
+            // de fato corrompido/ausente.
+            return nullptr;
+        }
+
+        std::filesystem::path absolutePath = project->GetAssetRegistry().AbsolutePath(modelAsset);
+        if (absolutePath.empty()) {
+            // AssetID nao resolve para nenhum arquivo (asset apagado ou
+            // .meta perdido - ver comentario grande em AssetRegistry.h).
+            // ESTE caso E cacheado como falha: o ID continua invalido ate
+            // o usuario trocar o vinculo (ou o asset reaparecer e um
+            // Refresh() rodar) - reter 'null' evita reconsultar o
+            // AssetRegistry a cada frame por uma referencia que sabemos
+            // estar quebrada agora.
+            PRISM_CORE_ERROR("Renderer: MeshRendererComponent::ModelAsset (", modelAsset.ToString(), ") nao resolve para nenhum arquivo - asset apagado ou .meta ausente?");
+            s_ModelMeshCache[modelAsset] = nullptr;
+            return nullptr;
+        }
+
+        ModelImportResult imported = ModelLoader::Load(absolutePath);
+        if (!imported.Success) {
+            // ModelLoader::Load ja loga o erro detalhado (PRISM_CORE_ERROR,
+            // ver ModelLoader.cpp) - aqui so cacheia a falha, mesma logica
+            // do bloco acima.
+            s_ModelMeshCache[modelAsset] = nullptr;
+            return nullptr;
+        }
+
+        auto mesh = Mesh::Create(imported.Mesh.Vertices, imported.Mesh.Indices);
+        Mesh* result = mesh.get();
+        s_ModelMeshCache[modelAsset] = std::move(mesh);
+        return result;
+    }
+
+    void Renderer::InvalidateModelCache(AssetID modelAsset) {
+        s_ModelMeshCache.erase(modelAsset);
+    }
+
+    Mesh* Renderer::ResolveMesh(const MeshRendererComponent& meshRenderer) {
+        if (meshRenderer.ModelAsset.IsValid()) {
+            Mesh* modelMesh = GetOrLoadModelMesh(meshRenderer.ModelAsset);
+            if (modelMesh)
+                return modelMesh;
+            // Vinculo quebrado ou importacao falhou (ver comentario
+            // grande em GetOrLoadModelMesh) - cai para a primitiva
+            // 'Mesh' em vez de desenhar/testar picking contra nada, para
+            // a entidade continuar visivel/clicavel (com a forma
+            // "errada", mas presente) em vez de desaparecer
+            // silenciosamente da cena.
+        }
+        return s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
+    }
+
     // Matriz normal (transpose(inverse(mat3))) de 'model'. Ver o comentario
     // de u_NormalMatrix em s_VertexSrc para o PORQUE.
     //
@@ -1126,10 +1201,13 @@ namespace Prism {
     }
 
     void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
-        if (!s_BasicShader) return;
-
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
-        if (!mesh) return; // nao deveria acontecer apos Init(), mas evita um crash silencioso se algo pedir para desenhar antes da engine estar pronta
+        DrawMesh(mesh, viewProjection, model, color, lights, shadowMap, shadowCasterLightIndex, ssao, material);
+    }
+
+    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
+        if (!s_BasicShader) return;
+        if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
 
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
@@ -1579,7 +1657,7 @@ namespace Prism {
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
             s_ShadowDepthShader->SetMat4("u_Model", glm::value_ptr(model));
 
-            Mesh* mesh = s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
+            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             if (!mesh) continue;
             mesh->BindForCurrentContext();
             glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
@@ -1629,7 +1707,7 @@ namespace Prism {
                 s_GeometryPrePassShader->SetMat3("u_ViewNormalMatrix", glm::value_ptr(viewNormalMatrix));
             }
 
-            Mesh* mesh = s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
+            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             if (!mesh) continue;
             mesh->BindForCurrentContext();
             glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
@@ -1801,7 +1879,8 @@ namespace Prism {
             Entity entity(entityHandle, &scene);
             const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
 
-            DrawMesh(meshRenderer.Mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao, material);
+            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
+            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao, material);
         }
     }
 

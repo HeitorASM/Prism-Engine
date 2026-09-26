@@ -5,6 +5,7 @@
 #include "../Physics/PhysicsEngine.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
+#include "../Renderer/Renderer.h"
 #include "../Core/Log.h"
 #include <algorithm>
 #include <filesystem>
@@ -331,7 +332,19 @@ namespace Prism {
             glm::vec3 localDir = glm::vec3(inverseWorld * glm::vec4(ray.Direction, 0.0f));
 
             auto& meshComp = view.get<MeshRendererComponent>(handle);
-            LocalBounds bounds = PrimitiveMeshFactory::GetLocalBounds(meshComp.Mesh);
+
+            // Mesh resolvida (primitiva OU modelo importado) via o MESMO
+            // helper que Renderer usa para DESENHAR a entidade (ver
+            // Renderer::ResolveMesh) - picking e desenho precisam
+            // concordar sobre "qual malha e essa", senao o clique
+            // acertaria uma caixa de tamanho errado (ex: bounds da
+            // primitiva 'Cubo' enquanto a tela ja mostra um modelo
+            // importado bem maior/menor).
+            Mesh* mesh = Renderer::ResolveMesh(meshComp);
+            if (!mesh) continue; // Renderer::Init() nao rodou ainda (nao deveria acontecer na pratica - mesma guarda defensiva usada em Renderer::DrawMesh)
+            LocalBounds bounds;
+            bounds.Min = mesh->GetLocalBoundsMin();
+            bounds.Max = mesh->GetLocalBoundsMax();
 
             float t;
             if (!RayIntersectsAABB(localOrigin, localDir, bounds.Min, bounds.Max, t))

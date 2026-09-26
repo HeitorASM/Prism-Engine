@@ -10,6 +10,24 @@ namespace Prism {
 
     Mesh::Mesh(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices)
         : m_IndexCount((uint32_t)indices.size()) {
+        // Bounding box local - ver comentario grande em Mesh.h. Calculada
+        // aqui (CPU, uma unica vez) antes de subir 'vertices' para a GPU
+        // abaixo - min/max comeca no primeiro vertice (nao em +-infinito)
+        // para um mesh vazio (0 vertices, caso degenerado que nao deveria
+        // acontecer na pratica) nao deixar bounds invertidos (Min >
+        // Max), que quebraria RayIntersectsAABB silenciosamente.
+        if (!vertices.empty()) {
+            glm::vec3 boundsMin(vertices[0].Position[0], vertices[0].Position[1], vertices[0].Position[2]);
+            glm::vec3 boundsMax = boundsMin;
+            for (const MeshVertex& v : vertices) {
+                glm::vec3 pos(v.Position[0], v.Position[1], v.Position[2]);
+                boundsMin = glm::min(boundsMin, pos);
+                boundsMax = glm::max(boundsMax, pos);
+            }
+            m_LocalBoundsMin = boundsMin;
+            m_LocalBoundsMax = boundsMax;
+        }
+
         glCreateVertexArrays(1, &m_VAO);
         glBindVertexArray(m_VAO);
 

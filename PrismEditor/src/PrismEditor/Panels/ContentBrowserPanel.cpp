@@ -145,6 +145,11 @@ namespace PrismEditor {
             bool isProjectFile = !entry.IsDirectory && entry.Path.extension() == ".prismproj";
             bool isPrefabFile = !entry.IsDirectory && entry.Path.extension() == ".prismprefab";
             bool isMaterialFile = !entry.IsDirectory && entry.Path.extension() == ".prismmat";
+            // Modelo 3D importavel (.obj/.fbx/.gltf/.glb) - mesma
+            // classificacao que AssetRegistry ja usa para dar identidade
+            // ao arquivo (AssetType::Model, ver AssetMeta.h), reaproveitada
+            // aqui em vez de checar extensoes a mao de novo.
+            bool isModelFile = !entry.IsDirectory && Prism::AssetTypeFromExtension(entry.Path) == Prism::AssetType::Model;
 
             // Extensoes que stb_image decodifica (ver Texture.cpp) -
             // calculado ANTES de desenhar o botao (nao so depois, como
@@ -200,6 +205,7 @@ namespace PrismEditor {
                     : isProjectFile ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
                     : isPrefabFile ? ImVec4(0.35f, 0.80f, 0.55f, 1.0f) // verde - "algo que pode ser instanciado na cena", distinto do laranja de mapa
                     : isMaterialFile ? ImVec4(0.85f, 0.35f, 0.65f, 1.0f) // rosa/magenta - distinto de tudo o resto, "algo que pode ser aplicado a um Material"
+                    : isModelFile ? ImVec4(0.35f, 0.65f, 0.85f, 1.0f) // azul-ciano - "algo que pode ser aplicado a um Mesh Renderer", distinto do azul mais claro de pasta
                     : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(iconColor.x, iconColor.y, iconColor.z, isSelected ? 0.55f : 0.25f));
@@ -210,7 +216,7 @@ namespace PrismEditor {
                 // formato que stb_image nao decodifica apesar da
                 // extensao) ganha um icone proprio, para distinguir de
                 // "so nao tentamos gerar thumbnail para este tipo".
-                const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : isPrefabFile ? "[Prefab]" : isMaterialFile ? "[Mat]" : isImage ? "[Img?]" : "[Arq]";
+                const char* icon = entry.IsDirectory ? "[Pasta]" : isMapFile ? "[Mapa]" : isProjectFile ? "[Proj]" : isPrefabFile ? "[Prefab]" : isMaterialFile ? "[Mat]" : isModelFile ? "[Modelo]" : isImage ? "[Img?]" : "[Arq]";
                 std::string buttonLabel = std::string(icon) + "\n" + entry.Name;
 
                 clicked = ImGui::Button(buttonLabel.c_str(), ImVec2(cellSize, cellSize));
@@ -264,6 +270,24 @@ namespace PrismEditor {
             if (isMaterialFile && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                 std::string pathString = entry.Path.string();
                 ImGui::SetDragDropPayload("CONTENT_BROWSER_MATERIAL_PATH", pathString.c_str(), pathString.size() + 1);
+                ImGui::Text("%s", entry.Name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
+            // Fonte de drag & drop: arquivos de MODELO (.obj/.fbx/.gltf/
+            // .glb) podem ser arrastados para o painel Mesh Renderer (ver
+            // EditorLayer::RenderPropertiesPanel, PayloadID
+            // "CONTENT_BROWSER_MODEL_PATH") para importar aquele arquivo
+            // como a geometria da entidade selecionada, no lugar da
+            // primitiva embutida - ver Assets/ModelLoader.h e
+            // MeshRendererComponent::ModelAsset (Components.h). Path
+            // ABSOLUTO no payload (mesmo padrao de
+            // CONTENT_BROWSER_IMAGE_PATH/CONTENT_BROWSER_PREFAB_PATH
+            // acima) - quem recebe resolve o AssetID via AssetRegistry a
+            // partir dele.
+            if (isModelFile && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                std::string pathString = entry.Path.string();
+                ImGui::SetDragDropPayload("CONTENT_BROWSER_MODEL_PATH", pathString.c_str(), pathString.size() + 1);
                 ImGui::Text("%s", entry.Name.c_str());
                 ImGui::EndDragDropSource();
             }

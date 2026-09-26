@@ -265,6 +265,40 @@ FetchContent_MakeAvailable(joltphysics)
 # FetchContent_MakeAvailable ja expoe o target "Jolt" (biblioteca estatica),
 # sem namespace de target.
 
+# --- Assimp (importacao de modelos 3D: .obj/.fbx/.gltf/.glb/...) ---
+# Usado por Prism::ModelLoader (ver Prism/src/Prism/Assets/ModelLoader.h)
+# para converter arquivos de modelo de terceiros no MESMO formato interno
+# (GeneratedMesh: vertices MeshVertex + indices) que PrimitiveMeshFactory ja
+# produz para as primitivas embutidas - o Renderer nunca precisa saber se
+# uma malha veio de um Assimp::Importer ou de uma formula (esfera/cubo/...).
+#
+# Desligamos TUDO que a engine nao usa (exportadores, ferramentas de linha
+# de comando, testes) para nao inflar o tempo de build - so os IMPORTADORES
+# dos formatos documentados em docs/formatos-de-arquivo.md continuam
+# ligados.
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE) # a engine nao ja tem zlib vendorizado - deixa o Assimp trazer o dele
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE) # so importacao - a engine nunca EXPORTA modelos
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_GLTF_IMPORTER ON CACHE BOOL "" FORCE) # cobre .gltf E .glb (mesmo importador no Assimp)
+
+FetchContent_Declare(
+    assimp
+    GIT_REPOSITORY https://github.com/assimp/assimp.git
+    GIT_TAG v5.4.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(assimp)
+# FetchContent_MakeAvailable ja expoe o target "assimp" (biblioteca,
+# estatica ou dinamica conforme BUILD_SHARED_LIBS - deixamos o default do
+# proprio Assimp, que e ON; ver comentario em Prism/CMakeLists.txt sobre
+# copiar a .dll/.so para perto do executavel no Windows).
+
 # --- stb_image (carregamento de PNG/JPG/etc) ---
 # Header-only, um unico arquivo (stb_image.h), sem depender de
 # libpng/libjpeg/zlib. Usado por Prism::Texture2D para ler a imagem do

@@ -74,9 +74,31 @@ namespace Prism {
     // (ou com AlbedoPath vazio), Color e usada normalmente -
     // MeshRendererComponent funciona sozinho, sem exigir um
     // MaterialComponent em toda entidade.
+    //
+    // --- Modelo IMPORTADO (.obj/.fbx/.gltf/.glb) em vez de primitiva ---
+    // ModelAsset e um AssetID (mesmo mecanismo de
+    // MaterialComponent::LinkedAsset, ver AssetID.h) apontando para um
+    // asset AssetType::Model dentro da pasta do projeto - ver
+    // ModelLoader.h para a importacao em si. Invalido (o default,
+    // IsValid()==false) significa "sem modelo importado - usar a
+    // primitiva embutida 'Mesh' abaixo", exatamente o comportamento de
+    // sempre desta engine antes da importacao de modelos existir.
+    //
+    // ModelAsset e 'Mesh' (PrimitiveMesh) sao MUTUAMENTE EXCLUSIVOS na
+    // pratica (ver Renderer::DrawScene/DrawMesh: ModelAsset valido tem
+    // prioridade e 'Mesh' e ignorado nesse caso) mas guardados os DOIS ao
+    // mesmo tempo, no MESMO component - nao um enum "Kind" +
+    // union/variant - para: 1) o formato de arquivo serializado
+    // (ComponentRegistration.cpp) nunca precisar de uma migracao ao
+    // adicionar este campo (so mais um AssetID no final, default
+    // invalido = comportamento antigo exato para cenas salvas antes desta
+    // mudanca), 2) trocar de "modelo X" de volta para "Cubo" no editor
+    // continuar simples (so zerar ModelAsset), sem perder/recriar o
+    // component inteiro.
     struct MeshRendererComponent {
         PrimitiveMesh Mesh = PrimitiveMesh::Cube;
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
+        AssetID ModelAsset; // ver comentario acima - invalido = usa 'Mesh' (primitiva)
 
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;

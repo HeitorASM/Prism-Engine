@@ -19,6 +19,7 @@
 #include <vector>
 #include <utility>
 #include <cstdint>
+#include <glm/glm.hpp>
 
 struct GLFWwindow;
 
@@ -80,11 +81,29 @@ namespace Prism {
         // funcionando via o m_VAO original / Bind() normal.
         void BindForCurrentContext() const;
 
+        // Bounding box axis-aligned MINIMA/MAXIMA em espaco LOCAL
+        // (nao-transformado), calculada UMA VEZ a partir dos vertices no
+        // construtor (nunca recalculada depois - a geometria de um Mesh
+        // e imutavel apos criado). Usada por Scene::VisualRaycast para o
+        // picking por clique da viewport (ver Raycast.h) - antes da
+        // importacao de modelos, cada primitiva tinha bounds CONSTANTES
+        // conhecidas de antemao (ver LocalBounds/GetLocalBounds em
+        // PrimitiveMeshFactory.h, calculadas a mao por formula); um
+        // modelo IMPORTADO nao tem essa constante (cada arquivo tem uma
+        // forma/tamanho diferentes), entao o Mesh calcula a bounding box
+        // real a partir dos proprios vertices, funcionando igualmente
+        // bem para primitivas E modelos sem Scene precisar saber a
+        // diferenca entre os dois casos.
+        glm::vec3 GetLocalBoundsMin() const { return m_LocalBoundsMin; }
+        glm::vec3 GetLocalBoundsMax() const { return m_LocalBoundsMax; }
+
     private:
         uint32_t m_VAO = 0;
         uint32_t m_VBO = 0;
         uint32_t m_EBO = 0;
         uint32_t m_IndexCount = 0;
+        glm::vec3 m_LocalBoundsMin{ 0.0f };
+        glm::vec3 m_LocalBoundsMax{ 0.0f };
 
         // Um VAO extra por GLFWwindow* cujo contexto ja tenha desenhado
         // este Mesh (na pratica, hoje: no maximo 2 entradas - editor

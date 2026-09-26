@@ -20,6 +20,7 @@
 
 #include "../Core/Base.h"
 #include "../Scene/Components.h"
+#include "../Assets/AssetID.h"
 #include "Shader.h"
 #include "Mesh.h"
 #include "ShadowMap.h"
@@ -143,6 +144,62 @@ namespace Prism {
         // MaterialComponent, ex: gizmos/previews) - quando 'material' E
         // fornecido, 'color' e ignorado em favor de material->AlbedoTint.
         static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+
+        // Mesma funcao de DrawMesh acima, mas recebendo o Mesh (GPU) ja
+        // resolvido diretamente, em vez de um PrimitiveMesh (enum) a
+        // fazer lookup em s_Meshes[]. Usada para desenhar um modelo
+        // IMPORTADO (ver MeshRendererComponent::ModelAsset e
+        // GetOrLoadModelMesh abaixo) - DrawScene chama uma sobrecarga ou
+        // outra dependendo de ModelAsset ser valido ou nao (ver
+        // Renderer::ResolveMesh abaixo), mas todo o resto do pipeline
+        // (shader/luzes/sombra/SSAO/material) e IDENTICO entre as duas -
+        // por isso e uma sobrecarga (mesmo nome), nao uma funcao com nome
+        // diferente. 'mesh' nulo e um no-op silencioso (mesmo
+        // comportamento de "primitiva ainda nao carregada" da outra
+        // sobrecarga).
+        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+
+        // Retorna o Mesh (GPU) do modelo IMPORTADO identificado por
+        // 'modelAsset' (ver MeshRendererComponent::ModelAsset,
+        // Components.h), carregando e colocando em cache (por AssetID) na
+        // primeira chamada - mesmo padrao de GetOrLoadTexture acima, so
+        // que para geometria em vez de imagem. 'modelAsset' invalido
+        // (IsValid()==false) devolve nullptr sempre, sem tocar disco nem
+        // logar erro (mesmo significado de "sem modelo" usado por
+        // MeshRendererComponent).
+        //
+        // Falha de importacao (arquivo corrompido, movido/apagado sem
+        // atualizar o .meta, formato nao suportado) tambem devolve
+        // nullptr, MAS fica em cache como "falhou" - chamadas
+        // subsequentes com o MESMO AssetID nao tentam reimportar
+        // (reler/parsear) o arquivo a cada frame so para falhar de novo;
+        // ver comentario grande no .cpp sobre como o cache distingue "nao
+        // tentei ainda" de "tentei e falhou" de "carregado com sucesso".
+        // Recarrega automaticamente se o Model correspondente for
+        // recarregado via InvalidateModelCache (ex: apos reimportar o
+        // mesmo arquivo).
+        static Mesh* GetOrLoadModelMesh(AssetID modelAsset);
+
+        // Resolve QUAL Mesh (GPU) desenhar/testar picking para um
+        // MeshRendererComponent: um modelo IMPORTADO (ModelAsset valido)
+        // tem prioridade sobre a primitiva embutida 'Mesh' - mesma regra
+        // de prioridade usada em TODO lugar que precisa saber "qual malha
+        // esta entidade usa neste frame" (DrawScene, os passes de sombra/
+        // pre-passe de geometria, e Scene::VisualRaycast para picking) -
+        // centralizada aqui como metodo (nao funcao livre) porque precisa
+        // ler s_Meshes[] (privado) para o caso de fallback. Publico (nao
+        // privado) porque Scene::VisualRaycast, fora desta classe,
+        // tambem precisa da MESMA resolucao para picking bater com o que
+        // e desenhado - ver comentario grande em Scene.cpp.
+        static Mesh* ResolveMesh(const MeshRendererComponent& meshRenderer);
+
+        // Remove 'modelAsset' do cache acima (sucesso OU falha), forcando
+        // a proxima GetOrLoadModelMesh com o mesmo ID a reler o arquivo
+        // do zero. Chamada pelo editor quando o Content Browser detecta
+        // que o arquivo de origem mudou no disco (ex: reexportado de um
+        // DCC) - sem isto, a entidade continuaria mostrando a geometria
+        // ANTIGA (em cache) ate o processo do editor ser reiniciado.
+        static void InvalidateModelCache(AssetID modelAsset);
 
         // Retorna a Texture2D correspondente a 'path' (isSRGB conforme o
         // uso - ver comentario em Texture2D), carregando e colocando em
@@ -429,6 +486,17 @@ namespace Prism {
         // escopo atual, candidato a um Shutdown()/invalidação futura se
         // isso virar problema real de VRAM.
         static std::unordered_map<std::string, Scope<Texture2D>> s_TextureCache;
+
+        // Cache de malhas de MODELOS IMPORTADOS, indexado por AssetID (ver
+        // GetOrLoadModelMesh acima). Scope<Mesh> nulo (entrada presente,
+        // ponteiro vazio) e o marcador de "ja tentei importar este
+        // AssetID e FALHOU" - distinto de "AssetID nunca visto" (entrada
+        // ausente do map), que dispara uma nova tentativa de
+        // ModelLoader::Load. Sem essa distincao, uma entidade apontando
+        // para um arquivo quebrado tentaria reimportar (reler o arquivo
+        // inteiro do disco) TODO FRAME, ja que DrawScene chama
+        // GetOrLoadModelMesh a cada chamada.
+        static std::unordered_map<AssetID, Scope<Mesh>> s_ModelMeshCache;
     };
 
 }

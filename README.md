@@ -74,7 +74,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 
 ## Roadmap
 
-- [ ] Importação de modelos (FBX/OBJ/glTF), áudio e texturas pelo editor
+- [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp) - áudio e texturas pelo editor ainda pendente
 - [ ] BSP/CSG e ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
