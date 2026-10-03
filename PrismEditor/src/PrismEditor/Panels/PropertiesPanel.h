@@ -48,6 +48,22 @@ namespace PrismEditor {
         static constexpr const char* kNewScriptPopupId = "Novo Script";
 
     private:
+        // --- UI por component ---------------------------------------------
+        // Cada funcao desenha a secao (CollapsingHeader + campos + "X" de
+        // remover, exceto Transform) do component correspondente em
+        // EditorContext::SelectedEntity e vive em PropertiesPanel_<Nome>.cpp.
+        // OnImGuiRender() so chama a funcao quando a entidade tem o
+        // component. Um component novo = um .cpp novo + uma linha la.
+        void DrawTransformUI();
+        void DrawMeshRendererUI();
+        void DrawMaterialUI();
+        void DrawLightUI();
+        void DrawColliderUI();
+        void DrawRigidBodyUI();
+        void DrawRaycastUI();
+        void DrawCameraUI();
+        void DrawScriptUI();
+
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e
         // Scene/PrefabSyncer.h) ------------------------------------------

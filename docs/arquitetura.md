@@ -48,7 +48,7 @@ Para adicionar um component novo:
 1. Declare a struct em `Components.h`.
 2. Registre em `ComponentRegistration.cpp`.
 3. Incremente `kSceneFormatVersion` em `SceneSerializer.cpp`.
-4. Escreva a UI dele na Properties panel (`PrismEditor/Panels/PropertiesPanel.cpp`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
+4. Escreva a UI dele em `PrismEditor/Panels/PropertiesPanel_<Nome>.cpp` (função `Draw<Nome>UI()`, declarada em `PropertiesPanel.h` e chamada em `OnImGuiRender()`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
 
 `RelationshipComponent` fica fora do registro: usa índice posicional do pai na serialização e nunca aparece no menu.
 
@@ -116,7 +116,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | `Panels/ViewportPanel` | Viewport 3D, modo voar, seleção por clique, drop de prefab, gizmo de transform (ImGuizmo) |
 | `Panels/EditorGizmos` | Gizmos de linha: câmera, collider, luz, raycast |
 | `Panels/HierarchyPanel` | Árvore de entidades, menu de contexto, popup "Criar Prefab" |
-| `Panels/PropertiesPanel` (+ `_Prefab.cpp`) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
+| `Panels/PropertiesPanel` (+ `_Prefab.cpp` e um `_<Component>.cpp` por component) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
 | `Panels/RenderSettingsPanel` | Menu Renderização e gravação no `.prismproj` |
 | `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
 
