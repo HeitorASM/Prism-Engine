@@ -8,7 +8,7 @@
 // internamente do buffer de texto e do redimensionamento.
 //
 // Fluxo tipico: Properties panel (ScriptComponent) tem um botao "Editar"
-// que chama Open(caminho) aqui - ver EditorLayer::RenderPropertiesPanel().
+// que chama Open(caminho) aqui - ver PropertiesPanel::OnImGuiRender().
 // O painel entao aparece dockado no editor (ImGui::Begin de janela normal,
 // mesmo padrao de ConsolePanel/ContentBrowserPanel) mostrando o conteudo
 // daquele arquivo com highlight de Lua.
@@ -29,7 +29,7 @@ namespace PrismEditor {
         // Abre 'scriptAbsolutePath' para edicao: le o conteudo do disco e
         // chama m_Editor.SetText() com ele, tornando este o arquivo ativo
         // do painel. Se o arquivo nao existir ainda (ex: acabou de ser
-        // criado por EditorLayer::CreateNewScript), abre com texto vazio -
+        // criado por PropertiesPanel::CreateNewScript), abre com texto vazio -
         // o primeiro Salvar cria o arquivo.
         //
         // Se ja havia um arquivo DIFERENTE aberto com mudancas nao salvas

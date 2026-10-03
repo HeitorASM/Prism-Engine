@@ -53,6 +53,15 @@ add_custom_command(TARGET PrismEditor POST_BUILD
         $<TARGET_FILE_DIR:PrismEditor>/assets
 )
 
+# Copia os shaders GLSL da engine (Prism/shaders) para perto do executavel.
+# Em desenvolvimento a engine le direto da pasta do codigo-fonte (hot reload);
+# esta copia vale quando o .exe roda longe da arvore do projeto.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${PRISM_SHADER_DIR}
+        $<TARGET_FILE_DIR:PrismEditor>/shaders
+)
+
 # Assimp builda como biblioteca DINAMICA por padrao (assimp-vc***.dll no
 # Windows) - sem copiar essa DLL para perto do .exe, o editor abre uma
 # janela de erro "assimp-vc***.dll nao encontrada" ao iniciar, mesmo com o

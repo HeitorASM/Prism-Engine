@@ -54,7 +54,7 @@ namespace Prism {
     // assinatura.
     //
     // Layout pensado para bater 1:1 com o std140 do array de uniforms no
-    // shader (ver s_FragmentSrc em Renderer.cpp) - todo vec3 alinhado a
+    // shader (ver shaders/basic.frag em Renderer.cpp) - todo vec3 alinhado a
     // 16 bytes, sem "buracos" inesperados.
     struct GPULight {
         int   Type = 0;          // == (int)LightType - Point=0, Spot=1, Directional=2, ...
@@ -80,11 +80,11 @@ namespace Prism {
 
     // Numero maximo de luzes simultaneas que uma cena pode enviar ao
     // shader em um unico frame - array de tamanho fixo no lado GLSL (ver
-    // "uniform GPULight u_Lights[MAX_LIGHTS]" em s_FragmentSrc), entao
-    // este valor DEVE bater exatamente com a constante espelhada la.
-    // Se um mapa precisar de mais luzes simultaneas no mesmo draw call,
-    // este e o numero a aumentar (dos dois lados - C++ e shader); nao ha
-    // custo alem do maior array copiado por frame.
+    // "uniform GPULight u_Lights[MAX_LIGHTS]" em shaders/basic.frag). O
+    // Renderer::Init injeta este valor no GLSL como '#define MAX_LIGHTS', entao
+    // C++ e shader nunca divergem: se um mapa precisar de mais luzes
+    // simultaneas no mesmo draw call, e so aumentar este numero (nao ha custo
+    // alem do maior array copiado por frame).
     static constexpr uint32_t MAX_LIGHTS = 16;
 
     class Renderer {
@@ -93,6 +93,16 @@ namespace Prism {
         // seja, depois de GraphicsContext::Init()).
         static void Init();
         static void Shutdown();
+
+        // Hot reload dos shaders (Prism/shaders/*): recompila os que mudaram
+        // em disco; se a nova versao nao compilar, a anterior continua valendo
+        // e o erro vai pro log. Consulta o disco no maximo a cada 0,5 s, entao
+        // pode ser chamado todo frame (Application::Run ja faz). Precisa de um
+        // contexto OpenGL atual.
+        static void ReloadChangedShaders();
+        // Ligado por padrao. Desligue num jogo distribuido se nao quiser
+        // nenhuma consulta ao disco em tempo de execucao.
+        static void SetShaderHotReload(bool enabled);
 
         static void Clear(float r = 0.05f, float g = 0.05f, float b = 0.07f, float a = 1.0f);
         static void SetViewport(uint32_t width, uint32_t height);
@@ -104,7 +114,7 @@ namespace Prism {
         //
         // Internamente descarta (no fragment shader) a face de qualquer
         // triangulo que esteja de costas para SetCameraPosition() - ver
-        // comentario grande em Renderer.cpp acima de s_VertexSrc. Chame
+        // comentario grande no topo de shaders/basic.vert. Chame
         // SetCameraPosition() antes de qualquer DrawMesh() do frame (ou da
         // preview) para esse efeito funcionar corretamente; sem chamar,
         // usa (0,0,0) por padrao.
@@ -118,7 +128,7 @@ namespace Prism {
         // padrao = "sem sombra"): quando fornecidos, o fragment shader amostra
         // 'shadowMap' para decidir se cada fragmento esta na sombra da luz
         // Directional que gerou 'lightSpaceMatrix' (ver CalculateShadow em
-        // s_FragmentSrc, Renderer.cpp). DrawScene() preenche os dois
+        // shaders/basic.frag). DrawScene() preenche os dois
         // automaticamente a partir de RenderShadowPass(); chamadores
         // manuais de DrawMesh (ex: previews avulsas) continuam
         // funcionando sem eles, so sem sombra na preview.
@@ -129,7 +139,7 @@ namespace Prism {
         // fornecida, o
         // termo de luz ambiente e multiplicado por (1 - oclusao) lida da
         // textura JA SUAVIZADA (BindBlurredForReading) de 'ssao' (ver
-        // u_AOMap/u_HasAO em s_FragmentSrc, Renderer.cpp). DrawScene()
+        // u_AOMap/u_HasAO em shaders/basic.frag). DrawScene()
         // preenche isto automaticamente a partir de RenderSSAOPass +
         // RenderSSAOBlurPass.
         // 'material' e opcional (nullptr = comportamento antigo exato,
@@ -224,7 +234,7 @@ namespace Prism {
         // instancia errada nesse caso raro.
         //
         // Publica (nao so uso interno de DrawMesh) para o painel de
-        // Material no editor (EditorLayer::RenderPropertiesPanel) poder
+        // Material no editor (PropertiesPanel::OnImGuiRender) poder
         // mostrar um preview/miniatura da textura carregada sem duplicar
         // o cache.
         static Texture2D* GetOrLoadTexture(const std::string& path, bool isSRGB);
@@ -233,12 +243,12 @@ namespace Prism {
         // pelo teste de "face interna transparente" dentro de DrawMesh() -
         // ver comentario la. Chamar uma vez por framebuffer renderizado
         // (viewport principal e preview da camera usam posicoes
-        // diferentes - ver EditorLayer::RenderScene/RenderCameraPreview),
+        // diferentes - ver ViewportPanel::RenderScene/RenderCameraPreview),
         // antes de qualquer DrawMesh() daquele framebuffer.
         static void SetCameraPosition(const float* worldPos);
 
         // Exposicao (multiplicador de brilho aplicado em espaco LINEAR,
-        // ANTES do tone mapping ACES - ver ToneMapACES em s_FragmentSrc,
+        // ANTES do tone mapping ACES - ver ToneMapACES em shaders/basic.frag,
         // Renderer.cpp). 1.0 = neutro (padrao). Valores > 1 clareiam a
         // cena, < 1 escurecem; 0 (ou negativo) e ignorado e mantem o valor
         // anterior, porque exposicao 0 deixaria a cena inteira preta.
@@ -291,7 +301,7 @@ namespace Prism {
         // GL_LINE_STRIP) em espaco de mundo, sem shading (cor solida via
         // uniform, sem luz). Usado hoje so para gizmos de edicao (ex: o
         // frustum do CameraComponent na viewport - ver
-        // EditorLayer::RenderCameraGizmos) - nao participa da geometria
+        // EditorGizmos::RenderCameraGizmos) - nao participa da geometria
         // "de jogo" desenhada por DrawMesh. pointCount deve ser par.
         static void DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color);
 
@@ -384,7 +394,7 @@ namespace Prism {
         // Shader "depth-only" usado exclusivamente por RenderShadowPass -
         // so precisa de posicao (nem normal, nem cor) e nao tem fragment
         // shader com logica nenhuma (so existe para a GPU ter algo para
-        // linkar - ver s_ShadowDepthFragmentSrc em Renderer.cpp). Programa
+        // linkar - ver shaders/shadow_depth.frag). Programa
         // SEPARADO de s_BasicShader, nao um "modo" dele, porque os dois
         // tem conjuntos de uniforms/atributos completamente diferentes.
         static Ref<Shader> s_ShadowDepthShader;
@@ -433,7 +443,7 @@ namespace Prism {
         // VAO vazio (sem VBO/atributos) usado pelo fullscreen quad de
         // s_SSAOShader/s_SSAOBlurShader - os 3 vertices sao gerados
         // inteiramente dentro do vertex shader via gl_VertexID (ver
-        // s_FullscreenQuadVertexSrc, Renderer.cpp), tecnica classica do
+        // shaders/fullscreen_quad.vert), tecnica classica do
         // "big triangle" que cobre a tela toda sem precisar upload nenhum
         // de dados de vertice. OpenGL Core Profile exige um VAO bindado
         // para qualquer glDrawArrays, mesmo sem nenhum atributo habilitado

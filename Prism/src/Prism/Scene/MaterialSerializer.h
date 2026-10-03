@@ -22,7 +22,7 @@
 // no arquivo: um .prismmat nao sabe, e nao precisa saber, quais entidades
 // apontam para ele hoje. Por isso Deserialize() preenche 'outMaterial'
 // SEM tocar em LinkedAsset - quem decide se o resultado fica vinculado
-// e o chamador (ver EditorLayer::RenderPropertiesPanel, secao Material):
+// e o chamador (ver PropertiesPanel::OnImGuiRender, secao Material):
 //   - "Carregar de Asset" / soltar um .prismmat no painel: LIGA o vinculo
 //     (seta LinkedAsset com o AssetID do arquivo solto/escolhido).
 //   - "Salvar como Asset...": NAO liga vinculo nenhum - e uma copia
@@ -30,10 +30,10 @@
 //     sobrescrevendo), mesmo com a entidade ja estando vinculada a OUTRO
 //     asset; ligar o vinculo ao arquivo recem-salvo seria uma segunda
 //     acao implicita que o botao nunca prometeu.
-// Enquanto vinculado, EditorLayer::FlushMaterialLinkSave() grava os seis
+// Enquanto vinculado, MaterialLinkSync::FlushSave() grava os seis
 // campos de volta neste MESMO arquivo (debounce, mesmo padrao de
 // FlushRenderSettingsSave) a cada edicao no painel, e
-// EditorLayer::ReconcileLinkedMaterial() releva o arquivo (comparando a
+// MaterialLinkSync::Reconcile() releva o arquivo (comparando a
 // hora de modificacao) para refletir a mudanca em QUALQUER OUTRA entidade
 // com o mesmo LinkedAsset - inclusive entidades que nunca tocaram no
 // painel Material, so tem o mesmo AssetID herdado de um prefab (ver nota

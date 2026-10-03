@@ -18,7 +18,7 @@ namespace PrismEditor {
             content = buffer.str();
         }
         // Se o arquivo nao existe ainda (ex: recem "criado" via
-        // EditorLayer::CreateNewScript, que so grava um template - ver
+        // PropertiesPanel::CreateNewScript, que so grava um template - ver
         // comentario la), content fica vazio - nao e um erro, o primeiro
         // Save() cria o arquivo.
 

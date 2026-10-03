@@ -53,7 +53,7 @@ namespace Prism {
         // Metodos de conveniencia sobre RelationshipComponent (ver
         // Components.h) - nao sao o unico jeito de navegar a hierarquia
         // (Scene::SetParent/GetRegistry ja bastam para o editor, ver
-        // EditorLayer::RenderHierarchyPanel), mas evitam scripts Lua
+        // HierarchyPanel::OnImGuiRender), mas evitam scripts Lua
         // (ScriptEngine.cpp) precisarem manipular RelationshipComponent
         // cru so para "achar minha camera filha" - ver
         // example_player_input_raycast.lua para o caso de uso que

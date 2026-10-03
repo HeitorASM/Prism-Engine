@@ -37,7 +37,7 @@ namespace Prism {
     //       ver ComponentRegistry::GetAll(), determina a ordem no arquivo)
     //   v11 MaterialComponent::LinkedAsset (AssetID, ver Assets/AssetID.h) -
     //       vinculo vivo com um .prismmat (ver MaterialSerializer.h e
-    //       EditorLayer::ReconcileLinkedMaterial). Invalido (0) para todo
+    //       MaterialLinkSync::Reconcile). Invalido (0) para todo
     //       material que ja existia antes desta versao.
     //   v12 PrefabInstanceRootComponent/PrefabInstanceMemberComponent
     //       (ver Components.h e Scene/PrefabSyncer.h) - vinculo vivo de

@@ -125,7 +125,7 @@ namespace Prism {
         // disponivel; aquele e fisico/Jolt, so com a Scene rodando).
         //
         // Usado hoje pelo picking da viewport do editor (ver
-        // EditorLayer::RenderViewportPanel) - funciona tambem fora do modo
+        // ViewportPanel::OnImGuiRender) - funciona tambem fora do modo
         // Play, ja que nao depende de nenhum corpo fisico existir.
         //
         // O teste em si e contra a AABB (Mesh::GetLocalBoundsMin/Max, que
@@ -193,7 +193,7 @@ namespace Prism {
         // sem RelationshipComponent, ou com Parent == entt::null). Usado
         // pela Hierarchy panel para comecar a desenhar a arvore a partir do
         // topo; cada nivel abaixo e desenhado recursivamente seguindo
-        // RelationshipComponent::Children (ver EditorLayer::RenderHierarchyPanel).
+        // RelationshipComponent::Children (ver HierarchyPanel::OnImGuiRender).
         template<typename Fn>
         void ForEachRootEntity(Fn&& f) {
             m_Registry.view<TagComponent>().each([&](auto entityHandle, TagComponent& tag) {

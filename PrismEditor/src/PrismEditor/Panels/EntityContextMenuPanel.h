@@ -10,7 +10,7 @@
 //
 // Compartilhado entre a Hierarchy panel (botao direito sobre um node) e a
 // Viewport (quando/se um dia o botao direito la for liberado para isso -
-// ver comentario grande em EditorLayer::RenderViewportPanel sobre RMB ja
+// ver comentario grande em ViewportPanel::OnImGuiRender sobre RMB ja
 // ser usado para "modo voar" da camera) - por isso este painel NAO conhece
 // Hierarchy nem Viewport, so recebe a Entity e desenha o popup; quem chama
 // decide ONDE isso aparece.
@@ -40,7 +40,7 @@ namespace PrismEditor {
 
         // Callback chamado quando o usuario escolhe "Criar Prefab..." no
         // menu - o chamador (EditorLayer) e quem efetivamente abre o
-        // popup de nomear/salvar o prefab (ver EditorLayer::RenderCreatePrefabPopup),
+        // popup de nomear/salvar o prefab (ver HierarchyPanel::RenderCreatePrefabPopup),
         // este painel so avisa QUAL entidade foi escolhida como origem.
         using CreatePrefabRequestedFn = std::function<void(Prism::Entity)>;
         void SetOnCreatePrefabRequested(CreatePrefabRequestedFn fn) { m_OnCreatePrefabRequested = std::move(fn); }

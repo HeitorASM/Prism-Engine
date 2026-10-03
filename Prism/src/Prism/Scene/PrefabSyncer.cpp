@@ -307,8 +307,8 @@ namespace Prism {
 
     bool PrefabSyncer::ApplyComponentToPrefab(Entity instanceEntity, const std::filesystem::path& prefabFilePath, const std::string& componentName) {
         // NAO propaga para outras instancias deste mesmo prefab
-        // automaticamente (ao contrario de EditorLayer::
-        // ReconcileLinkedMaterial, que atualiza TODA entidade vinculada a
+        // automaticamente (ao contrario de MaterialLinkSync::
+        // Reconcile, que atualiza TODA entidade vinculada a
         // um material assim que o arquivo muda). Motivo: "Aplicar ao
         // Prefab" e uma acao EXPLICITA do usuario sobre UM Component de
         // UMA instancia especifica - propagar imediatamente para outras

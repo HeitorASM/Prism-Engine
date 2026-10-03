@@ -144,10 +144,10 @@ namespace Prism {
         // SAO uma copia local para renderizar, mas o editor trata este
         // MaterialComponent como uma VIEW do arquivo apontado por
         // LinkedAsset: editar qualquer campo aqui grava no arquivo
-        // (com debounce, ver EditorLayer::FlushMaterialLinkSave), e o
+        // (com debounce, ver MaterialLinkSync::FlushSave), e o
         // arquivo sendo recarregado atualiza esta e QUALQUER OUTRA
         // entidade com o mesmo LinkedAsset (ver
-        // EditorLayer::ReconcileLinkedMaterial). E so um AssetID cru:
+        // MaterialLinkSync::Reconcile). E so um AssetID cru:
         // nao inclui logica de I/O aqui de proposito, para Components.h
         // continuar sem depender de arquivo/disco (mesmo espirito de
         // AlbedoPath/NormalPath sendo string, nao um objeto Texture).
@@ -183,7 +183,7 @@ namespace Prism {
         // essa que o modo Play (e a viewport do editor, como fallback da
         // camera de orbita) usa para renderizar. A UI (Properties panel)
         // e responsavel por impor essa regra ao marcar uma nova Primary
-        // (ver EditorLayer::RenderPropertiesPanel) - o component em si nao
+        // (ver PropertiesPanel::OnImGuiRender) - o component em si nao
         // valida isso, pois nao tem acesso a Scene/outras entidades.
         bool Primary = true;
 

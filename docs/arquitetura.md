@@ -21,7 +21,7 @@ O projeto tem dois alvos CMake:
 | `Physics/` | `PhysicsEngine` (Jolt) |
 | `ImGui/` | `ImGuiLayer` |
 | `Project/` | `Project`, `ProjectSerializer` |
-| `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry` |
+| `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry`, `ModelLoader` |
 
 ## Cena e ECS
 
@@ -48,7 +48,7 @@ Para adicionar um component novo:
 1. Declare a struct em `Components.h`.
 2. Registre em `ComponentRegistration.cpp`.
 3. Incremente `kSceneFormatVersion` em `SceneSerializer.cpp`.
-4. Escreva a UI dele na Properties panel (`EditorLayer.cpp`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
+4. Escreva a UI dele na Properties panel (`PrismEditor/Panels/PropertiesPanel.cpp`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
 
 `RelationshipComponent` fica fora do registro: usa índice posicional do pai na serialização e nunca aparece no menu.
 
@@ -64,7 +64,7 @@ O módulo não depende de OpenGL, GLFW nem EnTT, de propósito: compila e é tes
 
 ## Vínculo vivo de Material
 
-`MaterialComponent::LinkedAsset` (um `AssetID`) marca um material como uma *view* de um `.prismmat`, em vez de uma cópia independente. Editar qualquer campo no painel Material grava no arquivo (com um pequeno atraso, `EditorLayer::FlushMaterialLinkSave`), e `EditorLayer::ReconcileLinkedMaterial` releva o arquivo (comparando a hora de modificação) e propaga para **toda** entidade vinculada ao mesmo asset, todo frame. O painel mostra um selo **[Vinculado]** (ou **[Vínculo quebrado]**, se o asset sumiu) com um botão **Desvincular**.
+`MaterialComponent::LinkedAsset` (um `AssetID`) marca um material como uma *view* de um `.prismmat`, em vez de uma cópia independente. Editar qualquer campo no painel Material grava no arquivo (com um pequeno atraso, `MaterialLinkSync::FlushSave`), e `MaterialLinkSync::Reconcile` releva o arquivo (comparando a hora de modificação) e propaga para **toda** entidade vinculada ao mesmo asset, todo frame. O painel mostra um selo **[Vinculado]** (ou **[Vínculo quebrado]**, se o asset sumiu) com um botão **Desvincular**.
 
 `LoadMaterialAssetCommand` (arrastar um `.prismmat`, ou "Carregar de Asset") liga o vínculo, resolvendo o caminho via `AssetRegistry`. "Salvar como Asset" nunca liga vínculo — é sempre uma cópia pontual.
 
@@ -82,7 +82,7 @@ Os três comandos equivalentes (`SyncPrefabInstanceCommand`, `RevertPrefabCompon
 
 **Limitação conhecida:** `TransformComponent` (como `TagComponent`) nunca passa pelo `ComponentRegistry`, então nunca entra nesta comparação — mover/girar uma entidade da instância nunca conta como override, mas por isso um ajuste de posição feito no prefab também nunca sincroniza para instâncias já existentes.
 
-`PrefabInstanceRootComponent`/`PrefabInstanceMemberComponent` nunca são registrados no `ComponentRegistry` (ver comentário em `ComponentRegistration.cpp`): um `.prismprefab` nunca contém esses dois components, mesmo salvo a partir de uma entidade que já é ela mesma uma instância (aninhamento). `SceneSerializer` os grava como bloco à parte no `.prismmap` (`kSceneFormatVersion` 12).
+`PrefabInstanceRootComponent`/`PrefabInstanceMemberComponent` nunca são registrados no `ComponentRegistry` (ver comentário em `ComponentRegistration.cpp`): um `.prismprefab` nunca contém esses dois components, mesmo salvo a partir de uma entidade que já é ela mesma uma instância (aninhamento). `SceneSerializer` os grava como bloco à parte no `.prismmap` (a partir da v12 de `kSceneFormatVersion`; a versão atual e o histórico estão em [formatos-de-arquivo.md](formatos-de-arquivo.md#prismmap)).
 
 ## Testes
 
@@ -102,6 +102,26 @@ ctest --test-dir build --output-on-failure
 
 Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é capturado no início do gesto e **um** comando é empurrado ao final, não um por frame. Carregar outro mapa limpa o histórico.
 
+## Estrutura do editor
+
+`EditorLayer` é só o **orquestrador** (~400 linhas): monta o dockspace e a barra de menus, trata atalhos e liga o modo Play. Tudo o mais mora em arquivos próprios em `PrismEditor/src/PrismEditor/`:
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `Core/EditorContext.h` | Estado **compartilhado** entre painéis: cena ativa, entidade selecionada, histórico de undo, caminho do mapa, câmera do editor, vínculo de material |
+| `Core/SceneDocument` | Ciclo de vida do mapa: novo, carregar, salvar, salvar como; aviso de alterações não salvas |
+| `Core/EntityOps` | Duplicar, excluir, instanciar prefab, câmera primária (funções livres sobre o `EditorContext`) |
+| `Core/MaterialLinkSync` | Vínculo vivo de material no lado do editor (debounce, gravação, reconciliação) |
+| `Core/EditorCamera` | Câmera livre da viewport |
+| `Panels/ViewportPanel` | Viewport 3D, modo voar, seleção por clique, drop de prefab, gizmo de transform (ImGuizmo) |
+| `Panels/EditorGizmos` | Gizmos de linha: câmera, collider, luz, raycast |
+| `Panels/HierarchyPanel` | Árvore de entidades, menu de contexto, popup "Criar Prefab" |
+| `Panels/PropertiesPanel` (+ `_Prefab.cpp`) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
+| `Panels/RenderSettingsPanel` | Menu Renderização e gravação no `.prismproj` |
+| `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
+
+**Regra para código novo:** estado que só um painel usa fica **no painel**; estado que dois ou mais painéis leem ou escrevem entra no `EditorContext`. Um painel novo recebe `EditorContext&` no construtor e **não** inclui `EditorLayer.h`. Para adicionar um painel: crie `Panels/MeuPainel.{h,cpp}` (o CMake pega arquivos novos sozinho), instancie-o como membro do `EditorLayer` (depois de `m_Ctx`) e chame o `OnImGuiRender()` dele em `RenderDockspace()`.
+
 ## Ordem de includes do OpenGL
 
 `glad` deve ser incluído antes de qualquer header que toque em OpenGL ou GLFW, em todo `.cpp`. Se o GLFW for incluído primeiro, ele puxa o header nativo do sistema e colide com o glad, gerando `OpenGL header already included`. Em caso desse erro, confira primeiro a ordem dos includes do arquivo que falhou.
@@ -120,6 +140,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | ImGuiColorTextEdit | editor de código | FetchContent |
 | Lua 5.4.7 + sol2 3.3.0 | scripting | FetchContent |
 | Jolt Physics 5.2.0 | física | FetchContent |
+| Assimp | importação de modelos (`.obj`/`.fbx`/`.gltf`/`.glb`), via `Assets/ModelLoader` | FetchContent |
 
 As versões são fixadas em `vendor/CMakeLists.txt`.
 

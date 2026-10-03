@@ -33,7 +33,7 @@ namespace Prism {
 
     // Ajustes de renderizacao guardados POR PROJETO (no .prismproj): cada
     // projeto tem o seu "look". Editados no menu "Renderizacao" do editor
-    // (EditorLayer::RenderRenderSettingsMenu) e aplicados ao Renderer por
+    // (RenderSettingsPanel::OnImGuiRenderMenu) e aplicados ao Renderer por
     // Renderer::ApplyRenderSettings.
     //
     // Os valores padrao abaixo sao a FONTE UNICA da verdade: os estaticos
@@ -141,7 +141,7 @@ namespace Prism {
         // Define o mapa/cena principal do projeto e persiste isso no
         // .prismproj imediatamente (chama SaveActive() internamente). O
         // caminho e relativo a GetMapDirectory() - ver ProjectConfig::StartMap.
-        // Usado por EditorLayer::SaveActiveScene() no primeiro save de uma
+        // Usado por SceneDocument::SaveActiveScene() no primeiro save de uma
         // cena nova, para que o editor saiba qual mapa reabrir da proxima vez.
         static bool SetStartMap(const std::filesystem::path& relativeMapPath);
 

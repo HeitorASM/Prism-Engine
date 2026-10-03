@@ -14,7 +14,7 @@
 // desenhado, funciona a qualquer momento (inclusive parado, editando), e
 // nao depende de fisica nenhuma existir - por isso o nome "Visual" em vez
 // de reusar o mesmo nome. Foi criado para o picking por clique da viewport
-// do editor (ver EditorLayer::RenderViewportPanel), que precisa funcionar
+// do editor (ver ViewportPanel::OnImGuiRender), que precisa funcionar
 // mesmo fora do modo Play/sem nenhum RigidBodyComponent na cena.
 // ============================================================================
 

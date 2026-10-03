@@ -168,6 +168,11 @@ namespace Prism {
             ProcessPendingLayerOps();
 
             if (!m_Minimized) {
+                // Hot reload de shaders (consulta o disco no maximo a cada
+                // 0,5 s). Aqui o contexto da janela principal e o atual - a
+                // janela de Play restaura o do editor ao terminar de desenhar.
+                Renderer::ReloadChangedShaders();
+
                 for (Layer* layer : m_LayerStack)
                     layer->OnUpdate(deltaTime);
 

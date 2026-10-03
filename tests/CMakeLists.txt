@@ -2,7 +2,7 @@
 # Testes automatizados. OPT-IN: nao entram no build normal.
 #
 #   cmake -B build -S . -DPRISM_BUILD_TESTS=ON
-#   cmake --build build --target PrismAssetTests
+#   cmake --build build --target PrismAssetTests PrismShaderTests
 #   ctest --test-dir build --output-on-failure
 #
 # PrismAssetTests compila SO as fontes de que precisa (Assets/ + Project/) em
@@ -40,3 +40,19 @@ if(MSVC)
 endif()
 
 add_test(NAME AssetTests COMMAND PrismAssetTests)
+
+# PrismShaderTests: carregador de shaders (#include, defines, #line) - so
+# preprocessamento de texto, sem GPU. Tambem expande TODOS os shaders reais de
+# Prism/shaders, entao pega include quebrado ou arquivo renomeado em CI.
+add_executable(PrismShaderTests
+    ShaderSourceTests.cpp
+    ${PRISM_SRC}/Prism/Renderer/ShaderSource.cpp
+)
+target_include_directories(PrismShaderTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismShaderTests PRIVATE cxx_std_20)
+target_compile_definitions(PrismShaderTests PRIVATE
+    PRISM_TEST_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Prism/shaders")
+if(MSVC)
+    target_compile_options(PrismShaderTests PRIVATE /utf-8)
+endif()
+add_test(NAME ShaderTests COMMAND PrismShaderTests)

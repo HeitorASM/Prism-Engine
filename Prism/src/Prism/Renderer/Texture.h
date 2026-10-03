@@ -63,7 +63,7 @@ namespace Prism {
         // ID nativo da textura OpenGL - exposto so para o editor poder
         // desenhar um preview/miniatura via ImGui::Image (que espera um
         // ImTextureID, tipicamente o RendererID convertido - ver
-        // EditorLayer::RenderPropertiesPanel, mesmo padrao usado pelo
+        // PropertiesPanel::OnImGuiRender, mesmo padrao usado pelo
         // color attachment do Framebuffer na viewport principal). Nao
         // usado por Renderer/DrawMesh (que ja usa Bind() para isso).
         uint32_t GetRendererID() const { return m_RendererID; }

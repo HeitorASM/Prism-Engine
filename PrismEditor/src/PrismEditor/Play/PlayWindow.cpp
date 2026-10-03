@@ -234,7 +234,7 @@ namespace PrismEditor {
 
         // Acha a entidade com CameraComponent::Primary=true na Scene
         // CLONADA (nao na Scene de edicao) - mesma busca que
-        // EditorLayer::RenderCameraPreview ja fazia, agora usada aqui para
+        // PropertiesPanel::RenderCameraPreview ja fazia, agora usada aqui para
         // a janela de Play de verdade em vez de so uma preview.
         Prism::Entity primaryCameraEntity;
         auto cameraView = m_PlayScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();

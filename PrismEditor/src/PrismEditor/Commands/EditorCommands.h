@@ -17,7 +17,7 @@
 //   - DeleteEntityCommand: excluir uma entidade existente
 //   - AddComponentCommand<T>/RemoveComponentCommand<T>: adicionar/remover
 //     qualquer component "opcional" (Light, Collider, RigidBody, Script) -
-//     ver EditorLayer::RenderPropertiesPanel para o botao "Add Component".
+//     ver PropertiesPanel::OnImGuiRender para o botao "Add Component".
 //
 // Novos tipos de edicao seguem o mesmo padrao: guardar o estado "antes" no
 // construtor, aplicar em Execute(), reverter em Undo().
@@ -35,7 +35,7 @@ namespace PrismEditor {
     // Comando generico de "editar o TransformComponent de uma entidade".
     // Guarda o transform ANTES e o transform DEPOIS da edicao - construido
     // uma unica vez, quando o usuario TERMINA de arrastar um DragFloat3 no
-    // ImGui (nao a cada frame do arraste - ver EditorLayer::RenderPropertiesPanel,
+    // ImGui (nao a cada frame do arraste - ver PropertiesPanel::OnImGuiRender,
     // que usa IsItemActivated()/IsItemDeactivatedAfterEdit() para capturar
     // exatamente o inicio e o fim do gesto).
     class TransformCommand : public Prism::Command {
@@ -130,7 +130,7 @@ namespace PrismEditor {
     // de "setup" que adiciona os components que aquele preset representa.
     // Isso e so uma conveniencia de criacao - o resultado e uma entidade
     // com components normais, editavel/removivel como qualquer outra pela
-    // Properties panel depois (ver EditorLayer::RenderAddComponentButton).
+    // Properties panel depois (ver PropertiesPanel::RenderAddComponentButton).
     // Undo() destroi a entidade inteira (nao desfaz component por
     // component) - do ponto de vista do historico, "criar um preset" e
     // uma unica acao atomica.
@@ -292,7 +292,7 @@ namespace PrismEditor {
     // Instancia um prefab (ver Prism::PrefabSerializer, Prism/Scene/
     // PrefabSerializer.h) dentro da Scene ativa - usado pelo drag-and-drop
     // de um .prismprefab do Content Browser para a Hierarchy/Viewport (ver
-    // EditorLayer::InstantiatePrefab). Guardamos so o CAMINHO do arquivo
+    // EntityOps::InstantiatePrefab). Guardamos so o CAMINHO do arquivo
     // (nao os dados), pelo mesmo motivo de DuplicateEntityCommand: um
     // Redo() sempre le o arquivo de novo do disco, entao reflete qualquer
     // edicao feita no prefab entre o Undo() e o Redo() deste comando -
@@ -389,7 +389,7 @@ namespace PrismEditor {
 
             m_Backup = Prism::Scene::Create("__sync_prefab_undo_backup__");
             // 'd' NAO e const, mesmo motivo documentado em
-            // PrefabSyncer::UpdateAll/EditorLayer::RenderPrefabInstanceSection
+            // PrefabSyncer::UpdateAll/PropertiesPanel::RenderPrefabInstanceSection
             // (ver PrefabSyncer.cpp): Entity::HasComponent/GetComponent
             // nao sao const-qualificados, entao qualquer chamada futura
             // sobre d.InstanceEntity aqui dentro precisaria disto de
@@ -1021,7 +1021,7 @@ namespace PrismEditor {
     };
 
     // Reparenta uma entidade (drag-and-drop na Hierarchy panel - ver
-    // EditorLayer::RenderHierarchyNode). Guarda o pai ANTIGO no construtor
+    // HierarchyPanel::RenderHierarchyNode). Guarda o pai ANTIGO no construtor
     // (antes de qualquer mudanca) para Undo() devolver exatamente para o
     // mesmo lugar na arvore, mesmo que a entidade tenha sido movida varias
     // vezes depois - cada movimento e seu proprio comando no historico.
@@ -1056,7 +1056,7 @@ namespace PrismEditor {
 
     // Adiciona T() (valores default) a entidade. Undo() remove de volta.
     // Usado pelo botao "Add Component" da Properties panel - ver
-    // EditorLayer::RenderPropertiesPanel.
+    // PropertiesPanel::OnImGuiRender.
     template<typename T>
     class AddComponentCommand : public Prism::Command {
     public:

@@ -51,7 +51,8 @@ Prism/            engine (biblioteca estática)
     ImGui/        integração do ImGui
     Project/      Project e ProjectSerializer (.prismproj)
     Assets/       AssetID, AssetMeta, AssetRegistry (identidade dos assets, .meta)
-PrismEditor/      executável do editor
+  shaders/        shaders GLSL (.vert/.frag), com #include e hot reload
+PrismEditor/      executável do editor (ver "Estrutura do editor" em docs/arquitetura.md)
 tests/            testes automatizados, opt-in (ver docs/arquitetura.md)
 vendor/           dependências (glad e stb locais; o resto via FetchContent)
 docs/             documentação detalhada

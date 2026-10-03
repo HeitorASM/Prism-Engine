@@ -76,7 +76,7 @@ A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, 
 
 ## Meshes embutidas
 
-Cube, Sphere, Capsule, Cylinder e Plane. A geometria é gerada uma vez na CPU (`PrimitiveMeshFactory`, sem chamadas OpenGL) e enviada à GPU em `Renderer::Init()`, com uma malha por primitiva reaproveitada por todas as entidades. Não há importação de modelos externos ainda.
+Cube, Sphere, Capsule, Cylinder e Plane. A geometria é gerada uma vez na CPU (`PrimitiveMeshFactory`, sem chamadas OpenGL) e enviada à GPU em `Renderer::Init()`, com uma malha por primitiva reaproveitada por todas as entidades. Modelos externos (`.obj`/`.fbx`/`.gltf`/`.glb`) são importados pelo `ModelLoader` (Assimp) e referenciados por `MeshRendererComponent::ModelAsset`; quando válido, ele tem prioridade sobre a primitiva.
 
 ## Contexto compartilhado (Play)
 
@@ -85,3 +85,9 @@ A `PlayWindow` cria sua janela GLFW compartilhando o contexto OpenGL do editor, 
 ## Linhas
 
 `Renderer::DrawLines` usa um shader dedicado, sem iluminação, para os gizmos de câmera, collider, luz e raycast.
+
+## Shaders
+
+Os shaders GLSL ficam em `Prism/shaders/` (um `.vert` e um `.frag` por programa), não em strings no C++. `Renderer::Init` carrega cada um com `Shader::CreateFromFiles`; o mapa de arquivos, o `#include`, os defines injetados pelo C++ (`MAX_LIGHTS`) e o **hot reload** estão em [Prism/shaders/README.md](../Prism/shaders/README.md).
+
+Resumo: salvar um shader com o editor aberto recompila em ~0,5 s (`Renderer::ReloadChangedShaders`, chamado por `Application::Run`). Se não compilar, a versão anterior continua em uso e o erro vai para o Console. A pasta é copiada para ao lado do executável no build, para o jogo distribuído não depender da árvore de código-fonte.

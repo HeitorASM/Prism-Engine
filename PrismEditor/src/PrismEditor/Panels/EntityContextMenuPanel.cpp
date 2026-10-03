@@ -14,7 +14,7 @@ namespace PrismEditor {
             // Cabecalho com o nome, so para deixar claro SOBRE QUAL
             // entidade o menu esta agindo (util quando o clique direito
             // muda a selecao para um node diferente do que estava
-            // selecionado antes, ver EditorLayer::RenderHierarchyNode).
+            // selecionado antes, ver HierarchyPanel::RenderHierarchyNode).
             if (entity.HasComponent<Prism::TagComponent>()) {
                 ImGui::TextDisabled("%s", entity.GetComponent<Prism::TagComponent>().Tag.c_str());
                 ImGui::Separator();

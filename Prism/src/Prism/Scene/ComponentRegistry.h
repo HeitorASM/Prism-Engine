@@ -13,7 +13,7 @@
 //   1. SceneSerializer.cpp - um bloco de escrita E um de leitura, cada um
 //      code duplicado do outro (mesma ordem de campos, ambos precisam
 //      concordar byte a byte).
-//   2. EditorLayer.cpp - o menu "Add Component" (HasComponent + MenuItem
+//   2. PropertiesPanel.cpp - o menu "Add Component" (HasComponent + MenuItem
 //      + AddComponentCommand) E a lista 'hasAnyMissing' usada para
 //      decidir se o menu deve aparecer.
 // Esquecer de atualizar UM desses lugares ao adicionar um Component novo

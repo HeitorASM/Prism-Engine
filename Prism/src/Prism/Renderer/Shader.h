@@ -2,24 +2,30 @@
 
 // ============================================================================
 // Shader.h
-// Wrapper simples de programa de shader GLSL (vertex + fragment). Nada
-// sofisticado ainda (sem cache de uniform locations otimizado, sem hot
-// reload) - so o suficiente para a engine conseguir desenhar geometria com
-// uma matriz MVP, que e a base de qualquer coisa que a Renderer precisar
-// desenhar dai pra frente.
+// Wrapper simples de programa de shader GLSL (vertex + fragment). Sem cache
+// de uniform locations (cada Set* consulta o local na hora) - e isso que
+// torna seguro trocar o programa por baixo durante o hot reload.
+//
+// Duas formas de criar:
+//   - Shader::Create(nome, srcVertex, srcFragment): codigo-fonte em memoria.
+//   - Shader::CreateFromFiles(nome, .vert, .frag, defines): arquivos em disco
+//     (ver ShaderSource.h: '#include' e defines). So esta forma suporta
+//     ReloadIfChanged().
 // ============================================================================
 
 #include "../Core/Base.h"
+#include "ShaderSource.h"
+#include <filesystem>
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace Prism {
 
     class Shader {
     public:
         // Constroi a partir do CODIGO FONTE em memoria (nao de um caminho de
-        // arquivo). Um Shader::CreateFromFile pode ser adicionado depois
-        // sem quebrar este construtor.
+        // arquivo). Para arquivos, use Shader::CreateFromFiles.
         Shader(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
         ~Shader();
 
@@ -55,12 +61,56 @@ namespace Prism {
 
         static Ref<Shader> Create(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
 
-    private:
-        uint32_t CompileStage(uint32_t glStage, const std::string& source, const char* stageNameForLog);
+        // Carrega de arquivos .vert/.frag (com '#include' e 'defines', ver
+        // ShaderSource.h). Se a primeira compilacao falhar o Shader e
+        // devolvido mesmo assim (IsValid() == false, erro no log) e continua
+        // observando os arquivos: corrigir e salvar faz o proximo
+        // ReloadIfChanged() compilar de novo.
+        static Ref<Shader> CreateFromFiles(const std::string& name,
+                                           const std::filesystem::path& vertexPath,
+                                           const std::filesystem::path& fragmentPath,
+                                           const ShaderDefines& defines = {});
+
+        // Hot reload: se algum arquivo do shader (inclusive os incluidos)
+        // mudou desde a ultima compilacao, recompila. Se a nova versao NAO
+        // compilar, o programa anterior continua em uso (erro no log) - um
+        // typo durante a edicao nunca derruba a viewport. Precisa de um
+        // contexto OpenGL atual. Retorna true so se um programa novo foi
+        // instalado. No-op para shaders criados de codigo em memoria.
+        bool ReloadIfChanged();
+
+        bool IsFileBacked() const { return !m_VertexPath.empty(); }
+        bool IsValid() const { return m_RendererID != 0; }
 
     private:
+        explicit Shader(const std::string& name); // usado por CreateFromFiles
+
+        bool BuildFromFiles();
+
+        static uint32_t BuildProgram(const std::string& shaderName,
+                                     const std::string& vertexSrc, const std::string& fragmentSrc,
+                                     const std::vector<std::filesystem::path>* vertexFiles,
+                                     const std::vector<std::filesystem::path>* fragmentFiles);
+
+        // 'files' (opcional) lista os arquivos do shader no log de erro, para
+        // traduzir o "N:linha" do driver (N = indice do arquivo).
+        static uint32_t CompileStage(uint32_t glStage, const std::string& source, const char* stageNameForLog,
+                                     const std::string& shaderName, const std::vector<std::filesystem::path>* files);
+
+    private:
+        struct WatchedFile {
+            std::filesystem::path Path;
+            std::filesystem::file_time_type WriteTime{};
+        };
+
         uint32_t m_RendererID = 0;
         std::string m_Name;
+
+        // So para shaders de arquivo (CreateFromFiles).
+        std::filesystem::path m_VertexPath;
+        std::filesystem::path m_FragmentPath;
+        ShaderDefines m_Defines;
+        std::vector<WatchedFile> m_Watched;
     };
 
 }

@@ -144,7 +144,7 @@ namespace Prism {
         // Components ja overridados na instancia NUNCA sao tocados (isto
         // e o que torna isto seguro de chamar livremente, ex: toda vez
         // que o editor detecta que o .prismprefab mudou no disco - mesmo
-        // padrao de EditorLayer::ReconcileLinkedMaterial, mas aqui e
+        // padrao de MaterialLinkSync::Reconcile, mas aqui e
         // preciso reler/comparar em vez de so reler, por causa do override
         // por-component). NAO cria nem remove entidades - se
         // StructureMatches==false no Diff (o prefab ganhou/perdeu uma
@@ -153,7 +153,7 @@ namespace Prism {
         // casadas por indice, mas a estrutura da arvore da instancia (que
         // entidades existem, quem e filho de quem) fica como estava -
         // trazer entidades novas/remover as que sumiram do prefab exige
-        // recriar a instancia (ver EditorLayer::RenderPropertiesPanel,
+        // recriar a instancia (ver PropertiesPanel::OnImGuiRender,
         // secao Prefab, opcao "Recriar instancia") em vez de um sync
         // incremental.
         //

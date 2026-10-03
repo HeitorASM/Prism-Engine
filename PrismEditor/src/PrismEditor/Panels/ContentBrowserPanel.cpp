@@ -230,7 +230,7 @@ namespace PrismEditor {
             // Fonte de drag & drop: arquivos de IMAGEM (extensoes que
             // stb_image decodifica - ver Texture.cpp) podem ser
             // arrastados para os slots de textura do painel Material
-            // (ver EditorLayer::RenderPropertiesPanel, PayloadID
+            // (ver PropertiesPanel::OnImGuiRender, PayloadID
             // "CONTENT_BROWSER_IMAGE_PATH"). Path absoluto no payload
             // (nao relativo) - quem recebe (o slot de Material) e quem
             // decide como/se relativizar para a pasta do projeto antes
@@ -251,7 +251,7 @@ namespace PrismEditor {
 
             // Fonte de drag & drop: arquivos .prismprefab podem ser
             // arrastados para a Hierarchy panel ou para a Viewport (ver
-            // EditorLayer::RenderHierarchyPanel/RenderViewportPanel,
+            // HierarchyPanel::OnImGuiRender/RenderViewportPanel,
             // PayloadID "CONTENT_BROWSER_PREFAB_PATH") para instanciar o
             // prefab na cena ativa - mesmo padrao de path absoluto no
             // payload que CONTENT_BROWSER_IMAGE_PATH ja usa acima.
@@ -264,7 +264,7 @@ namespace PrismEditor {
 
             // Fonte de drag & drop: arquivos .prismmat podem ser
             // arrastados para o painel Material (ver
-            // EditorLayer::RenderPropertiesPanel, PayloadID
+            // PropertiesPanel::OnImGuiRender, PayloadID
             // "CONTENT_BROWSER_MATERIAL_PATH") para carregar aquele
             // material sobre a entidade selecionada.
             if (isMaterialFile && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
@@ -276,7 +276,7 @@ namespace PrismEditor {
 
             // Fonte de drag & drop: arquivos de MODELO (.obj/.fbx/.gltf/
             // .glb) podem ser arrastados para o painel Mesh Renderer (ver
-            // EditorLayer::RenderPropertiesPanel, PayloadID
+            // PropertiesPanel::OnImGuiRender, PayloadID
             // "CONTENT_BROWSER_MODEL_PATH") para importar aquele arquivo
             // como a geometria da entidade selecionada, no lugar da
             // primitiva embutida - ver Assets/ModelLoader.h e

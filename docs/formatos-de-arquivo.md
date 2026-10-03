@@ -39,13 +39,26 @@ EnvGround=0.22,0.2,0.18
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **10** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
+- Versão atual: **13** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
 
 > Sera resetada futuramente, atualmente so e upada para motivos de desenvolvimento
 
 Contém o nome da cena e, para cada entidade: tag, transform, os components opcionais (na ordem em que foram registrados no `ComponentRegistry`) e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
 
-O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` de cada component em `ComponentRegistration.cpp`, e o histórico de versões está nos comentários de `kSceneFormatVersion`.
+O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` de cada component em `ComponentRegistration.cpp`, e o histórico de versões está nos comentários de `kSceneFormatVersion`. Resumo:
+
+| Versão | Mudança |
+|---|---|
+| v2 | `Light`, `Collider`, `RigidBody` e `Script` (opcionais, com flag de presença) |
+| v3 | `Camera` |
+| v4 | `Relationship` (parenting; só o índice do pai é gravado) |
+| v5–v9 | campos novos em `Light`, `RigidBody` e `Raycast` |
+| v10 | `Material` |
+| v11 | `Material::LinkedAsset` (vínculo vivo com `.prismmat`) |
+| v12 | `PrefabInstanceRoot`/`PrefabInstanceMember` (vínculo vivo com prefab, bloco à parte) |
+| v13 | `MeshRenderer::ModelAsset` (modelo importado) |
+
+> O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
 
 Do `RaycastComponent` só `TargetPosition`, `Enabled` e `IgnoreParentAndSiblings` são gravados; os campos de resultado (`Hit`, `HitPoint` etc.) são de runtime.
 

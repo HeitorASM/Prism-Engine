@@ -35,7 +35,7 @@ namespace Prism {
     // o mesmo ComponentRegistry::GetAll() atual).
     //
     // MaterialComponent::LinkedAsset (ver Components.h e
-    // EditorLayer::ReconcileLinkedMaterial) e gravado/lido pelo MESMO
+    // MaterialLinkSync::Reconcile) e gravado/lido pelo MESMO
     // callback de ComponentRegistry - nao ha campo extra a versionar
     // aqui so por causa dele. Efeito pratico: se a raiz (ou um filho) do
     // prefab tem um material VINCULADO a um .prismmat, cada instancia
@@ -274,7 +274,7 @@ namespace Prism {
         // A RAIZ (indice 0, ver CollectSubtree em Serialize) tambem ganha
         // PrefabInstanceRootComponent - e ela quem representa a instancia
         // inteira para o resto do editor (ver PrefabSyncer.h e
-        // EditorLayer::RenderHierarchyNode para o selo visual). So a raiz,
+        // HierarchyPanel::RenderHierarchyNode para o selo visual). So a raiz,
         // nao cada filho: um filho ja tem PrefabInstanceMemberComponent
         // (marcado no loop acima) para PrefabSyncer saber comparar seus
         // components, mas nao precisa saber sozinho qual e o AssetID de
@@ -287,7 +287,7 @@ namespace Prism {
         // AssetID invalido isto e so PrefabSyncer::LoadPrefabForComparison
         // recarregando o arquivo numa Scene temporaria - acontece TODO
         // FRAME enquanto o painel Prefab estiver aberto (ver
-        // EditorLayer::RenderPrefabInstanceSection) e qualquer nivel de
+        // PropertiesPanel::RenderPrefabInstanceSection) e qualquer nivel de
         // log (o Log nao filtra TRACE) inundaria o console sem servir de
         // nada: nao e uma instancia nova, so uma releitura interna.
         if (sourceAsset.IsValid())

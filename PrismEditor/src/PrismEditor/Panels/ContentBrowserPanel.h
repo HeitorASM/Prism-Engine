@@ -51,7 +51,7 @@ namespace PrismEditor {
         // orfaos - ver Assets/AssetRegistry.h - fica a cargo do CHAMADOR:
         // esta funcao so relista os arquivos, nao mexe no AssetRegistry).
         // Publico porque outros paineis podem alterar o conteudo desta
-        // mesma pasta por fora deste painel - ex: EditorLayer::
+        // mesma pasta por fora deste painel - ex: PropertiesPanel::
         // RenderSaveMaterialPopup grava um novo .prismmat dentro de
         // Assets/Materials e chama isto para o arquivo aparecer aqui sem
         // esperar o usuario clicar "Atualizar" manualmente. O botao

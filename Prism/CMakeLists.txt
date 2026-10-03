@@ -43,6 +43,15 @@ if(MSVC)
     target_compile_options(Prism PRIVATE /utf-8)
 endif()
 
+# Pasta dos shaders GLSL (Prism/shaders). O caminho ABSOLUTO do codigo-fonte
+# e embutido para que, em desenvolvimento, o hot reload observe os arquivos
+# que voce realmente edita (ver Renderer.cpp, FindShaderDirectory). Num jogo
+# distribuido esse caminho nao existe e a engine usa a copia ao lado do
+# executavel (cada executavel copia 'shaders/' no POST_BUILD - ver
+# PrismEditor/CMakeLists.txt).
+set(PRISM_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders CACHE INTERNAL "Pasta de shaders da engine")
+target_compile_definitions(Prism PRIVATE PRISM_SHADER_SOURCE_DIR="${PRISM_SHADER_DIR}")
+
 # PRISM_PLATFORM_WINDOWS entra aqui quando formos abstrair diferencas de
 # plataforma de verdade (ex: dialogos nativos de arquivo). Por ora so
 # marcamos a definicao para uso futuro.

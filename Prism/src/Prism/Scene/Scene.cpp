@@ -124,7 +124,7 @@ namespace Prism {
             // dentro da recursao, via DuplicateEntityRecursive) pode invalidar
             // referencias para dentro do registry se o vector interno do EnTT
             // precisar realocar - iterar uma copia evita esse risco, mesmo
-            // padrao ja usado por Scene::DestroyEntity e EditorLayer::RenderHierarchyNode.
+            // padrao ja usado por Scene::DestroyEntity e HierarchyPanel::RenderHierarchyNode.
             std::vector<entt::entity> childrenCopy = rel->Children;
             for (entt::entity childHandle : childrenCopy) {
                 Entity child(childHandle, source.GetScene());
