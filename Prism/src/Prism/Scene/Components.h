@@ -301,10 +301,27 @@ namespace Prism {
     // proposito: um Collider pode existir SEM RigidBodyComponent (colisao
     // estatica, ex: as paredes de um mapa) - a combinacao dos dois e que
     // define o comportamento fisico completo (ver RigidBodyComponent).
+    //
+    // Box/Sphere/Capsule usam ColliderComponent::Size (valores em unidades de
+    // mundo, independentes da Scale). ConvexHull/TriangleMesh NAO usam Size:
+    // a forma vem da malha do MeshRendererComponent da MESMA entidade
+    // (modelo importado ou primitiva), multiplicada pela escala de mundo da
+    // entidade - o botao "Ajustar a malha" da Properties panel so existe
+    // para as formas parametricas.
+    //   ConvexHull   - envoltoria convexa da malha. Funciona em qualquer
+    //                  BodyType (inclusive Dynamic). Use para props e objetos moveis.
+    //   TriangleMesh - a malha exata. Jolt so permite em corpos Static/
+    //                  Kinematic: num RigidBody Dynamic a fisica usa
+    //                  ConvexHull no lugar (e avisa no log). Use para
+    //                  cenario/mapas.
+    // Valores NOVOS ficam sempre no FIM do enum: ele e gravado como inteiro
+    // no arquivo de cena.
     enum class ColliderShape {
         Box,
         Sphere,
-        Capsule
+        Capsule,
+        ConvexHull,
+        TriangleMesh
     };
 
     // Define a FORMA de colisao de uma entidade, consumida pelo
@@ -317,7 +334,9 @@ namespace Prism {
 
         // Interpretacao depende de Shape: Box usa Size como half-extents
         // (x,y,z); Sphere usa so Size.x como raio; Capsule usa Size.x como
-        // raio e Size.y como altura (Size.z ignorado nesse caso).
+        // raio e Size.y como altura SO DO CILINDRO, sem as calotas (altura
+        // total = Size.y + 2*Size.x; Size.z ignorado nesse caso).
+        // ConvexHull/TriangleMesh ignoram Size por completo.
         //
         // IMPORTANTE: Size e uma medida em UNIDADES ABSOLUTAS DE MUNDO,
         // totalmente INDEPENDENTE do TransformComponent::Scale da mesma

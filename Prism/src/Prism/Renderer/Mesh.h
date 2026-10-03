@@ -97,6 +97,14 @@ namespace Prism {
         glm::vec3 GetLocalBoundsMin() const { return m_LocalBoundsMin; }
         glm::vec3 GetLocalBoundsMax() const { return m_LocalBoundsMax; }
 
+        // Copia na CPU das posicoes e dos indices (espaco local, sem escala),
+        // mantida depois do upload para a GPU. Usada pela fisica para montar
+        // colliders ConvexHull/TriangleMesh a partir da MESMA malha que o
+        // renderer desenha (ver ColliderShape, Components.h). Custo: 12 bytes
+        // por vertice + 4 por indice a mais de RAM por malha carregada.
+        const std::vector<glm::vec3>& GetCpuPositions() const { return m_CpuPositions; }
+        const std::vector<uint32_t>& GetCpuIndices() const { return m_CpuIndices; }
+
     private:
         uint32_t m_VAO = 0;
         uint32_t m_VBO = 0;
@@ -104,6 +112,8 @@ namespace Prism {
         uint32_t m_IndexCount = 0;
         glm::vec3 m_LocalBoundsMin{ 0.0f };
         glm::vec3 m_LocalBoundsMax{ 0.0f };
+        std::vector<glm::vec3> m_CpuPositions;
+        std::vector<uint32_t> m_CpuIndices;
 
         // Um VAO extra por GLFWwindow* cujo contexto ja tenha desenhado
         // este Mesh (na pratica, hoje: no maximo 2 entradas - editor

@@ -28,6 +28,11 @@ namespace Prism {
             m_LocalBoundsMax = boundsMax;
         }
 
+        m_CpuPositions.reserve(vertices.size());
+        for (const MeshVertex& v : vertices)
+            m_CpuPositions.emplace_back(v.Position[0], v.Position[1], v.Position[2]);
+        m_CpuIndices = indices;
+
         glCreateVertexArrays(1, &m_VAO);
         glBindVertexArray(m_VAO);
 

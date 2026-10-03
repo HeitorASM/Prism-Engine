@@ -28,7 +28,8 @@
 #include <utility>
 #include <functional>
 #include <filesystem>
-#include <fstream> 
+#include <fstream>
+#include <vector>
 
 namespace PrismEditor {
 
@@ -1109,6 +1110,75 @@ namespace PrismEditor {
         Prism::Entity m_Entity;
         std::string m_DisplayName;
         T m_Backup;
+    };
+
+    // --- Editar um component inteiro (Light, Collider, RigidBody, Camera...) ---
+    // Mesmo padrao do TransformCommand, mas generico: guarda uma copia do
+    // component ANTES e outra DEPOIS do gesto. Copiar o component inteiro
+    // (e nao so o campo editado) cobre de graca edicoes que mexem em mais
+    // de um campo de uma vez, como o Angulo Externo do Spot arrastando o
+    // Interno junto. Serve para qualquer T copiavel (contrato de
+    // Components.h). Construido por ComponentEditUtils.h, uma vez por
+    // gesto - nunca a cada frame de arraste.
+    template<typename T>
+    class EditComponentCommand : public Prism::Command {
+    public:
+        EditComponentCommand(Prism::Entity entity, const T& before, const T& after, std::string displayName)
+            : m_Entity(entity), m_Before(before), m_After(after), m_DisplayName(std::move(displayName)) {}
+
+        void Execute() override {
+            if (m_Entity.IsValid() && m_Entity.HasComponent<T>())
+                m_Entity.GetComponent<T>() = m_After;
+        }
+
+        void Undo() override {
+            if (m_Entity.IsValid() && m_Entity.HasComponent<T>())
+                m_Entity.GetComponent<T>() = m_Before;
+        }
+
+        std::string GetName() const override { return "Editar " + m_DisplayName; }
+
+    private:
+        Prism::Entity m_Entity;
+        T m_Before;
+        T m_After;
+        std::string m_DisplayName;
+    };
+
+    // Marcar uma camera como Primary desmarca TODAS as outras (ver
+    // EntityOps::SetPrimaryCamera), entao o undo precisa restaurar o
+    // Primary de cada camera da cena, nao so o da entidade clicada.
+    class SetPrimaryCameraCommand : public Prism::Command {
+    public:
+        SetPrimaryCameraCommand(Prism::Scene* scene, Prism::Entity newPrimary)
+            : m_Scene(scene), m_NewPrimary(newPrimary) {
+            auto view = m_Scene->GetRegistry().view<Prism::CameraComponent>();
+            for (auto handle : view)
+                m_Previous.emplace_back(handle, view.get<Prism::CameraComponent>(handle).Primary);
+        }
+
+        void Execute() override {
+            auto view = m_Scene->GetRegistry().view<Prism::CameraComponent>();
+            for (auto handle : view) {
+                Prism::Entity entity(handle, m_Scene);
+                view.get<Prism::CameraComponent>(handle).Primary = (entity == m_NewPrimary);
+            }
+        }
+
+        void Undo() override {
+            auto& registry = m_Scene->GetRegistry();
+            for (const auto& [handle, wasPrimary] : m_Previous) {
+                if (registry.valid(handle) && registry.all_of<Prism::CameraComponent>(handle))
+                    registry.get<Prism::CameraComponent>(handle).Primary = wasPrimary;
+            }
+        }
+
+        std::string GetName() const override { return "Definir Camera Principal"; }
+
+    private:
+        Prism::Scene* m_Scene;
+        Prism::Entity m_NewPrimary;
+        std::vector<std::pair<entt::entity, bool>> m_Previous;
     };
 
 }

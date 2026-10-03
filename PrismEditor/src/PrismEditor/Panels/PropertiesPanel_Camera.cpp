@@ -6,6 +6,7 @@
 #include "../Play/PlayWindow.h"
 #include "../Commands/EditorCommands.h"
 #include "../Core/EntityOps.h"
+#include "ComponentEditUtils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -29,24 +30,38 @@ namespace PrismEditor {
         bool keepOpen = true;
         if (ImGui::CollapsingHeader("Camera", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* projectionNames[] = { "Perspectiva", "Ortografica" };
+            const Prism::CameraComponent before = camera; // ver ComponentEditUtils.h
             int projectionIndex = (int)camera.ProjectionType;
-            if (ImGui::Combo("Projecao", &projectionIndex, projectionNames, IM_ARRAYSIZE(projectionNames)))
+            if (ImGui::Combo("Projecao", &projectionIndex, projectionNames, IM_ARRAYSIZE(projectionNames))) {
                 camera.ProjectionType = (Prism::CameraProjectionType)projectionIndex;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
 
-            if (camera.ProjectionType == Prism::CameraProjectionType::Perspective)
+            if (camera.ProjectionType == Prism::CameraProjectionType::Perspective) {
                 ImGui::DragFloat("FOV", &camera.FOV, 0.5f, 1.0f, 179.0f);
-            else
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
+            else {
                 ImGui::DragFloat("Tamanho Ortografico", &camera.OrthoSize, 0.1f, 0.01f, 1000.0f);
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
 
             ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, camera.FarClip - 0.01f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
             ImGui::DragFloat("Far Clip", &camera.FarClip, 1.0f, camera.NearClip + 0.01f, 100000.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
 
             bool isPrimary = camera.Primary;
             if (ImGui::Checkbox("Primary", &isPrimary)) {
-                if (isPrimary)
-                    EntityOps::SetPrimaryCamera(m_Ctx, m_Ctx.SelectedEntity);
-                else
+                if (isPrimary) {
+                    // Desmarca as outras cameras tambem - o comando guarda o
+                    // Primary de todas para o Undo.
+                    m_Ctx.History.Execute(Prism::CreateScope<SetPrimaryCameraCommand>(m_Ctx.ActiveScene.get(), m_Ctx.SelectedEntity));
+                }
+                else {
                     camera.Primary = false;
+                    CommitComponentEdit(m_Ctx, before, camera, "Camera");
+                }
             }
             if (!isPrimary)
                 ImGui::TextDisabled("Nao e a camera principal - o modo Play/viewport nao vai usar esta.");

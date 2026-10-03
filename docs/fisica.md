@@ -10,8 +10,8 @@ Adicione `ColliderComponent` **e** `RigidBodyComponent` a uma entidade. Só enti
 
 | Campo | Descrição |
 |---|---|
-| `Shape` | Box, Sphere ou Capsule |
-| `Size` | Box: meias-extensões (x, y, z). Sphere: raio em `x`. Capsule: raio em `x`, altura em `y` |
+| `Shape` | Box, Sphere, Capsule, ConvexHull ou TriangleMesh |
+| `Size` | Box: meias-extensões (x, y, z). Sphere: raio em `x`. Capsule: raio em `x`, altura **só do cilindro** em `y` (altura total = `y` + 2 × raio). ConvexHull e TriangleMesh ignoram `Size` |
 | `IsTrigger` | detecta sobreposição sem resposta física |
 
 > **`Size` está em unidades absolutas de mundo e não acompanha `Scale`.** Esticar um mesh com `Scale` não redimensiona o collider: é preciso ajustar `Size` manualmente. Esquecer isso é a causa mais comum de "objetos se atravessam" ou de um gizmo de collider desproporcional. Selecione a entidade para ver o wireframe do collider na viewport.
@@ -45,6 +45,16 @@ Disponível pelo Lua (`Physics.Raycast`) e pelo `RaycastComponent`, que dispara 
 - Ao criar o corpo, a rotação é extraída da matriz de mundo **normalizando as três colunas antes** de converter para quaternion. Aplicar `glm::quat_cast` direto numa matriz com escala embutida gera um quaternion distorcido, e o Jolt rejeita isso com um assert.
 - `JPH::Vec3` e `JPH::Quat` usam SIMD e não têm o mesmo layout de `glm`; a conversão sempre passa pelos construtores da API, nunca por `reinterpret_cast`.
 - `JPH::RegisterTypes()` e a `Factory` são globais do processo e feitos uma única vez.
+
+### Colliders de malha
+
+`ConvexHull` e `TriangleMesh` montam a forma a partir da malha do `MeshRendererComponent` da mesma entidade (modelo importado ou primitiva), com a **escala de mundo aplicada** aos vértices. Ao contrário de `Size`, eles acompanham `Scale`.
+
+- **ConvexHull:** envoltória convexa da malha. Serve para qualquer `BodyType`, inclusive `Dynamic`.
+- **TriangleMesh:** a malha exata, para cenário. O Jolt só aceita em `Static`/`Kinematic`; num `Dynamic` a física usa `ConvexHull` no lugar e avisa no log.
+- Sem `MeshRenderer`, ou se o Jolt recusar a forma (malha degenerada), a física cai para uma caixa e avisa no log.
+- O botão **Ajustar à malha** (Box/Sphere/Capsule) copia o tamanho atual da malha, com a escala da entidade, para `Size`.
+- A forma é criada ao apertar Play: editar a malha ou a escala durante o Play não a atualiza.
 
 ## Limitações conhecidas
 

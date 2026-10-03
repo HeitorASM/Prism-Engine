@@ -164,7 +164,7 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (collider da entidade ", entityIndex, ").");
                     return false;
                 }
-                if (c.Shape != ColliderShape::Box && c.Shape != ColliderShape::Sphere && c.Shape != ColliderShape::Capsule) {
+                if ((int)c.Shape < (int)ColliderShape::Box || (int)c.Shape > (int)ColliderShape::TriangleMesh) {
                     PRISM_CORE_ERROR("SceneSerializer: ColliderShape invalido na entidade ", entityIndex, ".");
                     return false;
                 }

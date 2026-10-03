@@ -3,6 +3,8 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Components.h"
 #include "../Core/Log.h"
+#include "../Renderer/Renderer.h" // ResolveMesh: geometria dos colliders ConvexHull/TriangleMesh
+#include "../Renderer/Mesh.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -18,6 +20,8 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
@@ -400,8 +404,36 @@ namespace Prism {
         // espessura num valor maior so por causa do raio convexo.
         float safeConvexRadius = glm::min(0.05f, glm::min(safeSize.x, glm::min(safeSize.y, safeSize.z)) * 0.5f);
 
+        // ConvexHull/TriangleMesh: a geometria vem do MeshRendererComponent da
+        // mesma entidade (ver ColliderShape, Components.h), com a escala de
+        // MUNDO aplicada aos vertices (diferente de Size, que e absoluto).
+        // Qualquer falha (sem malha, malha degenerada, Jolt recusando a
+        // forma) cai para uma Box a partir dos bounds - ou, sem malha
+        // nenhuma, para a Box de Size - com aviso no log, para o corpo
+        // existir em vez de quebrar o Play.
+        ColliderShape effectiveShape = collider.Shape;
+        const bool isMeshBased = (effectiveShape == ColliderShape::ConvexHull || effectiveShape == ColliderShape::TriangleMesh);
+        const Mesh* sourceMesh = nullptr;
+        glm::vec3 worldScale(glm::length(col0), glm::length(col1), glm::length(col2));
+        if (isMeshBased) {
+            if (entity.HasComponent<MeshRendererComponent>())
+                sourceMesh = Renderer::ResolveMesh(entity.GetComponent<MeshRendererComponent>());
+            if (!sourceMesh || sourceMesh->GetCpuPositions().empty()) {
+                PRISM_CORE_WARN("PhysicsEngine: Collider ConvexHull/TriangleMesh da entidade '", entity.GetComponent<TagComponent>().Tag,
+                                 "' precisa de um MeshRenderer com malha valida - usando Box de Size.");
+                effectiveShape = ColliderShape::Box;
+            }
+            else if (effectiveShape == ColliderShape::TriangleMesh && rigidBody.Type == BodyType::Dynamic) {
+                // Jolt: MeshShape nao suporta corpos Dynamic (nao tem volume
+                // para calcular massa/inercia) e dispara assert.
+                PRISM_CORE_WARN("PhysicsEngine: TriangleMesh nao e permitido em Rigid Body Dynamic (entidade '", entity.GetComponent<TagComponent>().Tag,
+                                 "') - usando ConvexHull. Use Static/Kinematic para a malha exata.");
+                effectiveShape = ColliderShape::ConvexHull;
+            }
+        }
+
         JPH::RefConst<JPH::Shape> shape;
-        switch (collider.Shape) {
+        switch (effectiveShape) {
             case ColliderShape::Box: {
                 // Collider::Size ja e meio-tamanho (half-extents) por
                 // convencao da propria engine (ver comentario em
@@ -427,6 +459,50 @@ namespace Prism {
                 // hemisfericas - por isso dividimos por 2 aqui).
                 float halfHeight = safeSize.y * 0.5f;
                 shape = new JPH::CapsuleShape(halfHeight, safeSize.x);
+                break;
+            }
+            case ColliderShape::ConvexHull: {
+                JPH::Array<JPH::Vec3> points;
+                points.reserve(sourceMesh->GetCpuPositions().size());
+                for (const glm::vec3& p : sourceMesh->GetCpuPositions())
+                    points.push_back(ToJolt(p * worldScale));
+
+                JPH::ConvexHullShapeSettings hullSettings(points);
+                JPH::Shape::ShapeResult result = hullSettings.Create();
+                if (result.HasError()) {
+                    PRISM_CORE_WARN("PhysicsEngine: Jolt nao conseguiu criar o ConvexHull da entidade '", entity.GetComponent<TagComponent>().Tag,
+                                     "' (", result.GetError().c_str(), ") - usando Box dos bounds da malha.");
+                    glm::vec3 half = glm::max((sourceMesh->GetLocalBoundsMax() - sourceMesh->GetLocalBoundsMin()) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
+                    shape = new JPH::BoxShape(ToJolt(half), glm::min(0.05f, glm::min(half.x, glm::min(half.y, half.z)) * 0.5f));
+                }
+                else {
+                    shape = result.Get();
+                }
+                break;
+            }
+            case ColliderShape::TriangleMesh: {
+                const auto& positions = sourceMesh->GetCpuPositions();
+                const auto& indices = sourceMesh->GetCpuIndices();
+                JPH::TriangleList triangles;
+                triangles.reserve(indices.size() / 3);
+                for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+                    glm::vec3 a = positions[indices[i]] * worldScale;
+                    glm::vec3 b = positions[indices[i + 1]] * worldScale;
+                    glm::vec3 c = positions[indices[i + 2]] * worldScale;
+                    triangles.push_back(JPH::Triangle(JPH::Float3(a.x, a.y, a.z), JPH::Float3(b.x, b.y, b.z), JPH::Float3(c.x, c.y, c.z)));
+                }
+
+                JPH::MeshShapeSettings meshSettings(triangles);
+                JPH::Shape::ShapeResult result = meshSettings.Create();
+                if (result.HasError()) {
+                    PRISM_CORE_WARN("PhysicsEngine: Jolt nao conseguiu criar o TriangleMesh da entidade '", entity.GetComponent<TagComponent>().Tag,
+                                     "' (", result.GetError().c_str(), ") - usando Box dos bounds da malha.");
+                    glm::vec3 half = glm::max((sourceMesh->GetLocalBoundsMax() - sourceMesh->GetLocalBoundsMin()) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
+                    shape = new JPH::BoxShape(ToJolt(half), glm::min(0.05f, glm::min(half.x, glm::min(half.y, half.z)) * 0.5f));
+                }
+                else {
+                    shape = result.Get();
+                }
                 break;
             }
         }

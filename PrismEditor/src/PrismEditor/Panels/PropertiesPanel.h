@@ -142,6 +142,16 @@ namespace PrismEditor {
 
         glm::vec3 m_ColorBeforeEdit{ 0.0f };
 
+        // Estado "antes" por tipo de component para os widgets continuos
+        // (DragFloat/Slider/ColorEdit) das UIs com Undo - ver
+        // ComponentEditUtils.h. Um slot por tipo basta: so um item do ImGui
+        // fica ativo por vez.
+        Prism::LightComponent m_LightBeforeEdit;
+        Prism::ColliderComponent m_ColliderBeforeEdit;
+        Prism::RigidBodyComponent m_RigidBodyBeforeEdit;
+        Prism::CameraComponent m_CameraBeforeEdit;
+        Prism::RaycastComponent m_RaycastBeforeEdit;
+
         // Estado do popup modal "Novo Script" (mesmo padrao de
         // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao
         // "Novo..." da UI do ScriptComponent, pede so o nome (sem extensao)

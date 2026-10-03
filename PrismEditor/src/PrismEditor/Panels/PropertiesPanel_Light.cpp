@@ -6,6 +6,7 @@
 #include "../Play/PlayWindow.h"
 #include "../Commands/EditorCommands.h"
 #include "../Core/EntityOps.h"
+#include "ComponentEditUtils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -29,15 +30,24 @@ namespace PrismEditor {
         bool keepOpen = true;
         if (ImGui::CollapsingHeader("Light", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* typeNames[] = { "Point (Omni)", "Spot", "Directional" };
+            // Copia "antes" para os widgets discretos (Combo/Checkbox) - ver
+            // ComponentEditUtils.h.
+            const Prism::LightComponent before = light;
             int typeIndex = (int)light.Type;
-            if (ImGui::Combo("Tipo", &typeIndex, typeNames, IM_ARRAYSIZE(typeNames)))
+            if (ImGui::Combo("Tipo", &typeIndex, typeNames, IM_ARRAYSIZE(typeNames))) {
                 light.Type = (Prism::LightType)typeIndex;
+                CommitComponentEdit(m_Ctx, before, light, "Light");
+            }
 
             ImGui::ColorEdit3("Cor##Light", glm::value_ptr(light.Color));
+            TrackContinuousEdit(m_Ctx, m_LightBeforeEdit, light, "Light");
             ImGui::DragFloat("Intensidade", &light.Intensity, 0.05f, 0.0f, 100.0f);
+            TrackContinuousEdit(m_Ctx, m_LightBeforeEdit, light, "Light");
 
-            if (light.Type != Prism::LightType::Directional)
+            if (light.Type != Prism::LightType::Directional) {
                 ImGui::DragFloat("Alcance", &light.Range, 0.1f, 0.0f, 1000.0f);
+                TrackContinuousEdit(m_Ctx, m_LightBeforeEdit, light, "Light");
+            }
 
             if (light.Type == Prism::LightType::Spot) {
                 // Angulo externo primeiro: se o usuario reduzir o
@@ -49,11 +59,14 @@ namespace PrismEditor {
                     if (light.InnerSpotAngle > light.SpotAngle)
                         light.InnerSpotAngle = light.SpotAngle;
                 }
+                TrackContinuousEdit(m_Ctx, m_LightBeforeEdit, light, "Light");
                 ImGui::DragFloat("Angulo do Cone (Interno)", &light.InnerSpotAngle, 0.5f, 0.0f, light.SpotAngle);
+                TrackContinuousEdit(m_Ctx, m_LightBeforeEdit, light, "Light");
                 ImGui::TextDisabled("(?) Entre os dois angulos a luz cai suavemente ate a borda.");
             }
 
-            ImGui::Checkbox("Projetar Sombras", &light.CastShadows);
+            if (ImGui::Checkbox("Projetar Sombras", &light.CastShadows))
+                CommitComponentEdit(m_Ctx, before, light, "Light");
             if (light.Type != Prism::LightType::Directional && light.CastShadows && ImGui::IsItemHovered())
                 ImGui::SetTooltip("Shadow mapping hoje so suporta luzes Directional - marcar aqui nao tem efeito visual para Point/Spot ainda.");
         }

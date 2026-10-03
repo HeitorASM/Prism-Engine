@@ -198,8 +198,8 @@ namespace PrismEditor::EditorGizmos {
             break;
         }
         case Prism::ColliderShape::Capsule: {
-            // Size.x = raio, Size.y = altura TOTAL da capsula, incluindo
-            // as duas calotas hemisfericas (Size.z ignorado - ver
+            // Size.x = raio, Size.y = altura so da parte CILINDRICA, sem as
+            // duas calotas hemisfericas (Size.z ignorado - ver
             // ColliderComponent). O "cilindro" do meio vai de
             // -halfCylinderHeight a +halfCylinderHeight; cada calota e
             // uma hemisfera de raio 'radius' colada em cada ponta,
@@ -208,7 +208,7 @@ namespace PrismEditor::EditorGizmos {
             // ler "isto e uma capsula, nao um cilindro" de relance, sem
             // precisar de uma malha completa de esfera.
             float radius = collider.Size.x;
-            float halfCylinderHeight = std::max(collider.Size.y * 0.5f - radius, 0.0f); // metade da parte cilindrica, descontando as 2 calotas de raio 'radius'
+            float halfCylinderHeight = std::max(collider.Size.y * 0.5f, 0.0f); // metade da parte cilindrica; as calotas ficam POR FORA disso (mesma convencao de PhysicsEngine::CreateBodyForEntity: altura total real = Size.y + 2*raio)
 
             // Equador do cilindro (topo e base da parte reta).
             appendCircle(localPoints, glm::vec3(0.0f, halfCylinderHeight, 0.0f), radius, 1, kCircleSegments);
@@ -242,6 +242,28 @@ namespace PrismEditor::EditorGizmos {
                 localPoints.push_back(topCenter + d);
                 localPoints.push_back(bottomCenter + d);
             }
+            break;
+        }
+        case Prism::ColliderShape::ConvexHull:
+        case Prism::ColliderShape::TriangleMesh: {
+            // A forma real vem da malha (escala de MUNDO aplicada, ao
+            // contrario de Size) - desenhamos so a caixa dos bounds dela como
+            // referencia de tamanho/posicao, nao a malha inteira.
+            const Prism::Mesh* mesh = ctx.SelectedEntity.HasComponent<Prism::MeshRendererComponent>()
+                ? Prism::Renderer::ResolveMesh(ctx.SelectedEntity.GetComponent<Prism::MeshRendererComponent>()) : nullptr;
+            if (!mesh)
+                break;
+            glm::vec3 worldScale(glm::length(col0), glm::length(col1), glm::length(col2));
+            glm::vec3 lo = mesh->GetLocalBoundsMin() * worldScale;
+            glm::vec3 hi = mesh->GetLocalBoundsMax() * worldScale;
+            glm::vec3 c[8] = {
+                { lo.x,lo.y,lo.z }, { hi.x,lo.y,lo.z }, { hi.x,hi.y,lo.z }, { lo.x,hi.y,lo.z },
+                { lo.x,lo.y,hi.z }, { hi.x,lo.y,hi.z }, { hi.x,hi.y,hi.z }, { lo.x,hi.y,hi.z },
+            };
+            int edges[12][2] = {
+                {0,1},{1,2},{2,3},{3,0}, {4,5},{5,6},{6,7},{7,4}, {0,4},{1,5},{2,6},{3,7},
+            };
+            for (auto& e2 : edges) { localPoints.push_back(c[e2[0]]); localPoints.push_back(c[e2[1]]); }
             break;
         }
         }
