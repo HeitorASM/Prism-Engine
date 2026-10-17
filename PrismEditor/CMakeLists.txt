@@ -62,6 +62,14 @@ add_custom_command(TARGET PrismEditor POST_BUILD
         $<TARGET_FILE_DIR:PrismEditor>/shaders
 )
 
+# SDK dos scripts em C++ (caminhos de include da engine) - lido pelo editor
+# ao gerar o projeto de scripts do usuario (NativeScripting::GetSdkFile).
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_BINARY_DIR}/PrismSDK.cmake
+        $<TARGET_FILE_DIR:PrismEditor>
+)
+
 # Assimp builda como biblioteca DINAMICA por padrao (assimp-vc***.dll no
 # Windows) - sem copiar essa DLL para perto do .exe, o editor abre uma
 # janela de erro "assimp-vc***.dll nao encontrada" ao iniciar, mesmo com o

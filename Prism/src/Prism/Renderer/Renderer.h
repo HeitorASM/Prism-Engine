@@ -334,6 +334,11 @@ namespace Prism {
         // precisa dela combinada.
         static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos);
 
+        // Desenha as particulas de todos os emissores da cena (billboards com
+        // blend, sem escrever profundidade). Chamado no fim de DrawScene, depois
+        // da geometria opaca; exposto para quem desenha a cena por conta propria.
+        static void DrawParticles(class Scene& scene, const float* view, const float* projection);
+
         // Varre 'scene' por toda entidade com TransformComponent +
         // LightComponent e traduz cada uma para um GPULight (ver comentario
         // na struct acima) usando a posicao/rotacao de MUNDO da entidade
@@ -398,6 +403,12 @@ namespace Prism {
     private:
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
+
+        // Particulas: shader (particle.vert/.frag) + um SSBO reescrito por
+        // emissor a cada frame com {posicao+tamanho, cor} de cada particula.
+        // O quad e gerado no vertex shader (sem VBO), com um VAO vazio por contexto.
+        static Ref<Shader> s_ParticleShader;
+        static uint32_t s_ParticleSSBO;
 
         // Shader "depth-only" usado exclusivamente por RenderShadowPass -
         // so precisa de posicao (nem normal, nem cor) e nao tem fragment

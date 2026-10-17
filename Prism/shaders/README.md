@@ -8,6 +8,7 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 |---|---|---|---|
 | `BasicLit` | `basic.vert` | `basic.frag` | Shader principal: PBR Cook-Torrance, multi-luz, sombras, SSAO, ambiente, tone mapping |
 | `Line` | `line.vert` | `line.frag` | Linhas de gizmo (cor sólida) |
+| `Particle` | `particle.vert` | `particle.frag` | Partículas: billboards instanciados lendo um SSBO |
 | `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Passe de profundidade do ponto de vista da luz |
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |
 | `SSAO` | `fullscreen_quad.vert` | `ssao.frag` | SSAO, etapa 2: oclusão bruta |

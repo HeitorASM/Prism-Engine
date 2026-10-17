@@ -32,6 +32,14 @@ target_link_libraries(Prism PUBLIC
 
 target_compile_features(Prism PUBLIC cxx_std_20)
 
+# SDK dos scripts em C++: arquivo CMake com os caminhos de include que um
+# modulo de projeto precisa (engine, GLM, EnTT). Gerado a cada configure e
+# copiado para perto do executavel do editor (ver PrismEditor/CMakeLists.txt);
+# o CMakeLists.txt do projeto de scripts faz include() dele - ver
+# NativeScripting::GenerateProjectFiles.
+file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/PrismSDK.cmake CONTENT
+"set(PRISM_SDK_INCLUDE_DIRS \"${CMAKE_CURRENT_SOURCE_DIR}/src;$<TARGET_PROPERTY:glm,INTERFACE_INCLUDE_DIRECTORIES>;$<TARGET_PROPERTY:EnTT::EnTT,INTERFACE_INCLUDE_DIRECTORIES>\")\n")
+
 # /utf-8 (codigo-fonte da engine em UTF-8, mensagens de log com acentos -
 # ver PRISM_CORE_ERROR/PRISM_WARN em Core/Log.h) aplicada DIRETAMENTE a
 # este alvo, com PRIVATE (nao propaga para quem faz target_link_libraries
@@ -41,7 +49,8 @@ target_compile_features(Prism PUBLIC cxx_std_20)
 # global: precisa nunca alcancar vendor/ (as dependencias FetchContent,
 # incluindo o Assimp, que colide com /utf-8 - erro D8016 do MSVC).
 if(MSVC)
-    target_compile_options(Prism PRIVATE /utf-8)
+    # /bigobj: ScriptEngine.cpp (sol2 + muitos usertypes) estoura o limite de secoes do .obj padrao.
+    target_compile_options(Prism PRIVATE /utf-8 /bigobj)
 endif()
 
 # Pasta dos shaders GLSL (Prism/shaders). O caminho ABSOLUTO do codigo-fonte

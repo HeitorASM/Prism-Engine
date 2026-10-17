@@ -1,7 +1,6 @@
 # Scripting Lua
 
-> **AVISO:** scripting atual e **extremamente basico** a API Pode e sera mudada.
-> atualmente limitada a coisas simples, como movimentação e fisica **basica**. 
+> **AVISO:** a API ainda está em evolução e pode mudar.
 
 Lua 5.4 embutido via sol2. Uma única VM global; cada script roda isolado em seu próprio `sol::environment`.
 
@@ -15,13 +14,34 @@ Scripts só rodam durante o Play. Exemplos prontos em `PrismEditor/assets/Script
 
 ## Ciclo de vida
 
-Um script pode definir três funções globais, todas opcionais:
+Um script pode definir estas funções globais, todas opcionais:
 
 ```lua
-function OnCreate() end            -- ao iniciar o Play
-function OnUpdate(deltaTime) end   -- a cada frame
-function OnDestroy() end           -- ao parar o Play
+function OnCreate() end                  -- ao iniciar o Play
+function OnUpdate(deltaTime) end         -- a cada frame
+function OnDestroy() end                 -- ao parar o Play ou destruir a entidade
+function OnCollisionEnter(other) end     -- começou a tocar 'other' (Entity)
+function OnCollisionExit(other) end      -- parou de tocar
+function OnTriggerEnter(other) end       -- 'other' entrou num collider marcado como Trigger
+function OnTriggerExit(other) end
 ```
+
+Os eventos de contato chegam na thread principal, depois da simulação do frame. Cada corpo envolvido recebe o evento com o outro como argumento.
+
+## Variáveis públicas (`Properties`)
+
+Declare uma tabela global `Properties` e os valores aparecem no painel Propriedades, editáveis por entidade (com Undo/Redo e botão Reset):
+
+```lua
+Properties = { speed = 5.0, jumpForce = 8, canDoubleJump = true, label = "Jogador" }
+
+function OnUpdate(dt)
+    local p = entity:GetTransform()
+    p.Translation.x = p.Translation.x + Properties.speed * dt
+end
+```
+
+Só `number`, `boolean` e `string` são suportados. O valor editado é aplicado antes do `OnCreate`. Só é guardado o que você muda; os padrões continuam no arquivo.
 
 Erros de sintaxe ou de runtime **nunca derrubam o editor**. Eles vão para o Console, e o script com erro deixa de ser chamado a cada frame até ser corrigido e o Play reiniciado.
 
@@ -82,7 +102,32 @@ Aparecem no Console com prefixo `[Lua]`.
 
 ```lua
 local v = Vec3.new(1, 2, 3)   -- campos x, y, z
+local d = (b - a):Normalized() * 5   -- +, -, * e / por número, -v, ==
+-- v:Length(), v:Normalized(), v:Dot(o), v:Cross(o), v:Distance(o), tostring(v)
 ```
+
+### Time e Mathf
+
+`Time.DeltaTime()`, `Time.Elapsed()` (segundos desde o Play) e `Time.FrameCount()`. `Mathf.Clamp(v, min, max)`, `Mathf.Lerp(a, b, t)`, `Mathf.Sign(v)`.
+
+### Scene
+
+Operam na cena do script que chamou.
+
+| Função | Descrição |
+|---|---|
+| `Scene.Find("Nome")` | primeira entidade com esse nome (confira `:IsValid()`) |
+| `Scene.FindAll("Nome")` | tabela com todas |
+| `Scene.Create("Nome")` | entidade vazia |
+| `Scene.CreateMesh("Nome", "Cube", x, y, z)` | entidade visível (`Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`) |
+| `Scene.Instantiate("Assets/Prefabs/X.prismprefab", pos)` | instancia um prefab (caminho relativo ao projeto; `pos` opcional) |
+| `Scene.Destroy(e)` / `e:Destroy()` | destrói no **fim do frame** |
+
+### Mais métodos de `entity`
+
+`SetName`, `SetRotation(x, y, z)` (graus), `SetScale`, `SetParent(pai)`, `Destroy()`, `GetScript()` (as variáveis e funções do script daquela entidade, para scripts conversarem) e getters de components que devolvem `nil` se ausentes: `GetMeshRenderer()` (`Color`), `GetMaterial()` (`AlbedoTint`, `RoughnessFactor`, `MetallicFactor`, caminhos de textura), `GetLight()` (`Color`, `Intensity`, `Range`, `SpotAngle`…), `GetCamera()` (`FOV`, `Primary`…), `GetAudioSource()` (`Volume`, `Pitch`, `Loop`…), `GetParticleEmitter()` (`Enabled`, `EmissionRate`, `SpreadAngle`, `SetColorStart(r,g,b,a)`…). Partículas: `entity:PlayParticles()` (reinicia e solta o burst), `StopParticles()`, `ClearParticles()`, `IsParticlesPlaying()`, `GetParticleCount()`.
+
+`print(...)` agora vai para o Console, como `log`.
 
 ### Input
 
@@ -99,7 +144,7 @@ Por polling. Só retorna valores úteis durante o Play.
 
 `CursorMode` tem `Normal`, `Hidden` e `Locked`.
 
-A tabela `Key` traz `A`–`Z`, `0`–`9`, `Space`, `Enter`, `Escape`, `Tab`, `LeftShift`, `LeftControl` e as setas (`Up`, `Down`, `Left`, `Right`). Qualquer código GLFW não listado pode ser passado como número.
+A tabela `Key` traz `A`–`Z`, `0`–`9`, `F1`–`F12`, `Space`, `Enter`, `Escape`, `Tab`, `Backspace`, Shift/Control/Alt (esquerdos e direitos) e as setas (`Up`, `Down`, `Left`, `Right`). A tabela `Mouse` traz `Left`, `Right`, `Middle`. Qualquer código GLFW não listado pode ser passado como número.
 
 ### Raycast
 
@@ -119,9 +164,9 @@ Só `base`, `math`, `string` e `table` estão abertas. `io`, `os`, `package` e `
 
 ## Limitações
 
-- Sem callbacks `OnCollisionEnter`/`OnCollisionExit`.
 - Sem hot-reload: edite o `.lua`, pare e rode de novo.
-- Scripts enxergam a própria entidade e o que alcançam pela hierarquia (`GetParent`, `GetChild`) e por raycast; não há busca global de entidades.
+- `Scene.Load` (trocar de cena) ainda não existe.
+- Entidades criadas durante um frame só rodam `OnUpdate` a partir do próximo.
 - Sem debugger nem breakpoints.
 
 ## Áudio

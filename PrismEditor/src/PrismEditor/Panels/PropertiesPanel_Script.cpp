@@ -4,6 +4,7 @@
 #include "ContentBrowserPanel.h"
 #include "ScriptEditorPanel.h"
 #include "../Play/PlayWindow.h"
+#include "ComponentEditUtils.h"
 #include "../Commands/EditorCommands.h"
 #include "../Core/EntityOps.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -89,6 +90,83 @@ namespace PrismEditor {
             }
             else {
                 ImGui::TextDisabled("Aperte Play (menu bar) para rodar este script.");
+            }
+
+            // --- Variaveis publicas (tabela global `Properties` do script) ---
+            if (!script.ScriptPath.empty()) {
+                auto project = Prism::Project::GetActive();
+                if (project) {
+                    std::filesystem::path absolutePath = project->GetScriptDirectory() / script.ScriptPath;
+                    std::error_code ec;
+                    auto writeTime = std::filesystem::last_write_time(absolutePath, ec);
+                    if (!ec && (m_ScriptPropsPath != script.ScriptPath || m_ScriptPropsTime != writeTime)) {
+                        m_ScriptPropsPath = script.ScriptPath;
+                        m_ScriptPropsTime = writeTime;
+                        m_ScriptPropsDefaults = Prism::ScriptEngine::ReadScriptProperties(absolutePath);
+                    }
+                }
+
+                if (!m_ScriptPropsDefaults.empty() && m_ScriptPropsPath == script.ScriptPath) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Variaveis (Properties)");
+                    for (const auto& defaults : m_ScriptPropsDefaults) {
+                        ImGui::PushID(defaults.Name.c_str());
+
+                        auto findOverride = [&]() -> Prism::ScriptPropertyValue* {
+                            for (auto& value : script.Properties)
+                                if (value.Name == defaults.Name && value.Type == defaults.Type)
+                                    return &value;
+                            return nullptr;
+                        };
+                        auto getOrCreate = [&]() -> Prism::ScriptPropertyValue& {
+                            if (auto* existing = findOverride())
+                                return *existing;
+                            script.Properties.push_back(defaults);
+                            return script.Properties.back();
+                        };
+
+                        Prism::ScriptPropertyValue* current = findOverride();
+                        const Prism::ScriptPropertyValue& shown = current ? *current : defaults;
+                        bool overridden = current != nullptr;
+
+                        if (defaults.Type == Prism::ScriptPropertyType::Number) {
+                            float number = (float)shown.Number;
+                            if (ImGui::DragFloat(defaults.Name.c_str(), &number, 0.05f)) {
+
+                                getOrCreate().Number = number;
+                            }
+                            TrackContinuousEdit(m_Ctx, m_ScriptBeforeEdit, script, "Script");
+                        }
+                        else if (defaults.Type == Prism::ScriptPropertyType::Bool) {
+                            bool flag = shown.Bool;
+                            auto before = script;
+                            if (ImGui::Checkbox(defaults.Name.c_str(), &flag)) {
+                                getOrCreate().Bool = flag;
+                                CommitComponentEdit(m_Ctx, before, script, "Script");
+                            }
+                        }
+                        else {
+                            char buffer[256];
+                            std::snprintf(buffer, sizeof(buffer), "%s", shown.String.c_str());
+                            if (ImGui::InputText(defaults.Name.c_str(), buffer, sizeof(buffer)))
+                                getOrCreate().String = buffer;
+                            TrackContinuousEdit(m_Ctx, m_ScriptBeforeEdit, script, "Script");
+                        }
+
+                        if (overridden) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Reset")) {
+                                auto before = script;
+                                script.Properties.erase(
+                                    std::remove_if(script.Properties.begin(), script.Properties.end(),
+                                        [&](const Prism::ScriptPropertyValue& v) { return v.Name == defaults.Name && v.Type == defaults.Type; }),
+                                    script.Properties.end());
+                                CommitComponentEdit(m_Ctx, before, script, "Script");
+                            }
+                        }
+                        ImGui::PopID();
+                    }
+                }
             }
         }
         if (!keepOpen)

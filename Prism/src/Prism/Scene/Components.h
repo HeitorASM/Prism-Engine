@@ -511,15 +511,85 @@ namespace Prism {
     // Slot de script anexado a uma entidade. Guarda QUAL arquivo .lua esta
     // associado a ela; quem carrega e executa e o ScriptEngine (ver
     // Scripting/ScriptEngine.h), durante o Play.
+    // Tipo de uma variavel publica de script (ver ScriptComponent::Properties).
+    enum class ScriptPropertyType : uint8_t {
+        Number = 0,
+        Bool = 1,
+        String = 2
+    };
+
+    // Valor de uma variavel publica: o script declara os padroes numa tabela
+    // global `Properties = { speed = 5, name = "x", enabled = true }`, e a
+    // entidade guarda aqui apenas os valores que o usuario MUDOU no editor
+    // (overrides). Aplicados sobre a tabela `Properties` do script antes do
+    // OnCreate (ver ScriptEngine::LoadScript).
+    struct ScriptPropertyValue {
+        std::string Name;
+        ScriptPropertyType Type = ScriptPropertyType::Number;
+        double Number = 0.0;
+        bool Bool = false;
+        std::string String;
+    };
+
     struct ScriptComponent {
         // Caminho RELATIVO a Project::GetScriptDirectory() (ex:
         // "player_controller.lua") - nao absoluto, para o projeto
         // continuar portavel entre maquinas/pastas.
         std::string ScriptPath;
 
+        // Overrides das variaveis publicas do script (ver acima).
+        std::vector<ScriptPropertyValue> Properties;
+
         ScriptComponent() = default;
         ScriptComponent(const ScriptComponent&) = default;
         ScriptComponent(const std::string& scriptPath) : ScriptPath(scriptPath) {}
+    };
+
+    // Script em C++ (ver Scripting/NativeScript.h): nome da classe registrada
+    // com PRISM_REGISTER_SCRIPT no modulo do projeto. A instancia so existe
+    // durante o Play; aqui fica apenas o nome (se o modulo nao tiver a classe,
+    // o Play avisa no Console e a entidade segue sem script).
+    struct NativeScriptComponent {
+        std::string ClassName;
+
+        NativeScriptComponent() = default;
+        NativeScriptComponent(const NativeScriptComponent&) = default;
+        NativeScriptComponent(const std::string& className) : ClassName(className) {}
+    };
+
+    // Emissor de particulas (billboards desenhados com blend). A simulacao e
+    // na CPU (ver Particles/ParticleSystem.h) e as particulas vivem em espaco
+    // de MUNDO: se a entidade se move, as ja emitidas ficam para tras. As
+    // particulas saem em um cone ao redor do eixo +Y LOCAL da entidade (gire
+    // a entidade para apontar o jato). Cores sao de tela (mesmo espaco dos
+    // seletores de cor); alpha vai de ColorStart.a a ColorEnd.a ao longo da vida.
+    struct ParticleEmitterComponent {
+        bool Enabled = true;
+        bool PlayOnStart = true;      // comeca a emitir ao iniciar o Play
+        bool Loop = true;             // false: emite so durante Duration
+        float Duration = 5.0f;        // segundos (so se Loop == false)
+
+        uint32_t MaxParticles = 500;  // teto de particulas vivas (1..10000)
+        float EmissionRate = 40.0f;   // particulas por segundo
+        uint32_t BurstCount = 0;      // emitidas de uma vez ao (re)comecar
+
+        float LifetimeMin = 0.8f;
+        float LifetimeMax = 1.5f;
+        float SpeedMin = 1.0f;
+        float SpeedMax = 3.0f;
+        float SpreadAngle = 25.0f;    // meio-angulo do cone, graus (0 = reto, 180 = esfera)
+        float GravityScale = 0.0f;    // multiplica -9.81 em Y (negativo = sobe)
+
+        float SizeStart = 0.30f;
+        float SizeEnd = 0.05f;
+        glm::vec4 ColorStart = { 1.0f, 0.70f, 0.20f, 1.0f };
+        glm::vec4 ColorEnd = { 1.0f, 0.10f, 0.0f, 0.0f };
+
+        bool Additive = true;         // true: soma luz (fogo, brilho); false: alpha normal (fumaca)
+        std::string TexturePath;      // opcional, relativo ao projeto; vazio = circulo suave
+
+        ParticleEmitterComponent() = default;
+        ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
     };
 
     // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver

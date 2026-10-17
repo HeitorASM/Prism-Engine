@@ -59,7 +59,7 @@ Disponível pelo Lua (`Physics.Raycast`) e pelo `RaycastComponent`, que dispara 
 ## Limitações conhecidas
 
 - **Física e parenting não se combinam.** O corpo é criado na posição de mundo da entidade, mas a sincronização escreve a posição de mundo direto no transform **local**. Isso é correto para entidades sem pai (o caso comum) e errado para uma entidade física que seja filha de outra.
-- Sem callbacks de colisão em Lua. `CollisionEvent` existe no C++, mas o `ContactListener` do Jolt ainda não foi ligado.
+- Eventos de contato (`OnCollisionEnter/Exit`, `OnTriggerEnter/Exit`) são coletados pelo `ContactListener` do Jolt (threads de job), enfileirados e entregues aos scripts na thread principal após a simulação. Ver [scripting-lua.md](scripting-lua.md).
 - Sem joints expostos no editor (o Jolt os suporta).
 - Camadas de colisão fixas, sem máscaras por camada de gameplay.
 - Sem visualização de depuração do mundo físico além do gizmo estático de collider.

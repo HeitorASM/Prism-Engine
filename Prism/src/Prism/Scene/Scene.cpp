@@ -2,8 +2,10 @@
 #include "Entity.h"
 #include "ComponentRegistry.h"
 #include "../Scripting/ScriptEngine.h"
+#include "../Scripting/NativeScripting.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Audio/AudioEngine.h"
+#include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
 #include "../Renderer/Renderer.h"
@@ -168,6 +170,8 @@ namespace Prism {
         // nesta ordem.
         if (m_IsRunning && m_Registry.all_of<ScriptComponent>(handle))
             ScriptEngine::UnloadScript(entity);
+        if (m_IsRunning && m_Registry.all_of<NativeScriptComponent>(handle))
+            NativeScripting::UnloadScript(entity);
 
         // Mesma logica para o corpo fisico: destroi ANTES da entidade
         // sumir do registry, senao PhysicsEngine::DestroyBodyForEntity
@@ -384,6 +388,7 @@ namespace Prism {
         // do frame anterior - importante por exemplo para um script que
         // decide algo com base em "onde meu personagem esta depois da
         // fisica mover ele".
+        ScriptEngine::BeginFrame(deltaTime);
         PhysicsEngine::Simulate(*this, deltaTime);
 
         // RaycastComponent tambem ANTES dos scripts, mesmo motivo: um
@@ -392,14 +397,33 @@ namespace Prism {
         // frame, nao o do frame anterior.
         UpdateRaycastComponents();
 
-        auto view = m_Registry.view<ScriptComponent>();
-        for (auto entityHandle : view) {
-            // Copia o handle para uma Entity de curta duracao - so para
-            // repassar ao ScriptEngine, que trabalha em termos de Entity
-            // (nao entt::entity cru) para poder chamar GetComponent<T>()
-            // de dentro dos bindings Lua (ver ScriptEngine.cpp).
+        // Snapshot dos handles: scripts podem criar entidades (Scene.Create/
+        // Instantiate) durante a iteracao, o que invalidaria a view do EnTT.
+        // Entidades criadas neste frame comecam a atualizar no proximo.
+        std::vector<entt::entity> scriptEntities;
+        for (auto entityHandle : m_Registry.view<ScriptComponent>())
+            scriptEntities.push_back(entityHandle);
+        for (auto entityHandle : scriptEntities) {
+            if (!m_Registry.valid(entityHandle))
+                continue; // destruida por um OnCollision/OnUpdate anterior
             ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+
+        // Scripts em C++ (NativeScriptComponent), mesma regra de snapshot.
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        for (auto entityHandle : nativeEntities) {
+            if (!m_Registry.valid(entityHandle))
+                continue;
+            NativeScripting::UpdateScript(Entity(entityHandle, this), deltaTime);
+        }
+
+        // Destruicoes pedidas por scripts (entity:Destroy()) - so agora, com a iteracao encerrada.
+        ScriptEngine::FlushDestroyQueue(*this);
+
+        // Particulas depois dos scripts: ja enxergam posicao/campos alterados neste frame.
+        ParticleSystem::Update(*this, deltaTime);
 
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
@@ -479,7 +503,9 @@ namespace Prism {
         // se um script OnCreate() precisar aplicar uma forca/impulso
         // imediatamente (ver ScriptEngine::RegisterAPI, ApplyForce), o
         // corpo fisico ja precisa existir nesse momento.
+        ScriptEngine::ResetTime();
         PhysicsEngine::OnSceneStart(*this);
+        ParticleSystem::OnSceneStart(*this);
 
         // Audio antes dos scripts: fontes com PlayOnStart ja estao tocando
         // quando OnCreate() roda (que ainda pode para-las/reinicia-las).
@@ -503,6 +529,16 @@ namespace Prism {
             std::filesystem::path absolutePath = project->GetScriptDirectory() / script.ScriptPath;
             ScriptEngine::LoadScript(Entity(entityHandle, this), absolutePath);
         }
+
+        // Scripts em C++: cria uma instancia por entidade (classe vem do modulo
+        // do projeto - ver NativeScripting::LoadProjectModule).
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        for (auto entityHandle : nativeEntities) {
+            if (m_Registry.valid(entityHandle))
+                NativeScripting::LoadScript(Entity(entityHandle, this));
+        }
     }
 
     void Scene::OnScriptsStop() {
@@ -514,11 +550,15 @@ namespace Prism {
         for (auto entityHandle : view)
             ScriptEngine::UnloadScript(Entity(entityHandle, this));
 
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            NativeScripting::UnloadScript(Entity(entityHandle, this));
+
         // Fisica DEPOIS dos scripts: OnDestroy() de um script ainda pode
         // querer ler a posicao final do corpo fisico (ex: salvar onde o
         // personagem parou) antes do mundo fisico ser destruido.
         PhysicsEngine::OnSceneStop(*this);
 
+        ParticleSystem::OnSceneStop(*this);
         AudioEngine::OnSceneStop(*this);
     }
 

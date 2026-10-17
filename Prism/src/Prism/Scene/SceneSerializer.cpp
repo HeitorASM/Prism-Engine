@@ -56,6 +56,10 @@ namespace Prism {
     //       entidade desenha (-1 = malha mesclada de todos os submeshes).
     //   v15 AudioSourceComponent e AudioListenerComponent (registrados por
     //       ultimo no ComponentRegistry, depois de Raycast).
+    //   v16 ScriptComponent::Properties (overrides das variaveis publicas do
+    //       script): uint32 contagem + [nome, tipo, double, bool, string] cada.
+    //   v17 NativeScriptComponent (script em C++): string com o nome da classe.
+    //   v18 ParticleEmitterComponent (emissor de particulas).
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -68,7 +72,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 15;
+    static constexpr uint32_t kSceneFormatVersion = 18;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

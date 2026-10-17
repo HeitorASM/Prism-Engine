@@ -50,6 +50,9 @@ namespace PrismEditor {
         // O menu de contexto de entidade e ligado no construtor do HierarchyPanel
         // (ver HierarchyPanel::HierarchyPanel).
 
+        // Scripts C++ ja compilados em uma sessao anterior (Binaries/NativeScripts.*).
+        Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
+
         m_Document.LoadOrCreateScene();
     }
 
@@ -99,6 +102,7 @@ namespace PrismEditor {
 
     void EditorLayer::OnUpdate(float deltaTime) {
         m_Viewport.ResizeIfNeeded();
+        PollNativeBuild();
 
         // EditorContext::ActiveScene->OnUpdate() aqui NAO roda scripts/fisica na pratica
         // (Scene::OnUpdate so simula quando IsRunning() e true - ver
@@ -108,6 +112,9 @@ namespace PrismEditor {
         // assim por seguranca/futuro (caso algo alem de scripts/fisica
         // precise rodar por frame mesmo fora do Play).
         m_Ctx.ActiveScene->OnUpdate(deltaTime);
+
+        // Preview do emissor de particulas selecionado (a cena de edicao nao roda o Play).
+        Prism::ParticleSystem::UpdatePreview(*m_Ctx.ActiveScene, deltaTime, m_Ctx.SelectedEntity);
 
         m_Viewport.RenderScene(deltaTime);
 
@@ -348,6 +355,8 @@ namespace PrismEditor {
                     EntityOps::DeleteEntity(m_Ctx, m_Ctx.SelectedEntity);
                 ImGui::EndMenu();
             }
+            RenderNativeScriptsMenu();
+
             if (ImGui::BeginMenu("Janela")) {
                 ImGui::MenuItem("Viewport", nullptr, true, false);
                 ImGui::MenuItem("Hierarquia", nullptr, true, false);
@@ -395,8 +404,81 @@ namespace PrismEditor {
         if (m_PlayWindow.IsOpen())
             return; // ja aberta - o botao vira "Parar" nesse caso, ver RenderDockspace, entao isto nao deveria ser alcancavel na pratica
 
+        // Modulo compilado por fora do editor (ou antes de abrir): garante carregado.
+        if (!Prism::NativeScripting::IsModuleLoaded())
+            Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
+
         GLFWwindow* editorWindow = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow();
         m_PlayWindow.Open(m_Ctx.ActiveScene, editorWindow);
+    }
+
+    void EditorLayer::RenderNativeScriptsMenu() {
+        if (!ImGui::BeginMenu("Scripts C++"))
+            return;
+
+        auto project = Prism::Project::GetActive();
+        bool building = m_NativeBuilder.IsRunning();
+        bool playing = m_PlayWindow.IsOpen();
+
+        if (ImGui::MenuItem("Gerar projeto de scripts", nullptr, false, project && !building)) {
+            std::string message;
+            if (Prism::NativeScripting::GenerateProjectFiles(*project, message))
+                PRISM_INFO(message);
+            else
+                PRISM_ERROR(message);
+        }
+        if (ImGui::MenuItem("Compilar e recarregar", nullptr, false, project && !building && !playing)) {
+            std::string error;
+            if (m_NativeBuilder.Start(*project, error))
+                PRISM_INFO("Compilando scripts C++...");
+            else
+                PRISM_ERROR(error);
+        }
+        if (ImGui::MenuItem("Recarregar modulo", nullptr, false, project && !building && !playing))
+            Prism::NativeScripting::LoadProjectModule(*project);
+
+        ImGui::Separator();
+        if (building)
+            ImGui::TextDisabled("Compilando...");
+        else if (Prism::NativeScripting::IsModuleLoaded())
+            ImGui::TextDisabled("Modulo carregado: %d classe(s)", (int)Prism::NativeScripting::GetClassNames().size());
+        else
+            ImGui::TextDisabled("Nenhum modulo carregado.");
+        if (playing)
+            ImGui::TextDisabled("Pare o Play para recompilar/recarregar.");
+
+        ImGui::EndMenu();
+    }
+
+    void EditorLayer::PollNativeBuild() {
+        std::vector<NativeBuilder::Line> lines;
+        bool justFinished = false;
+        bool success = false;
+        m_NativeBuilder.Poll(lines, justFinished, success);
+
+        for (const auto& line : lines) {
+            if (line.IsError)
+                PRISM_ERROR(line.Text);
+            else
+                PRISM_INFO(line.Text);
+        }
+
+        if (justFinished) {
+            if (success) {
+                PRISM_INFO("Scripts C++ compilados com sucesso.");
+                m_NativeReloadPending = true;
+            }
+            else {
+                PRISM_ERROR("Falha ao compilar os scripts C++ (veja as mensagens acima).");
+            }
+        }
+
+        // Recarrega quando nao ha Play (instancias vivas usam o codigo do modulo).
+        if (m_NativeReloadPending && !m_PlayWindow.IsOpen()) {
+            m_NativeReloadPending = false;
+            if (auto project = Prism::Project::GetActive())
+                Prism::NativeScripting::LoadProjectModule(*project);
+        }
     }
 
     void EditorLayer::OnStopButtonClicked() {

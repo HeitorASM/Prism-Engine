@@ -8,6 +8,7 @@ OpenGL 4.5 Core, com glad como carregador. O `Renderer` é uma API estática enx
 2. **Pré-passe de geometria**: normais em view-space e profundidade, do ponto de vista da câmera (`GeometryBuffer`).
 3. **SSAO**: calcula a oclusão a partir do pré-passe, seguida de blur.
 4. **Passe de cor**: desenha cada entidade com `Transform` + `MeshRenderer`, usando a transform de mundo (`Scene::GetWorldTransform`).
+5. **Partículas** (`Renderer::DrawParticles`): billboards com blend, sem escrever profundidade (mas testando contra a geometria opaca). Ver a seção "Partículas".
 
 Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 
@@ -73,6 +74,15 @@ A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, 
 ## SSAO
 
 16 amostras hemisféricas, textura de ruído e blur por box filter. O resultado multiplica o termo de luz ambiente.
+
+## Partículas
+
+`ParticleEmitterComponent` configura o emissor; `ParticleSystem` (`Particles/`) simula na CPU, por cena, e guarda o estado fora do arquivo de cena. Roda no Play (`Scene::OnUpdate`) e, no editor, anima como preview a entidade selecionada.
+
+- Emissão em cone ao redor do eixo +Y local da entidade (gire a entidade para apontar o jato), com `EmissionRate`, `BurstCount`, vida/velocidade aleatórias entre mínimo e máximo, gravidade e tamanho/cor interpolados ao longo da vida. As partículas vivem em espaço de mundo.
+- Desenho: um quad por partícula gerado no vertex shader (`particle.vert`), lendo posição/tamanho/cor de um SSBO reescrito por emissor; um VAO vazio por contexto (por isso funciona na janela de Play). `Additive` soma luz (fogo, brilho); sem ele usa alpha normal ordenado de trás para frente.
+- Textura opcional (`TexturePath`, relativa ao projeto); sem ela, um círculo suave procedural. Sem iluminação, sem sombras, sem partículas ocultas pela fumaça de outras (sem *soft particles*).
+- Limite de 10 000 partículas vivas por emissor.
 
 ## Meshes embutidas
 

@@ -30,6 +30,7 @@
 #include <imgui.h>
 #include "../Core/EditorContext.h"
 #include "../Core/SceneDocument.h"
+#include "../Core/NativeBuilder.h"
 #include "../Panels/ViewportPanel.h"
 #include "../Panels/HierarchyPanel.h"
 #include "../Panels/PropertiesPanel.h"
@@ -54,6 +55,10 @@ namespace PrismEditor {
     private:
         void RenderDockspace();
         void RenderMenuBar();
+
+        // Scripts C++ (menu "Scripts C++"): gerar projeto, compilar, recarregar o modulo.
+        void RenderNativeScriptsMenu();
+        void PollNativeBuild();
 
         // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
         // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
@@ -113,6 +118,12 @@ namespace PrismEditor {
         // fecham; OnUpdate() e chamado uma vez por frame (ver
         // EditorLayer::OnUpdate) enquanto m_PlayWindow.IsOpen().
         PrismEditor::PlayWindow m_PlayWindow;
+
+        // Compilacao do modulo de scripts C++ (thread de fundo, ver
+        // Core/NativeBuilder.h). Terminou durante o Play => o modulo so e
+        // recarregado quando o Play fechar (as instancias usam o codigo antigo).
+        NativeBuilder m_NativeBuilder;
+        bool m_NativeReloadPending = false;
     };
 
 }

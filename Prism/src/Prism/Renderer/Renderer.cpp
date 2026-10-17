@@ -6,6 +6,7 @@
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
+#include "../Particles/ParticleSystem.h"
 #include "../Assets/ModelLoader.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
@@ -20,6 +21,8 @@ namespace Prism {
 
     Ref<Shader> Renderer::s_BasicShader = nullptr;
     Ref<Shader> Renderer::s_LineShader = nullptr;
+    Ref<Shader> Renderer::s_ParticleShader = nullptr;
+    uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_ShadowDepthShader = nullptr;
     Scope<ShadowMap> Renderer::s_ShadowMap = nullptr;
     uint32_t Renderer::s_ShadowCasterEntityId = 0;
@@ -122,6 +125,8 @@ namespace Prism {
         upload(PrimitiveMesh::Plane, PrimitiveMeshFactory::CreatePlane());
 
         s_LineShader = loadShader("Line", "line.vert", "line.frag");
+        s_ParticleShader = loadShader("Particle", "particle.vert", "particle.frag");
+        glCreateBuffers(1, &s_ParticleSSBO);
         s_ShadowDepthShader = loadShader("ShadowDepth", "shadow_depth.vert", "shadow_depth.frag");
         // s_ShadowMap NAO e criado aqui de proposito - ver comentario em
         // Renderer.h (s_ShadowMap) sobre alocacao sob demanda.
@@ -166,7 +171,7 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ShadowDepthShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_ShadowDepthShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
@@ -178,6 +183,8 @@ namespace Prism {
             mesh.reset();
         s_BasicShader.reset();
         s_LineShader.reset();
+        s_ParticleShader.reset();
+        if (s_ParticleSSBO) { glDeleteBuffers(1, &s_ParticleSSBO); s_ParticleSSBO = 0; }
         s_ShadowDepthShader.reset();
         s_ShadowMap.reset();
         s_GeometryPrePassShader.reset();
@@ -1100,6 +1107,102 @@ namespace Prism {
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao, material);
+        }
+
+        // Particulas por ultimo: blend + sem escrita de profundidade, testando
+        // contra a profundidade da geometria opaca ja desenhada.
+        DrawParticles(scene, view, projection);
+    }
+
+    void Renderer::DrawParticles(Scene& scene, const float* view, const float* projection) {
+        if (!s_ParticleShader || s_ParticleSSBO == 0)
+            return;
+
+        auto emitters = scene.GetRegistry().view<ParticleEmitterComponent>();
+        if (emitters.begin() == emitters.end())
+            return;
+
+        glm::mat4 viewMatrix = glm::make_mat4(view);
+        glm::mat4 viewProjection = glm::make_mat4(projection) * viewMatrix;
+        // Eixos da camera no mundo = linhas da matriz de view (rotacao ortonormal).
+        glm::vec3 cameraRight(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+        glm::vec3 cameraUp(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+        glm::vec3 cameraPosition(s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
+
+        struct GPUParticle {
+            glm::vec4 PositionSize;
+            glm::vec4 Color;
+        };
+        std::vector<GPUParticle> gpuParticles;
+        std::vector<std::pair<float, uint32_t>> order; // (distancia^2, indice) para ordenar o blend normal
+
+        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        bool shaderBound = false;
+
+        for (auto handle : emitters) {
+            const std::vector<Particle>* particles = ParticleSystem::GetParticles(scene, handle);
+            if (!particles || particles->empty())
+                continue;
+            const auto& emitter = emitters.get<ParticleEmitterComponent>(handle);
+
+            if (!shaderBound) {
+                glEnable(GL_BLEND);
+                glDepthMask(GL_FALSE);
+                glDisable(GL_CULL_FACE);
+                glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
+                s_ParticleShader->Bind();
+                s_ParticleShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
+                s_ParticleShader->SetFloat3("u_CameraRight", cameraRight.x, cameraRight.y, cameraRight.z);
+                s_ParticleShader->SetFloat3("u_CameraUp", cameraUp.x, cameraUp.y, cameraUp.z);
+                s_ParticleShader->SetInt("u_Texture", 0);
+                shaderBound = true;
+            }
+
+            // Ordem de desenho: aditivo nao depende dela; alpha normal vai de tras para frente.
+            order.clear();
+            order.reserve(particles->size());
+            for (uint32_t i = 0; i < (uint32_t)particles->size(); i++) {
+                glm::vec3 delta = (*particles)[i].Position - cameraPosition;
+                order.emplace_back(glm::dot(delta, delta), i);
+            }
+            if (!emitter.Additive)
+                std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+
+            gpuParticles.clear();
+            gpuParticles.reserve(order.size());
+            for (const auto& entry : order) {
+                const Particle& particle = (*particles)[entry.second];
+                float t = std::min(std::max(particle.Age / particle.Lifetime, 0.0f), 1.0f);
+                float size = emitter.SizeStart + (emitter.SizeEnd - emitter.SizeStart) * t;
+                glm::vec4 color = glm::mix(emitter.ColorStart, emitter.ColorEnd, t);
+                gpuParticles.push_back({ glm::vec4(particle.Position, size), color });
+            }
+
+            glNamedBufferData(s_ParticleSSBO, (GLsizeiptr)(gpuParticles.size() * sizeof(GPUParticle)), gpuParticles.data(), GL_STREAM_DRAW);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ParticleSSBO);
+
+            if (emitter.Additive)
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            else
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
+            bool useTexture = texture && texture->IsValid();
+            if (useTexture)
+                texture->Bind(0);
+            s_ParticleShader->SetInt("u_UseTexture", useTexture ? 1 : 0);
+
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)gpuParticles.size());
+        }
+
+        if (shaderBound) {
+            glBindVertexArray(0);
+            s_ParticleShader->Unbind();
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            if (cullWasEnabled)
+                glEnable(GL_CULL_FACE);
         }
     }
 

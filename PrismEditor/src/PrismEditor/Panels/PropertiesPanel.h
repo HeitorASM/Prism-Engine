@@ -64,6 +64,8 @@ namespace PrismEditor {
         void DrawCameraUI();
         void DrawScriptUI();
         void DrawAudioSourceUI();
+        void DrawNativeScriptUI();
+        void DrawParticleEmitterUI();
         void DrawAudioListenerUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
@@ -154,6 +156,15 @@ namespace PrismEditor {
         Prism::CameraComponent m_CameraBeforeEdit;
         Prism::RaycastComponent m_RaycastBeforeEdit;
         Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
+        Prism::ScriptComponent m_ScriptBeforeEdit;
+        Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
+        Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
+
+        // Cache das variaveis publicas (tabela `Properties`) do script
+        // selecionado: relido so quando o arquivo ou o caminho mudam.
+        std::string m_ScriptPropsPath;
+        std::filesystem::file_time_type m_ScriptPropsTime{};
+        std::vector<Prism::ScriptPropertyValue> m_ScriptPropsDefaults;
 
         // Estado do popup modal "Novo Script" (mesmo padrao de
         // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao

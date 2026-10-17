@@ -13,7 +13,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
 - Iluminação PBR multi-luz (Point/Spot/Directional) com roughness/metallic, normal map, sombras direcionais e SSAO
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
-- Scripting em Lua 
+- Scripting em Lua com acesso a transform, física, input, raycast e áudio
 - Áudio (miniaudio): Audio Source/Listener com som 3D
 - Modo Play em janela separada, rodando uma cópia da cena
 - Mapas (`.prismmap`), prefabs (`.prismprefab`) e materiais (`.prismmat`)
@@ -64,6 +64,7 @@ docs/             documentação detalhada
 - [Arquitetura](docs/arquitetura.md)
 - [Editor](docs/editor.md)
 - [Scripting Lua](docs/scripting-lua.md)
+- [Scripting C++](docs/scripting-cpp.md)
 - [Física](docs/fisica.md)
 - [Renderização](docs/renderizacao.md)
 - [Áudio](docs/audio.md)
@@ -79,13 +80,13 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 
 - [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp), com um material por submesh e texturas embutidas extraídas
 - [x] Áudio: Audio Source/Listener, som 3D, API Lua (miniaudio; ver [docs/audio.md](docs/audio.md))
-- [ ] API de scripting Lua mais completa
-- [ ] Scripts em C++ (módulo nativo com hot reload)
+- [x] API de scripting Lua mais completa (colisão/trigger, `Properties`, `Time`, `Scene`)
+- [x] Scripts em C++ (módulo nativo DLL/.so; ver [docs/scripting-cpp.md](docs/scripting-cpp.md)); falta hot reload durante o Play
 - [ ] BSP/CSG e ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
 - [ ] Reflexão de ambiente com IBL de verdade (skybox HDR, irradiance/prefiltered maps)
-- [ ] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
+- [x] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
 - [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger
 - [ ] Vínculo vivo entre instâncias e seus prefabs/materiais

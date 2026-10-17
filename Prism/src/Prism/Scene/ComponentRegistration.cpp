@@ -215,14 +215,94 @@ namespace Prism {
         Register<ScriptComponent>(
             "Script",
             [](std::ofstream& out, Entity e) {
-                WriteString(out, e.GetComponent<ScriptComponent>().ScriptPath);
+                auto& c = e.GetComponent<ScriptComponent>();
+                WriteString(out, c.ScriptPath);
+                // v16: overrides das variaveis publicas.
+                uint32_t count = (uint32_t)c.Properties.size();
+                WriteRaw(out, count);
+                for (const ScriptPropertyValue& property : c.Properties) {
+                    WriteString(out, property.Name);
+                    WriteRaw(out, property.Type);
+                    WriteRaw(out, property.Number);
+                    WriteRaw(out, property.Bool);
+                    WriteString(out, property.String);
+                }
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ScriptComponent>();
-                if (!ReadString(in, c.ScriptPath)) {
+                uint32_t count = 0;
+                if (!(ReadString(in, c.ScriptPath) && ReadRaw(in, count)) || count > 4096) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script da entidade ", entityIndex, ").");
                     return false;
                 }
+                c.Properties.resize(count);
+                for (ScriptPropertyValue& property : c.Properties) {
+                    if (!(ReadString(in, property.Name) && ReadRaw(in, property.Type) && ReadRaw(in, property.Number)
+                        && ReadRaw(in, property.Bool) && ReadString(in, property.String))) {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (variaveis do script da entidade ", entityIndex, ").");
+                        return false;
+                    }
+                }
+                return true;
+            }
+        );
+
+        // --- NativeScriptComponent (v17) -------------------------------------------
+        Register<NativeScriptComponent>(
+            "Native Script",
+            [](std::ofstream& out, Entity e) {
+                WriteString(out, e.GetComponent<NativeScriptComponent>().ClassName);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<NativeScriptComponent>();
+                if (!ReadString(in, c.ClassName)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script nativo da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+
+        // --- ParticleEmitterComponent (v18) ----------------------------------------
+        Register<ParticleEmitterComponent>(
+            "Particle Emitter",
+            [](std::ofstream& out, Entity e) {
+                auto& c = e.GetComponent<ParticleEmitterComponent>();
+                WriteRaw(out, c.Enabled);
+                WriteRaw(out, c.PlayOnStart);
+                WriteRaw(out, c.Loop);
+                WriteRaw(out, c.Duration);
+                WriteRaw(out, c.MaxParticles);
+                WriteRaw(out, c.EmissionRate);
+                WriteRaw(out, c.BurstCount);
+                WriteRaw(out, c.LifetimeMin);
+                WriteRaw(out, c.LifetimeMax);
+                WriteRaw(out, c.SpeedMin);
+                WriteRaw(out, c.SpeedMax);
+                WriteRaw(out, c.SpreadAngle);
+                WriteRaw(out, c.GravityScale);
+                WriteRaw(out, c.SizeStart);
+                WriteRaw(out, c.SizeEnd);
+                WriteRaw(out, c.ColorStart);
+                WriteRaw(out, c.ColorEnd);
+                WriteRaw(out, c.Additive);
+                WriteString(out, c.TexturePath);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<ParticleEmitterComponent>();
+                bool ok = ReadRaw(in, c.Enabled) && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Loop)
+                    && ReadRaw(in, c.Duration) && ReadRaw(in, c.MaxParticles) && ReadRaw(in, c.EmissionRate)
+                    && ReadRaw(in, c.BurstCount) && ReadRaw(in, c.LifetimeMin) && ReadRaw(in, c.LifetimeMax)
+                    && ReadRaw(in, c.SpeedMin) && ReadRaw(in, c.SpeedMax) && ReadRaw(in, c.SpreadAngle)
+                    && ReadRaw(in, c.GravityScale) && ReadRaw(in, c.SizeStart) && ReadRaw(in, c.SizeEnd)
+                    && ReadRaw(in, c.ColorStart) && ReadRaw(in, c.ColorEnd) && ReadRaw(in, c.Additive)
+                    && ReadString(in, c.TexturePath);
+                if (!ok) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (emissor de particulas da entidade ", entityIndex, ").");
+                    return false;
+                }
+                // Limites: um arquivo editado a mao nao pode pedir milhoes de particulas.
+                c.MaxParticles = std::min<uint32_t>(std::max<uint32_t>(c.MaxParticles, 1u), 10000u);
                 return true;
             }
         );

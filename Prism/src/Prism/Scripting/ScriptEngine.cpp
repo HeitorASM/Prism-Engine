@@ -6,13 +6,45 @@
 #include "../Core/Input.h"
 #include "../Audio/AudioEngine.h"
 #include "../Project/Project.h"
+#include "../Scene/PrefabSerializer.h"
+#include "NativeScripting.h"
+#include "../Particles/ParticleSystem.h"
 #include "../Core/Log.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <vector>
 
 namespace Prism {
+
+    namespace {
+        // Poe "em jogo" uma entidade criada durante o Play (Scene.Instantiate):
+        // o que Scene::OnScriptsStart faz para as entidades originais -
+        // corpo fisico, audio PlayOnStart e script (OnCreate) - para ela e
+        // toda a sua subarvore.
+        void ActivateRuntimeEntity(Scene& scene, Entity entity) {
+            PhysicsEngine::CreateBodyForEntity(scene, entity);
+            if (entity.HasComponent<AudioSourceComponent>() && entity.GetComponent<AudioSourceComponent>().PlayOnStart)
+                AudioEngine::PlayEntity(entity);
+            if (entity.HasComponent<NativeScriptComponent>())
+                NativeScripting::LoadScript(entity);
+            if (entity.HasComponent<ScriptComponent>()) {
+                const std::string& scriptPath = entity.GetComponent<ScriptComponent>().ScriptPath;
+                auto project = Project::GetActive();
+                if (!scriptPath.empty() && project)
+                    ScriptEngine::LoadScript(entity, project->GetScriptDirectory() / scriptPath);
+            }
+            // Copia dos filhos antes de recursar: o OnCreate de um script pode mexer na hierarquia.
+            std::vector<Entity> children;
+            for (size_t i = 0; i < entity.GetChildCount(); i++)
+                children.push_back(entity.GetChildAt(i));
+            for (Entity& child : children)
+                if (child.IsValid())
+                    ActivateRuntimeEntity(scene, child);
+        }
+    }
 
     void ScriptEngine::Init() {
         // Uma unica VM Lua para o processo inteiro (nao uma por entidade/
@@ -51,11 +83,95 @@ namespace Prism {
         // escrevem campo por campo (script.Translation.x = 5) em vez de
         // reatribuir o vec3 inteiro toda vez, o que bate com o jeito que
         // sol2 idiomaticamente expoe structs POD.
+        // Operadores (+, -, *, /, unario -, ==), tostring e metodos
+        // (Length, Normalized, Dot, Cross, Distance): permitem escrever
+        //   local dir = (alvo:GetWorldPosition() - entity:GetWorldPosition()):Normalized()
+        //   entity:SetVelocity(dir.x * 5, 0, dir.z * 5)
         lua.new_usertype<glm::vec3>("Vec3",
             sol::constructors<glm::vec3(), glm::vec3(float, float, float)>(),
             "x", &glm::vec3::x,
             "y", &glm::vec3::y,
-            "z", &glm::vec3::z
+            "z", &glm::vec3::z,
+            "Length", [](const glm::vec3& v) { return glm::length(v); },
+            "Normalized", [](const glm::vec3& v) {
+                float length = glm::length(v);
+                return length > 1e-8f ? v / length : glm::vec3(0.0f); // vetor nulo nao vira NaN
+            },
+            "Dot", [](const glm::vec3& a, const glm::vec3& b) { return glm::dot(a, b); },
+            "Cross", [](const glm::vec3& a, const glm::vec3& b) { return glm::cross(a, b); },
+            "Distance", [](const glm::vec3& a, const glm::vec3& b) { return glm::distance(a, b); },
+            sol::meta_function::addition, [](const glm::vec3& a, const glm::vec3& b) { return a + b; },
+            sol::meta_function::subtraction, [](const glm::vec3& a, const glm::vec3& b) { return a - b; },
+            sol::meta_function::multiplication, sol::overload(
+                [](const glm::vec3& v, float s) { return v * s; },
+                [](float s, const glm::vec3& v) { return s * v; }),
+            sol::meta_function::division, [](const glm::vec3& v, float s) { return s != 0.0f ? v / s : glm::vec3(0.0f); },
+            sol::meta_function::unary_minus, [](const glm::vec3& v) { return -v; },
+            sol::meta_function::equal_to, [](const glm::vec3& a, const glm::vec3& b) { return a == b; },
+            sol::meta_function::to_string, [](const glm::vec3& v) {
+                char buffer[96];
+                std::snprintf(buffer, sizeof(buffer), "Vec3(%.3f, %.3f, %.3f)", v.x, v.y, v.z);
+                return std::string(buffer);
+            }
+        );
+
+        // --- Components acessiveis por script ---------------------------------
+        // Obtidos por entity:GetMeshRenderer()/GetMaterial()/GetLight()/
+        // GetCamera()/GetAudioSource() (nil se a entidade nao tiver o
+        // component). Editam o component direto - valem no proximo frame.
+        // (RigidBody de proposito fora: o corpo Jolt so le esses campos ao
+        // ser criado, mudar em runtime nao faria nada.)
+        lua.new_usertype<MeshRendererComponent>("MeshRenderer",
+            "Color", &MeshRendererComponent::Color
+        );
+        lua.new_usertype<MaterialComponent>("Material",
+            "AlbedoTint", &MaterialComponent::AlbedoTint,
+            "RoughnessFactor", &MaterialComponent::RoughnessFactor,
+            "MetallicFactor", &MaterialComponent::MetallicFactor,
+            "AlbedoPath", &MaterialComponent::AlbedoPath,
+            "NormalPath", &MaterialComponent::NormalPath,
+            "RoughnessMetallicPath", &MaterialComponent::RoughnessMetallicPath
+        );
+        lua.new_usertype<LightComponent>("Light",
+            "Color", &LightComponent::Color,
+            "Intensity", &LightComponent::Intensity,
+            "Range", &LightComponent::Range,
+            "SpotAngle", &LightComponent::SpotAngle,
+            "InnerSpotAngle", &LightComponent::InnerSpotAngle
+        );
+        lua.new_usertype<CameraComponent>("Camera",
+            "FOV", &CameraComponent::FOV,
+            "OrthoSize", &CameraComponent::OrthoSize,
+            "NearClip", &CameraComponent::NearClip,
+            "FarClip", &CameraComponent::FarClip,
+            "Primary", &CameraComponent::Primary
+        );
+        lua.new_usertype<ParticleEmitterComponent>("ParticleEmitter",
+            "Enabled", &ParticleEmitterComponent::Enabled,
+            "Loop", &ParticleEmitterComponent::Loop,
+            "Additive", &ParticleEmitterComponent::Additive,
+            "Duration", &ParticleEmitterComponent::Duration,
+            "EmissionRate", &ParticleEmitterComponent::EmissionRate,
+            "BurstCount", &ParticleEmitterComponent::BurstCount,
+            "LifetimeMin", &ParticleEmitterComponent::LifetimeMin,
+            "LifetimeMax", &ParticleEmitterComponent::LifetimeMax,
+            "SpeedMin", &ParticleEmitterComponent::SpeedMin,
+            "SpeedMax", &ParticleEmitterComponent::SpeedMax,
+            "SpreadAngle", &ParticleEmitterComponent::SpreadAngle,
+            "GravityScale", &ParticleEmitterComponent::GravityScale,
+            "SizeStart", &ParticleEmitterComponent::SizeStart,
+            "SizeEnd", &ParticleEmitterComponent::SizeEnd,
+            // vec4 nao e um usertype: cores por funcao (r, g, b, a de 0 a 1).
+            "SetColorStart", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorStart = { r, g, b, a }; },
+            "SetColorEnd", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorEnd = { r, g, b, a }; }
+        );
+        lua.new_usertype<AudioSourceComponent>("AudioSource",
+            "Volume", &AudioSourceComponent::Volume,
+            "Pitch", &AudioSourceComponent::Pitch,
+            "Loop", &AudioSourceComponent::Loop,
+            "Spatial", &AudioSourceComponent::Spatial,
+            "MinDistance", &AudioSourceComponent::MinDistance,
+            "MaxDistance", &AudioSourceComponent::MaxDistance
         );
 
         // --- TransformComponent -----------------------------------------
@@ -179,6 +295,37 @@ namespace Prism {
             "GetChildCount", [](Entity& e) -> size_t { return e.GetChildCount(); },
             "GetChildAt", [](Entity& e, size_t index) -> Entity { return e.GetChildAt(index); },
             "GetChild", [](Entity& e, const std::string& name) -> Entity { return e.GetChild(name); },
+            // --- Componentes (nil se a entidade nao tiver) -------------------
+            "GetMeshRenderer", [](Entity& e) -> MeshRendererComponent* { return e.HasComponent<MeshRendererComponent>() ? &e.GetComponent<MeshRendererComponent>() : nullptr; },
+            "GetMaterial", [](Entity& e) -> MaterialComponent* { return e.HasComponent<MaterialComponent>() ? &e.GetComponent<MaterialComponent>() : nullptr; },
+            "GetLight", [](Entity& e) -> LightComponent* { return e.HasComponent<LightComponent>() ? &e.GetComponent<LightComponent>() : nullptr; },
+            "GetCamera", [](Entity& e) -> CameraComponent* { return e.HasComponent<CameraComponent>() ? &e.GetComponent<CameraComponent>() : nullptr; },
+            "GetAudioSource", [](Entity& e) -> AudioSourceComponent* { return e.HasComponent<AudioSourceComponent>() ? &e.GetComponent<AudioSourceComponent>() : nullptr; },
+            "GetParticleEmitter", [](Entity& e) -> ParticleEmitterComponent* { return e.HasComponent<ParticleEmitterComponent>() ? &e.GetComponent<ParticleEmitterComponent>() : nullptr; },
+            // Particulas: PlayParticles reinicia (e solta o burst); StopParticles
+            // para de emitir (as vivas terminam); ClearParticles remove tudo.
+            "PlayParticles", [](Entity& e) { ParticleSystem::Play(e); },
+            "StopParticles", [](Entity& e) { ParticleSystem::Stop(e); },
+            "ClearParticles", [](Entity& e) { ParticleSystem::Clear(e); },
+            "IsParticlesPlaying", [](Entity& e) { return ParticleSystem::IsPlaying(e); },
+            "GetParticleCount", [](Entity& e) { return ParticleSystem::GetAliveCount(e); },
+            // --- Edicao basica -----------------------------------------------
+            "SetName", [](Entity& e, const std::string& name) { e.GetComponent<TagComponent>().Tag = name; },
+            "SetRotation", [](Entity& e, float x, float y, float z) { e.GetComponent<TransformComponent>().Rotation = { x, y, z }; }, // graus
+            "SetScale", [](Entity& e, float x, float y, float z) { e.GetComponent<TransformComponent>().Scale = { x, y, z }; },
+            // Pai invalido (ex: o resultado de Scene.Find que nao achou) vira raiz.
+            "SetParent", [](Entity& e, Entity parent) { e.GetScene()->SetParent(e, parent); },
+            // Destruicao adiada para o fim do frame (ver ScriptEngine::QueueDestroy).
+            "Destroy", [](Entity& e) { QueueDestroy(e); },
+            // O "ambiente" do script desta entidade (suas funcoes/variaveis
+            // globais), para scripts conversarem: Scene.Find("Inimigo"):GetScript().TomarDano(10).
+            // nil se a entidade nao tem script rodando.
+            "GetScript", [](Entity& e) -> sol::object {
+                auto found = s_LoadedScripts.find(ScriptKey{ e.GetScene(), (uint32_t)e.GetHandle() });
+                if (found == s_LoadedScripts.end())
+                    return sol::make_object(*s_Lua, sol::lua_nil);
+                return sol::make_object(*s_Lua, found->second.Instance);
+            },
             "IsValid", [](Entity& e) -> bool { return e.IsValid(); },
             // --- Audio (AudioSourceComponent) ---------------------------------
             // So funcionam em entidades com Audio Source; sem ele, silenciosas.
@@ -328,6 +475,107 @@ namespace Prism {
         audioTable["GetMasterVolume"] = []() { return AudioEngine::GetMasterVolume(); };
         lua["Audio"] = audioTable;
 
+        // --- print -----------------------------------------------------
+        // print() do Lua escreve na saida padrao do processo (invisivel no
+        // editor) - redireciona para o Console, como log().
+        lua["print"] = [](sol::this_state state, sol::variadic_args args) {
+            sol::state_view view(state);
+            sol::function toString = view["tostring"];
+            std::string message;
+            for (auto argument : args) {
+                if (!message.empty())
+                    message += "\t";
+                message += toString(argument).get<std::string>();
+            }
+            Log::AppLog(LogLevel::Info, "[Lua] ", message);
+        };
+
+        // --- Time ------------------------------------------------------
+        //   Time.DeltaTime()   segundos do ultimo frame (o mesmo de OnUpdate(dt))
+        //   Time.Elapsed()     segundos desde o inicio do Play
+        //   Time.FrameCount()  frames desde o inicio do Play
+        sol::table timeTable = lua.create_table();
+        timeTable["DeltaTime"] = []() { return s_DeltaTime; };
+        timeTable["Elapsed"] = []() { return s_Elapsed; };
+        timeTable["FrameCount"] = []() { return s_FrameCount; };
+        lua["Time"] = timeTable;
+
+        // --- Mathf -----------------------------------------------------
+        sol::table mathfTable = lua.create_table();
+        mathfTable["Clamp"] = [](float value, float low, float high) { return std::clamp(value, low, high); };
+        mathfTable["Lerp"] = [](float a, float b, float t) { return a + (b - a) * t; };
+        mathfTable["Sign"] = [](float value) { return value < 0.0f ? -1.0f : 1.0f; };
+        lua["Mathf"] = mathfTable;
+
+        // --- Scene -----------------------------------------------------
+        // Consultas e criacao na cena do script que chamou (nunca de outra).
+        //   Scene.Find("Jogador")                      -> Entity (checar :IsValid())
+        //   Scene.FindAll("Moeda")                     -> tabela de Entity
+        //   Scene.Create("Vazio")                      -> Entity so com Transform
+        //   Scene.CreateMesh("Caixa", "Cube", x, y, z) -> Entity visivel (Cube/Sphere/Capsule/Cylinder/Plane)
+        //   Scene.Instantiate("Assets/Prefabs/Bala.prismprefab", Vec3.new(0, 1, 0))
+        //   Scene.Destroy(entidade)                    -> destruida no fim do frame
+        auto callerScene = [](sol::this_environment thisEnv) -> Scene* {
+            if (!thisEnv.env)
+                return nullptr;
+            sol::environment& env = *thisEnv.env;
+            Entity caller = env["entity"];
+            return caller ? caller.GetScene() : nullptr;
+        };
+        sol::table sceneTable = lua.create_table();
+        sceneTable["Find"] = [callerScene](sol::this_environment thisEnv, const std::string& name) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            auto view = scene->GetRegistry().view<TagComponent>();
+            for (auto handle : view) {
+                if (view.get<TagComponent>(handle).Tag == name)
+                    return Entity(handle, scene);
+            }
+            return Entity();
+        };
+        sceneTable["FindAll"] = [callerScene](sol::this_environment thisEnv, sol::this_state state, const std::string& name) -> sol::table {
+            sol::state_view view(state);
+            sol::table result = view.create_table();
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return result;
+            int index = 1;
+            auto tags = scene->GetRegistry().view<TagComponent>();
+            for (auto handle : tags) {
+                if (tags.get<TagComponent>(handle).Tag == name)
+                    result[index++] = Entity(handle, scene);
+            }
+            return result;
+        };
+        sceneTable["Create"] = [callerScene](sol::this_environment thisEnv, const std::string& name) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            return scene ? scene->CreateEntity(name) : Entity();
+        };
+        sceneTable["CreateMesh"] = [callerScene](sol::this_environment thisEnv, const std::string& name, const std::string& primitive,
+                                                  sol::optional<float> x, sol::optional<float> y, sol::optional<float> z) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            Entity created = scene->CreateEntity(name);
+            auto& meshRenderer = created.AddComponent<MeshRendererComponent>();
+            if (primitive == "Sphere") meshRenderer.Mesh = PrimitiveMesh::Sphere;
+            else if (primitive == "Capsule") meshRenderer.Mesh = PrimitiveMesh::Capsule;
+            else if (primitive == "Cylinder") meshRenderer.Mesh = PrimitiveMesh::Cylinder;
+            else if (primitive == "Plane") meshRenderer.Mesh = PrimitiveMesh::Plane;
+            else meshRenderer.Mesh = PrimitiveMesh::Cube;
+            created.GetComponent<TransformComponent>().Translation = { x.value_or(0.0f), y.value_or(0.0f), z.value_or(0.0f) };
+            return created;
+        };
+        sceneTable["Instantiate"] = [callerScene](sol::this_environment thisEnv, const std::string& relativePath, sol::optional<glm::vec3> position) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            return InstantiateRuntime(*scene, relativePath, position.has_value() ? &*position : nullptr);
+        };
+        sceneTable["Destroy"] = [](Entity entity) { QueueDestroy(entity); };
+        lua["Scene"] = sceneTable;
+
         // --- Input -----------------------------------------------------
         // Tabela global `Input` (polling - ver Core/Input.h para o porque
         // deste modelo em vez de callbacks/eventos) + tabela `Key` com
@@ -400,12 +648,22 @@ namespace Prism {
             std::string name(1, c);
             keyTable[name] = (int)Key::D0 + (c - '0');
         }
+        // Teclas de funcao (GLFW_KEY_F1 = 290 ... F12 = 301) e extras do enum.
+        for (int i = 1; i <= 12; i++)
+            keyTable["F" + std::to_string(i)] = 289 + i;
+        keyTable["Backspace"] = (int)Key::Backspace;
+        keyTable["LeftAlt"] = (int)Key::LeftAlt;
+        keyTable["RightShift"] = (int)Key::RightShift;
+        keyTable["RightControl"] = (int)Key::RightControl;
+        keyTable["RightAlt"] = (int)Key::RightAlt;
         lua["Key"] = keyTable;
 
-        // TODO: expor callbacks OnCollisionEnter/OnCollisionExit chamados
-        // pelo PhysicsEngine::Simulate quando ocorrem eventos de contato
-        // do Jolt envolvendo esta entidade (ver o TODO em
-        // PhysicsEngine::Simulate, no bloco de eventos de colisao).
+        // Botoes do mouse para Input.IsMouseButtonDown(Mouse.Left).
+        sol::table mouseTable = lua.create_table();
+        mouseTable["Left"] = (int)MouseButton::Left;
+        mouseTable["Right"] = (int)MouseButton::Right;
+        mouseTable["Middle"] = (int)MouseButton::Middle;
+        lua["Mouse"] = mouseTable;
     }
 
     bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {
@@ -484,6 +742,10 @@ namespace Prism {
         loaded.OnCreate = env["OnCreate"];
         loaded.OnUpdate = env["OnUpdate"];
         loaded.OnDestroy = env["OnDestroy"];
+        loaded.OnCollisionEnter = env["OnCollisionEnter"];
+        loaded.OnCollisionExit = env["OnCollisionExit"];
+        loaded.OnTriggerEnter = env["OnTriggerEnter"];
+        loaded.OnTriggerExit = env["OnTriggerExit"];
 
         s_LoadedScripts[key] = std::move(loaded);
 
@@ -492,6 +754,26 @@ namespace Prism {
         // dentro do seu environment - mais simples para quem esta
         // comecando a escrever scripts do que exigir OnCreate(self).
         env["entity"] = entity;
+
+        // Variaveis publicas: aplica os valores editados no painel sobre a
+        // tabela `Properties` do script (so chaves que o script declara, com
+        // o mesmo tipo - o resto e ignorado), ANTES do OnCreate.
+        if (entity.HasComponent<ScriptComponent>()) {
+            const auto& overrides = entity.GetComponent<ScriptComponent>().Properties;
+            sol::object propertiesObject = env["Properties"];
+            if (!overrides.empty() && propertiesObject.is<sol::table>()) {
+                sol::table properties = propertiesObject;
+                for (const ScriptPropertyValue& value : overrides) {
+                    sol::type existing = properties[value.Name].get_type();
+                    if (value.Type == ScriptPropertyType::Number && existing == sol::type::number)
+                        properties[value.Name] = value.Number;
+                    else if (value.Type == ScriptPropertyType::Bool && existing == sol::type::boolean)
+                        properties[value.Name] = value.Bool;
+                    else if (value.Type == ScriptPropertyType::String && existing == sol::type::string)
+                        properties[value.Name] = value.String;
+                }
+            }
+        }
 
         LoadedScript& script = s_LoadedScripts[key];
         if (script.OnCreate.valid()) {
@@ -570,6 +852,136 @@ namespace Prism {
         }
 
         s_LoadedScripts.clear();
+        NativeScripting::UnloadAll(); // mesma regra para os scripts em C++
+    }
+
+    Entity ScriptEngine::InstantiateRuntime(Scene& scene, const std::string& relativePath, const glm::vec3* position) {
+        auto project = Project::GetActive();
+        if (!project)
+            return Entity();
+        std::filesystem::path absolutePath = project->GetProjectDirectory() / relativePath;
+        Entity root = PrefabSerializer::Instantiate(scene, absolutePath);
+        if (!root.IsValid()) {
+            Log::AppLog(LogLevel::Error, "Instantiate: nao foi possivel instanciar '", relativePath, "'.");
+            return Entity();
+        }
+        if (position)
+            root.GetComponent<TransformComponent>().Translation = *position;
+        ActivateRuntimeEntity(scene, root);
+        return root;
+    }
+
+    void ScriptEngine::ResetTime() {
+        s_DeltaTime = 0.0f;
+        s_Elapsed = 0.0;
+        s_FrameCount = 0;
+        s_PendingDestroy.clear();
+    }
+
+    void ScriptEngine::BeginFrame(float deltaTime) {
+        s_DeltaTime = deltaTime;
+        s_Elapsed += deltaTime;
+        s_FrameCount++;
+    }
+
+    void ScriptEngine::DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger) {
+        NativeScripting::DispatchContactEvent(self, other, enter, trigger);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError)
+            return;
+
+        sol::protected_function& callback = trigger
+            ? (enter ? script.OnTriggerEnter : script.OnTriggerExit)
+            : (enter ? script.OnCollisionEnter : script.OnCollisionExit);
+        if (!callback.valid())
+            return;
+
+        sol::protected_function_result result = callback(other);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em callback de colisao/trigger: ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::QueueDestroy(Entity entity) {
+        if (!entity.IsValid())
+            return;
+        for (const PendingDestroy& pending : s_PendingDestroy)
+            if (pending.SceneKey == entity.GetScene() && pending.Handle == entity.GetHandle())
+                return; // ja na fila
+        s_PendingDestroy.push_back({ entity.GetScene(), entity.GetHandle() });
+    }
+
+    void ScriptEngine::FlushDestroyQueue(Scene& scene) {
+        // Move para fora: OnDestroy de um script pode enfileirar mais pedidos.
+        std::vector<PendingDestroy> pending;
+        pending.swap(s_PendingDestroy);
+        for (const PendingDestroy& item : pending) {
+            if (item.SceneKey != &scene)
+                continue;
+            Entity entity(item.Handle, &scene);
+            if (entity.IsValid()) // pode ja ter sido destruida como filha de outra
+                scene.DestroyEntity(entity);
+        }
+    }
+
+    std::vector<ScriptPropertyValue> ScriptEngine::ReadScriptProperties(const std::filesystem::path& scriptAbsolutePath) {
+        std::vector<ScriptPropertyValue> result;
+        if (!s_Lua)
+            return result;
+
+        std::ifstream file(scriptAbsolutePath);
+        if (!file.is_open())
+            return result;
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+
+        sol::load_result loadResult = s_Lua->load(buffer.str(), scriptAbsolutePath.string());
+        if (!loadResult.valid())
+            return result;
+
+        // Ambiente descartavel com entity = nil: so o corpo do arquivo roda
+        // (OnCreate nao), e erros sao ignorados - o painel so quer os padroes.
+        sol::environment env(*s_Lua, sol::create, s_Lua->globals());
+        env["entity"] = sol::lua_nil;
+        sol::protected_function chunk = loadResult;
+        sol::set_environment(env, chunk);
+        sol::protected_function_result run = chunk();
+        if (!run.valid())
+            return result;
+
+        sol::object propertiesObject = env["Properties"];
+        if (!propertiesObject.is<sol::table>())
+            return result;
+        sol::table properties = propertiesObject;
+        for (auto& [keyObject, valueObject] : properties) {
+            if (keyObject.get_type() != sol::type::string)
+                continue;
+            ScriptPropertyValue value;
+            value.Name = keyObject.as<std::string>();
+            if (valueObject.get_type() == sol::type::number) {
+                value.Type = ScriptPropertyType::Number;
+                value.Number = valueObject.as<double>();
+            } else if (valueObject.get_type() == sol::type::boolean) {
+                value.Type = ScriptPropertyType::Bool;
+                value.Bool = valueObject.as<bool>();
+            } else if (valueObject.get_type() == sol::type::string) {
+                value.Type = ScriptPropertyType::String;
+                value.String = valueObject.as<std::string>();
+            } else {
+                continue;
+            }
+            result.push_back(std::move(value));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const ScriptPropertyValue& a, const ScriptPropertyValue& b) { return a.Name < b.Name; });
+        return result;
     }
 
 }

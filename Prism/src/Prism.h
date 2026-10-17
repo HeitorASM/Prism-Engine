@@ -33,6 +33,8 @@
 #include "Prism/Scene/PrefabSyncer.h"
 #include "Prism/Scene/MaterialSerializer.h"
 #include "Prism/Scripting/ScriptEngine.h"
+#include "Prism/Scripting/NativeScripting.h"
+#include "Prism/Particles/ParticleSystem.h"
 #include "Prism/Physics/PhysicsEngine.h"
 
 // --- Entry Point ---

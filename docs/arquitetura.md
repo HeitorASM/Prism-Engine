@@ -17,7 +17,7 @@ O projeto tem dois alvos CMake:
 | `Layer/` | `Layer`, `LayerStack` |
 | `Renderer/` | `Renderer`, `Shader`, `Mesh`, `PrimitiveMeshFactory`, `Framebuffer`, `Texture`, `ShadowMap`, `SSAO`, `GeometryBuffer`, `GraphicsContext` |
 | `Scene/` | `Scene`, `Entity`, `Components`, `ComponentRegistry`, serializadores |
-| `Scripting/` | `ScriptEngine` (Lua via sol2) |
+| `Scripting/` | `ScriptEngine` (Lua via sol2), `NativeScripting` + `NativeScript.h` (scripts C++ em módulo DLL/.so) |
 | `Physics/` | `PhysicsEngine` (Jolt) |
 | `Audio/` | `AudioEngine` (miniaudio) |
 | `ImGui/` | `ImGuiLayer` |

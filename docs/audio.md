@@ -2,7 +2,7 @@
 
 Backend: [miniaudio](https://github.com/mackron/miniaudio) (`Prism/src/Prism/Audio/AudioEngine`). A mixagem roda numa thread do próprio miniaudio; a engine só cria e atualiza sons pela thread principal. Sem dispositivo de áudio (ou em CI), a engine avisa no log e roda muda.
 
-**Formatos:** `.wav`, `.mp3`, `.flac`. `.ogg` aparece no Content Browser como áudio, mas ainda **não toca**. Converta para `.wav`/`.flac`/`.mp3` por enquanto.
+**Formatos:** `.wav`, `.mp3`, `.flac`. `.ogg` aparece no Content Browser como áudio, mas ainda **não toca** (exigiria compilar o `stb_vorbis` em C junto do miniaudio; veja o roadmap). Converta para `.wav`/`.flac`/`.mp3` por enquanto.
 
 Arquivos maiores que 1 MB (música) são tocados em *streaming*; os menores são decodificados inteiros na memória (efeitos sonoros).
 

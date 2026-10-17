@@ -203,6 +203,10 @@ namespace PrismEditor {
             if (m_HadCamera)
                 m_Camera = entity.GetComponent<Prism::CameraComponent>();
 
+            m_HadNativeScript = entity.HasComponent<Prism::NativeScriptComponent>();
+            if (m_HadNativeScript)
+                m_NativeScript = entity.GetComponent<Prism::NativeScriptComponent>();
+
             m_EntityToDelete = entity;
         }
 
@@ -227,6 +231,8 @@ namespace PrismEditor {
                 entity.AddComponent<Prism::ScriptComponent>() = m_Script;
             if (m_HadCamera)
                 entity.AddComponent<Prism::CameraComponent>() = m_Camera;
+            if (m_HadNativeScript)
+                entity.AddComponent<Prism::NativeScriptComponent>() = m_NativeScript;
             m_EntityToDelete = entity;
         }
 
@@ -251,6 +257,8 @@ namespace PrismEditor {
         Prism::ScriptComponent m_Script;
         bool m_HadCamera = false;
         Prism::CameraComponent m_Camera;
+        bool m_HadNativeScript = false;
+        Prism::NativeScriptComponent m_NativeScript;
     };
 
     // Duplica uma entidade (e toda a sua subarvore de filhos) via

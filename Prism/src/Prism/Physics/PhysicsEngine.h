@@ -150,6 +150,9 @@ namespace Prism {
         // header C++ de terceiros para todo arquivo que inclui Scene.h -
         // o mesmo motivo por tras de ScriptEngine viver separado). Uma
         // entrada por Scene* que esteja atualmente com IsRunning() == true.
+        // Coleta eventos de contato do Jolt (definicao em PhysicsEngine.cpp).
+        class ContactCollector;
+
         struct SceneState {
             // PhysicsSystem e o "mundo" do Jolt. O Jolt exige que o
             // consumidor tambem gerencie um TempAllocator (memoria
@@ -178,6 +181,12 @@ namespace Prism {
             // encontrarem o corpo de uma entidade especifica sem
             // precisar de uma busca linear.
             std::unordered_map<uint32_t, JPH::BodyID> EntityToBody;
+
+            // Ouvinte de contatos registrado no PhysicsSystem, e a contagem
+            // de contatos ativos por PAR de entidades (um par pode ter varios
+            // contatos de sub-shape; Enter so no primeiro, Exit no ultimo).
+            std::unique_ptr<ContactCollector> Contacts;
+            std::unordered_map<uint64_t, int> ContactCounts;
 
             SceneState();
             ~SceneState();

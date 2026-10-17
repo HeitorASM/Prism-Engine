@@ -6,6 +6,7 @@
 #include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
 #include "../Scripting/ScriptEngine.h"
+#include "../Scripting/NativeScripting.h"
 #include <GLFW/glfw3.h>
 
 namespace Prism {
@@ -39,6 +40,7 @@ namespace Prism {
         // uso em OnAttach(), sem precisar se preocupar com a ordem de
         // inicializacao.
         ScriptEngine::Init();
+        NativeScripting::Init();
 
         // Audio (miniaudio): abre o dispositivo de som padrao. Sem
         // dispositivo, so avisa e o jogo roda mudo (ver AudioEngine.h).
@@ -56,6 +58,7 @@ namespace Prism {
         // o resto do shutdown, ele nao chame codigo de uma Layer morta.
         m_CloseRequestHandler = nullptr;
 
+        NativeScripting::Shutdown(); // antes da VM Lua: instancias C++ podem usar a API
         ScriptEngine::Shutdown();
         AudioEngine::Shutdown();
         Renderer::Shutdown();

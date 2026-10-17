@@ -27,6 +27,8 @@
 #include <string>
 #include <unordered_map>
 #include <filesystem>
+#include <vector>
+#include "../Scene/Components.h" // ScriptPropertyValue
 
 namespace Prism {
 
@@ -44,6 +46,13 @@ namespace Prism {
         sol::protected_function OnCreate;
         sol::protected_function OnUpdate;
         sol::protected_function OnDestroy;
+        // Eventos fisicos (ver PhysicsEngine::Simulate): recebem a OUTRA
+        // entidade. Collision* para colisores solidos, Trigger* quando um
+        // dos corpos e um trigger (Collider::IsTrigger).
+        sol::protected_function OnCollisionEnter;
+        sol::protected_function OnCollisionExit;
+        sol::protected_function OnTriggerEnter;
+        sol::protected_function OnTriggerExit;
         bool HasRuntimeError = false; // true apos qualquer chamada falhar - impede spam do mesmo erro todo frame
     };
 
@@ -84,6 +93,38 @@ namespace Prism {
 
         static sol::state& GetLuaState() { return *s_Lua; }
 
+        // --- Tempo (tabela Lua `Time`) --------------------------------------
+        // ResetTime() ao iniciar o Play; BeginFrame() uma vez por frame, antes
+        // de qualquer script rodar (Scene::OnUpdate).
+        static void ResetTime();
+        static void BeginFrame(float deltaTime);
+        static float GetDeltaTime() { return s_DeltaTime; }
+        static double GetElapsed() { return s_Elapsed; }
+
+        // Chama OnCollisionEnter/Exit ou OnTriggerEnter/Exit do script de
+        // 'self' (se existir), passando 'other'. Chamado por
+        // PhysicsEngine::Simulate, na thread principal.
+        static void DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger);
+
+        // Destruicao ADIADA (entity:Destroy()/Scene.Destroy em Lua): destruir
+        // uma entidade no meio de Scene::OnUpdate invalidaria a iteracao
+        // sobre os scripts, entao os pedidos ficam numa fila executada ao
+        // fim do frame por Scene::OnUpdate.
+        static void QueueDestroy(Entity entity);
+
+        // Instancia um prefab (caminho relativo a pasta do projeto) numa cena
+        // em Play e ja o poe em jogo (fisica, audio, scripts Lua e nativos).
+        // 'position' opcional. Entity invalida em caso de falha. Usado por
+        // Scene.Instantiate (Lua) e pela API dos scripts nativos.
+        static Entity InstantiateRuntime(Scene& scene, const std::string& relativePath, const glm::vec3* position);
+        static void FlushDestroyQueue(Scene& scene);
+
+        // Variaveis publicas: roda o arquivo num ambiente descartavel e devolve
+        // os valores padrao da tabela global `Properties` (so numero/bool/
+        // string), ordenados por nome. Vazio se o script nao declara
+        // `Properties` ou nao carrega. Usada pelo painel Propriedades.
+        static std::vector<ScriptPropertyValue> ReadScriptProperties(const std::filesystem::path& scriptAbsolutePath);
+
     private:
         static void RegisterAPI();
 
@@ -104,6 +145,15 @@ namespace Prism {
                 return std::hash<const void*>()(key.SceneKey) ^ (std::hash<uint32_t>()(key.EntityHandle) << 1);
             }
         };
+
+        inline static float s_DeltaTime = 0.0f;
+        inline static double s_Elapsed = 0.0;
+        inline static uint64_t s_FrameCount = 0;
+        struct PendingDestroy {
+            const void* SceneKey;
+            entt::entity Handle;
+        };
+        inline static std::vector<PendingDestroy> s_PendingDestroy;
 
         inline static Scope<sol::state> s_Lua;
         inline static std::unordered_map<ScriptKey, LoadedScript, ScriptKeyHash> s_LoadedScripts;

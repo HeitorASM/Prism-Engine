@@ -3,6 +3,7 @@
 #include "../Scene/Entity.h"
 #include "../Scene/Components.h"
 #include "../Core/Log.h"
+#include "../Scripting/ScriptEngine.h"
 #include "../Renderer/Renderer.h" // ResolveMesh: geometria dos colliders ConvexHull/TriangleMesh
 #include "../Renderer/Mesh.h"
 
@@ -24,6 +25,7 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -31,6 +33,7 @@
 #include <Jolt/Physics/Body/BodyFilter.h> // JPH::IgnoreMultipleBodiesFilter (PhysicsEngine::Raycast, ignoreEntities)
 
 #include <thread>
+#include <mutex>
 
 namespace Prism {
     namespace ObjectLayers {
@@ -183,6 +186,70 @@ namespace Prism {
         return glm::degrees(glm::vec3(pitchYawRoll.x, pitchYawRoll.y, pitchYawRoll.z));
     }
 
+    // --- Eventos de contato ---------------------------------------------------
+    // O Jolt chama OnContactAdded/OnContactRemoved de THREADS DO JOB SYSTEM,
+    // durante PhysicsSystem::Update - nunca chamar Lua/ECS de la. Este
+    // ouvinte so ENFILEIRA os eventos (sob mutex); Simulate() os drena na
+    // thread principal, logo depois do Update, e so entao chama os scripts.
+    class PhysicsEngine::ContactCollector : public JPH::ContactListener {
+    public:
+        struct Event {
+            uint32_t EntityA = 0;
+            uint32_t EntityB = 0;
+            bool Added = true;
+            bool Trigger = false; // um dos dois corpos e sensor (Collider::IsTrigger)
+        };
+
+        void RegisterBody(JPH::BodyID id, uint32_t entity, bool isSensor) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Bodies[id.GetIndexAndSequenceNumber()] = { entity, isSensor };
+        }
+
+        void UnregisterBody(JPH::BodyID id) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Bodies.erase(id.GetIndexAndSequenceNumber());
+        }
+
+        std::vector<Event> TakeEvents() {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::vector<Event> taken;
+            taken.swap(m_Events);
+            return taken;
+        }
+
+        void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold&, JPH::ContactSettings&) override {
+            Push(body1.GetID(), body2.GetID(), true);
+        }
+
+        void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+            Push(pair.GetBody1ID(), pair.GetBody2ID(), false);
+        }
+
+    private:
+        struct BodyInfo {
+            uint32_t Entity = 0;
+            bool IsSensor = false;
+        };
+
+        void Push(JPH::BodyID id1, JPH::BodyID id2, bool added) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            auto a = m_Bodies.find(id1.GetIndexAndSequenceNumber());
+            auto b = m_Bodies.find(id2.GetIndexAndSequenceNumber());
+            if (a == m_Bodies.end() || b == m_Bodies.end())
+                return; // corpo ja destruido/desconhecido
+            Event event;
+            event.EntityA = a->second.Entity;
+            event.EntityB = b->second.Entity;
+            event.Added = added;
+            event.Trigger = a->second.IsSensor || b->second.IsSensor;
+            m_Events.push_back(event);
+        }
+
+        std::mutex m_Mutex;
+        std::unordered_map<uint32_t, BodyInfo> m_Bodies; // BodyID -> entidade
+        std::vector<Event> m_Events;
+    };
+
     // --- SceneState: construtor/destrutor/move definidos AQUI (nao no .h) ---
     // Ver o comentario extenso em PhysicsEngine.h, dentro da struct
     // SceneState, para o motivo completo: unique_ptr<JPH::PhysicsSystem>
@@ -279,6 +346,10 @@ namespace Prism {
         // Convencao +Y para cima, mesma usada pelo resto da engine
         // (camera, TransformComponent, etc).
         state.PhysicsSystem->SetGravity(JPH::Vec3(0.0f, -10.0f, 0.0f));
+
+        // Eventos de colisao/trigger para os scripts (ver ContactCollector).
+        state.Contacts = std::make_unique<ContactCollector>();
+        state.PhysicsSystem->SetContactListener(state.Contacts.get());
 
         GetStates()[&scene] = std::move(state);
 
@@ -596,6 +667,8 @@ namespace Prism {
         bodyInterface.AddBody(body->GetID(), JPH::EActivation::Activate);
 
         state->EntityToBody[(uint32_t)entity.GetHandle()] = body->GetID();
+        if (state->Contacts)
+            state->Contacts->RegisterBody(body->GetID(), (uint32_t)entity.GetHandle(), collider.IsTrigger);
     }
 
     void PhysicsEngine::DestroyBodyForEntity(Scene& scene, Entity entity) {
@@ -611,6 +684,8 @@ namespace Prism {
         // DestroyBody (libera a memoria do corpo). Ver Jolt docs "Body
         // Lifetime".
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
+        if (state->Contacts)
+            state->Contacts->UnregisterBody(it->second);
         bodyInterface.RemoveBody(it->second);
         bodyInterface.DestroyBody(it->second);
 
@@ -690,12 +765,42 @@ namespace Prism {
                 transform->Rotation = QuatToEulerDegrees(glm::normalize(FromJolt(bodyInterface.GetRotation(bodyId))));
         }
 
-        // --- Eventos de colisao -> ScriptEngine::OnCollisionEnter/Exit ---
-        // TODO: ainda nao implementado. Registrar um
-        // JPH::ContactListener (PhysicsSystem::SetContactListener) e
-        // traduzir OnContactAdded/OnContactRemoved para CollisionEvent
-        // (que fala de entt::entity), chamando os callbacks
-        // OnCollisionEnter/OnCollisionExit do script correspondente.
+        // --- Eventos de colisao -> OnCollisionEnter/Exit, OnTriggerEnter/Exit ---
+        // Enter so no PRIMEIRO contato do par de entidades e Exit no ULTIMO
+        // (um par pode ter varios contatos de sub-shape ao mesmo tempo). Um
+        // dos corpos ser sensor (Collider::IsTrigger) vira Trigger* em vez
+        // de Collision*. Cada evento vai para os DOIS scripts do par.
+        if (state->Contacts) {
+            std::vector<ContactCollector::Event> events = state->Contacts->TakeEvents();
+            for (const ContactCollector::Event& event : events) {
+                uint32_t low = std::min(event.EntityA, event.EntityB);
+                uint32_t high = std::max(event.EntityA, event.EntityB);
+                uint64_t pairKey = ((uint64_t)low << 32) | (uint64_t)high;
+
+                bool dispatch = false;
+                if (event.Added) {
+                    dispatch = (state->ContactCounts[pairKey]++ == 0);
+                }
+                else {
+                    auto count = state->ContactCounts.find(pairKey);
+                    if (count != state->ContactCounts.end() && --count->second <= 0) {
+                        state->ContactCounts.erase(count);
+                        dispatch = true;
+                    }
+                }
+                if (!dispatch)
+                    continue;
+
+                // Os callbacks podem destruir entidades: revalida a cada chamada.
+                auto& registry = scene.GetRegistry();
+                entt::entity handleA = (entt::entity)event.EntityA;
+                entt::entity handleB = (entt::entity)event.EntityB;
+                if (registry.valid(handleA) && registry.valid(handleB))
+                    ScriptEngine::DispatchContactEvent(Entity(handleA, &scene), Entity(handleB, &scene), event.Added, event.Trigger);
+                if (registry.valid(handleA) && registry.valid(handleB))
+                    ScriptEngine::DispatchContactEvent(Entity(handleB, &scene), Entity(handleA, &scene), event.Added, event.Trigger);
+            }
+        }
     }
 
     void PhysicsEngine::ApplyForce(Scene& scene, Entity entity, const glm::vec3& force) {
