@@ -40,7 +40,7 @@ namespace Prism {
         std::transform(ext.begin(), ext.end(), ext.begin(),
             [](unsigned char c) { return (char)std::tolower(c); });
 
-        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") return AssetType::Texture;
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr") return AssetType::Texture;
         if (ext == ".prismmat")    return AssetType::Material;
         if (ext == ".prismprefab") return AssetType::Prefab;
         if (ext == ".prismmap")    return AssetType::Scene;

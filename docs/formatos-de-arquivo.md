@@ -25,11 +25,16 @@ Ambient=0.1
 EnvZenith=0.36,0.55,0.95
 EnvHorizon=0.8,0.85,0.9
 EnvGround=0.22,0.2,0.18
+Sky=0
+SkyColor=0.05,0.05,0.07
+SkyTexture=
+SkyRotation=0
+SkyIntensity=1
 ```
 
 `StartMap` é o mapa aberto automaticamente ao carregar o projeto.
 
-`Exposure`, `Ambient`, `EnvZenith`, `EnvHorizon` e `EnvGround` são os ajustes de renderização do projeto (menu **Renderização** do editor; ver [Renderização](renderizacao.md)). As cores são `r,g,b` em sRGB, de 0 a 1.
+`Exposure`, `Ambient`, `EnvZenith`, `EnvHorizon` e `EnvGround` são os ajustes de renderização do projeto (menu **Renderização** do editor; ver [Renderização](renderizacao.md)). As cores são `r,g,b` em sRGB, de 0 a 1. O fundo (skybox) usa `Sky` (0 = cor chapada, 1 = gradiente do ambiente, 2 = panorama), `SkyColor`, `SkyTexture` (caminho relativo ao projeto), `SkyRotation` (graus, -180 a 180) e `SkyIntensity` (0 a 16).
 
 - Sempre escritos com **ponto decimal**, independente do idioma do sistema (um Windows em português não muda o formato do arquivo).
 - Chaves ausentes usam o valor padrão, então projetos criados antes destas chaves existirem abrem com o visual de sempre.

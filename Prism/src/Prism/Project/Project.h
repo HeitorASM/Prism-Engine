@@ -40,6 +40,19 @@ namespace Prism {
     // do Renderer (s_Exposure, s_Ambient, s_Env*) sao inicializados a partir
     // deles, entao os dois nunca divergem. As cores sao sRGB (o que o color
     // picker mostra); ver Renderer::SetEnvironmentColors.
+    // Fundo visivel da cena (ver Renderer::DrawSky):
+    //   Solid     - uma cor chapada (o comportamento de sempre).
+    //   Gradient  - o mesmo gradiente ceu/horizonte/chao do ambiente (EnvZenith/
+    //               EnvHorizon/EnvGround), visivel ao fundo.
+    //   Panorama  - imagem equirretangular (.hdr, .png, .jpg...) do projeto.
+    // O fundo NAO ilumina a cena: a luz de ambiente continua vindo do gradiente
+    // (EnvZenith/EnvHorizon/EnvGround), qualquer que seja o modo.
+    enum class SkyMode : int {
+        Solid = 0,
+        Gradient = 1,
+        Panorama = 2
+    };
+
     struct RenderSettings {
         // Multiplicador de brilho aplicado em espaco linear ANTES do tone
         // mapping (Renderer::SetExposure). 1.0 = neutro.
@@ -54,12 +67,20 @@ namespace Prism {
         float EnvHorizon[3] = { 0.80f, 0.85f, 0.90f };
         float EnvGround[3]  = { 0.22f, 0.20f, 0.18f };
 
+        // Fundo (skybox). Padrao = cor chapada escura, igual ao fundo antigo.
+        SkyMode Sky = SkyMode::Solid;
+        float SkyColor[3] = { 0.05f, 0.05f, 0.07f }; // sRGB (como o picker), modo Solid
+        std::string SkyTexture;                      // relativo a pasta do projeto, modo Panorama
+        float SkyRotation = 0.0f;                    // graus em torno de Y (-180..180)
+        float SkyIntensity = 1.0f;                   // multiplicador de brilho do panorama
+
         // Limites aceitos ao LER um .prismproj (um arquivo editado a mao ou
         // corrompido nao pode deixar a cena preta ou estourada). Exposicao
         // <= 0 zeraria a imagem inteira.
         static constexpr float kExposureMin = 0.05f;
         static constexpr float kExposureMax = 16.0f;
         static constexpr float kAmbientMax  = 2.0f;
+        static constexpr float kSkyIntensityMax = 16.0f;
     };
 
     // Estrutura de pastas criada para todo novo projeto. Mantida em um so

@@ -27,6 +27,7 @@
 #include "GeometryBuffer.h"
 #include "SSAO.h"
 #include "Texture.h"
+#include "SkyTexture.h"
 #include "../Project/Project.h"
 #include <glm/glm.hpp>
 #include <cstdint>
@@ -409,6 +410,19 @@ namespace Prism {
         // O quad e gerado no vertex shader (sem VBO), com um VAO vazio por contexto.
         static Ref<Shader> s_ParticleShader;
         static uint32_t s_ParticleSSBO;
+
+        // Skybox (fundo visivel): ver DrawSky e RenderSettings::Sky. Os valores
+        // vem de ApplyRenderSettings; o panorama e carregado sob demanda e
+        // recarregado quando o caminho muda.
+        static void DrawSky(const float* view, const float* projection, const float* cameraWorldPos);
+        static Ref<Shader> s_SkyShader;
+        static SkyMode s_SkyMode;
+        static float s_SkyColor[3];
+        static std::string s_SkyTexturePath;
+        static float s_SkyRotation;
+        static float s_SkyIntensity;
+        static Scope<SkyTexture> s_SkyTexture;
+        static std::string s_SkyLoadedPath;   // caminho de s_SkyTexture ("" = nenhum tentado)
 
         // Shader "depth-only" usado exclusivamente por RenderShadowPass -
         // so precisa de posicao (nem normal, nem cor) e nao tem fragment

@@ -22,6 +22,14 @@ namespace Prism {
     Ref<Shader> Renderer::s_BasicShader = nullptr;
     Ref<Shader> Renderer::s_LineShader = nullptr;
     Ref<Shader> Renderer::s_ParticleShader = nullptr;
+    Ref<Shader> Renderer::s_SkyShader = nullptr;
+    SkyMode Renderer::s_SkyMode = RenderSettings{}.Sky;
+    float Renderer::s_SkyColor[3] = { RenderSettings{}.SkyColor[0], RenderSettings{}.SkyColor[1], RenderSettings{}.SkyColor[2] };
+    std::string Renderer::s_SkyTexturePath;
+    float Renderer::s_SkyRotation = RenderSettings{}.SkyRotation;
+    float Renderer::s_SkyIntensity = RenderSettings{}.SkyIntensity;
+    Scope<SkyTexture> Renderer::s_SkyTexture = nullptr;
+    std::string Renderer::s_SkyLoadedPath;
     uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_ShadowDepthShader = nullptr;
     Scope<ShadowMap> Renderer::s_ShadowMap = nullptr;
@@ -126,6 +134,7 @@ namespace Prism {
 
         s_LineShader = loadShader("Line", "line.vert", "line.frag");
         s_ParticleShader = loadShader("Particle", "particle.vert", "particle.frag");
+        s_SkyShader = loadShader("Sky", "sky.vert", "sky.frag");
         glCreateBuffers(1, &s_ParticleSSBO);
         s_ShadowDepthShader = loadShader("ShadowDepth", "shadow_depth.vert", "shadow_depth.frag");
         // s_ShadowMap NAO e criado aqui de proposito - ver comentario em
@@ -171,7 +180,7 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_ShadowDepthShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_SkyShader, &s_ShadowDepthShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
@@ -184,6 +193,9 @@ namespace Prism {
         s_BasicShader.reset();
         s_LineShader.reset();
         s_ParticleShader.reset();
+        s_SkyShader.reset();
+        s_SkyTexture.reset();
+        s_SkyLoadedPath.clear();
         if (s_ParticleSSBO) { glDeleteBuffers(1, &s_ParticleSSBO); s_ParticleSSBO = 0; }
         s_ShadowDepthShader.reset();
         s_ShadowMap.reset();
@@ -623,6 +635,78 @@ namespace Prism {
         SetExposure(settings.Exposure);
         SetAmbient(settings.Ambient);
         SetEnvironmentColors(settings.EnvZenith, settings.EnvHorizon, settings.EnvGround);
+
+        s_SkyMode = settings.Sky;
+        for (int i = 0; i < 3; i++)
+            s_SkyColor[i] = std::isfinite(settings.SkyColor[i]) ? std::min(std::max(settings.SkyColor[i], 0.0f), 1.0f) : s_SkyColor[i];
+        s_SkyTexturePath = settings.SkyTexture;
+        s_SkyRotation = std::isfinite(settings.SkyRotation) ? settings.SkyRotation : 0.0f;
+        s_SkyIntensity = std::isfinite(settings.SkyIntensity) ? std::max(settings.SkyIntensity, 0.0f) : 1.0f;
+    }
+
+    // Fundo da cena: um triangulo de tela cheia no plano distante, desenhado ANTES
+    // da geometria (sem teste nem escrita de profundidade) - ver sky.vert/sky.frag.
+    void Renderer::DrawSky(const float* view, const float* projection, const float* cameraWorldPos) {
+        if (!s_SkyShader)
+            return;
+
+        // Modo efetivo: Panorama sem textura valida cai para cor chapada.
+        int mode = (int)s_SkyMode;
+        SkyTexture* panorama = nullptr;
+        if (s_SkyMode == SkyMode::Panorama) {
+            if (s_SkyLoadedPath != s_SkyTexturePath) {
+                s_SkyLoadedPath = s_SkyTexturePath; // tenta UMA vez por caminho (falha nao repete o erro todo frame)
+                s_SkyTexture.reset();
+                if (!s_SkyTexturePath.empty()) {
+                    std::filesystem::path resolved = s_SkyTexturePath;
+                    if (auto project = Project::GetActive())
+                        resolved = project->GetProjectDirectory() / s_SkyTexturePath;
+                    s_SkyTexture = CreateScope<SkyTexture>(resolved.string());
+                }
+            }
+            if (s_SkyTexture && s_SkyTexture->IsValid())
+                panorama = s_SkyTexture.get();
+            else
+                mode = (int)SkyMode::Solid;
+        }
+
+        glm::mat4 viewMatrix = glm::make_mat4(view);
+        glm::mat4 projectionMatrix = glm::make_mat4(projection);
+        glm::mat4 inverseViewProjection = glm::inverse(projectionMatrix * viewMatrix);
+
+        bool depthWasEnabled = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
+        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        bool blendWasEnabled = glIsEnabled(GL_BLEND) == GL_TRUE;
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+
+        s_SkyShader->Bind();
+        s_SkyShader->SetMat4("u_InverseViewProjection", glm::value_ptr(inverseViewProjection));
+        s_SkyShader->SetFloat3("u_CameraPosition", cameraWorldPos[0], cameraWorldPos[1], cameraWorldPos[2]);
+        s_SkyShader->SetInt("u_Mode", mode);
+        s_SkyShader->SetFloat3("u_SolidColor", s_SkyColor[0], s_SkyColor[1], s_SkyColor[2]);
+        s_SkyShader->SetFloat3("u_EnvZenith", s_EnvZenith[0], s_EnvZenith[1], s_EnvZenith[2]);
+        s_SkyShader->SetFloat3("u_EnvHorizon", s_EnvHorizon[0], s_EnvHorizon[1], s_EnvHorizon[2]);
+        s_SkyShader->SetFloat3("u_EnvGround", s_EnvGround[0], s_EnvGround[1], s_EnvGround[2]);
+        s_SkyShader->SetFloat("u_Rotation", glm::radians(s_SkyRotation));
+        s_SkyShader->SetFloat("u_Intensity", s_SkyIntensity);
+        s_SkyShader->SetFloat("u_Exposure", s_Exposure);
+        s_SkyShader->SetInt("u_ToneMap", (panorama && panorama->IsHDR()) ? 1 : 0);
+        s_SkyShader->SetInt("u_Panorama", 0);
+        if (panorama)
+            panorama->Bind(0);
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o triangulo nasce no shader
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        s_SkyShader->Unbind();
+
+        glDepthMask(GL_TRUE);
+        if (depthWasEnabled) glEnable(GL_DEPTH_TEST);
+        if (cullWasEnabled) glEnable(GL_CULL_FACE);
+        if (blendWasEnabled) glEnable(GL_BLEND);
     }
 
     void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
@@ -1085,6 +1169,9 @@ namespace Prism {
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         }
+
+        // Fundo antes da geometria (preenche a tela inteira: sobrescreve o Clear).
+        DrawSky(view, projection, cameraWorldPos);
 
         // Toda entidade com TransformComponent + MeshRendererComponent,
         // usando a transform de MUNDO (Scene::GetWorldTransform,

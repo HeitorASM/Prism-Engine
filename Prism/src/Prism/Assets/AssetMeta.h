@@ -31,7 +31,7 @@ namespace Prism {
 
     enum class AssetType {
         Unknown,
-        Texture,   // .png .jpg .jpeg .bmp .tga
+        Texture,   // .png .jpg .jpeg .bmp .tga .hdr
         Material,  // .prismmat
         Prefab,    // .prismprefab
         Scene,     // .prismmap

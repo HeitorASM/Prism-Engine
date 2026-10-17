@@ -7,8 +7,9 @@ OpenGL 4.5 Core, com glad como carregador. O `Renderer` é uma API estática enx
 1. **Sombras** (se alguma luz Directional projeta sombra): desenha a cena do ponto de vista da luz num `ShadowMap`.
 2. **Pré-passe de geometria**: normais em view-space e profundidade, do ponto de vista da câmera (`GeometryBuffer`).
 3. **SSAO**: calcula a oclusão a partir do pré-passe, seguida de blur.
-4. **Passe de cor**: desenha cada entidade com `Transform` + `MeshRenderer`, usando a transform de mundo (`Scene::GetWorldTransform`).
-5. **Partículas** (`Renderer::DrawParticles`): billboards com blend, sem escrever profundidade (mas testando contra a geometria opaca). Ver a seção "Partículas".
+4. **Fundo (skybox)** (`Renderer::DrawSky`): preenche a tela antes da geometria. Ver a seção "Skybox".
+5. **Passe de cor**: desenha cada entidade com `Transform` + `MeshRenderer`, usando a transform de mundo (`Scene::GetWorldTransform`).
+6. **Partículas** (`Renderer::DrawParticles`): billboards com blend, sem escrever profundidade (mas testando contra a geometria opaca). Ver a seção "Partículas".
 
 Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 
@@ -74,6 +75,21 @@ A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, 
 ## SSAO
 
 16 amostras hemisféricas, textura de ruído e blur por box filter. O resultado multiplica o termo de luz ambiente.
+
+## Skybox
+
+`RenderSettings::Sky` (menu **Renderização → Fundo**, salvo no `.prismproj`) escolhe o fundo visível:
+
+| Modo | Resultado |
+|---|---|
+| Cor chapada | `SkyColor` (sRGB, escrita direto; o padrão é o mesmo fundo escuro de sempre) |
+| Gradiente | O mesmo gradiente Céu/Horizonte/Chão do ambiente, visível ao fundo |
+| Panorama | Imagem equirretangular (2:1) do projeto: `.hdr`, `.png`, `.jpg`, `.tga`, `.bmp` |
+
+- O desenho é um triângulo de tela cheia no plano distante (`sky.vert`), sem teste nem escrita de profundidade; a direção de cada pixel vem da matriz inversa de view-projection.
+- O panorama é carregado por `SkyTexture` em `GL_RGB16F` linear, sem inverter (a primeira linha da imagem é o céu), com mipmaps e a correção da costura do `atan` no cálculo das derivadas. `.hdr` passa por exposição e ACES; imagens comuns só pela intensidade, para aparecerem como foram pintadas. `SkyRotation` gira em torno de Y.
+- Panorama sem imagem válida (caminho vazio, arquivo ausente) cai para a cor chapada; o erro de carga é logado uma vez por caminho.
+- **O fundo não ilumina a cena.** A luz de ambiente e os reflexos continuam vindo do gradiente de 3 cores, qualquer que seja o modo. Iluminação por imagem (IBL) é um passo futuro.
 
 ## Partículas
 

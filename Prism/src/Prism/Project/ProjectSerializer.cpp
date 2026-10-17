@@ -67,7 +67,12 @@ namespace Prism {
     static void SanitizeRenderSettings(RenderSettings& s) {
         s.Exposure = std::min(std::max(s.Exposure, RenderSettings::kExposureMin), RenderSettings::kExposureMax);
         s.Ambient  = std::min(std::max(s.Ambient, 0.0f), RenderSettings::kAmbientMax);
-        for (float* color : { s.EnvZenith, s.EnvHorizon, s.EnvGround })
+        int sky = (int)s.Sky;
+        if (sky < 0 || sky > (int)SkyMode::Panorama)
+            s.Sky = SkyMode::Solid;
+        s.SkyRotation = std::min(std::max(s.SkyRotation, -180.0f), 180.0f);
+        s.SkyIntensity = std::min(std::max(s.SkyIntensity, 0.0f), RenderSettings::kSkyIntensityMax);
+        for (float* color : { s.EnvZenith, s.EnvHorizon, s.EnvGround, s.SkyColor })
             for (int i = 0; i < 3; i++)
                 color[i] = std::min(std::max(color[i], 0.0f), 1.0f);
     }
@@ -99,6 +104,11 @@ namespace Prism {
         out << "EnvZenith=" << FormatFloat3(render.EnvZenith) << "\n";
         out << "EnvHorizon=" << FormatFloat3(render.EnvHorizon) << "\n";
         out << "EnvGround=" << FormatFloat3(render.EnvGround) << "\n";
+        out << "Sky=" << (int)render.Sky << "\n";
+        out << "SkyColor=" << FormatFloat3(render.SkyColor) << "\n";
+        out << "SkyTexture=" << render.SkyTexture << "\n";
+        out << "SkyRotation=" << FormatFloat(render.SkyRotation) << "\n";
+        out << "SkyIntensity=" << FormatFloat(render.SkyIntensity) << "\n";
 
         return true;
     }
@@ -131,12 +141,23 @@ namespace Prism {
             else if (key == "ScriptDirectory") config.ScriptDirectory = value;
             else if (key == "MapDirectory") config.MapDirectory = value;
             else if (key == "StartMap") config.StartMap = value;
-            else if (key == "Exposure" || key == "Ambient" || key == "EnvZenith" || key == "EnvHorizon" || key == "EnvGround") {
+            else if (key == "SkyTexture") render.SkyTexture = value;
+            else if (key == "Sky") {
+                float mode = 0.0f;
+                if (ParseFloat(value, mode))
+                    render.Sky = (SkyMode)(int)mode;
+                else
+                    PRISM_CORE_WARN("Valor invalido em 'Sky' no projeto (\"", value, "\") - usando o padrao.");
+            }
+            else if (key == "Exposure" || key == "SkyColor" || key == "SkyRotation" || key == "SkyIntensity" || key == "Ambient" || key == "EnvZenith" || key == "EnvHorizon" || key == "EnvGround") {
                 // Valor invalido: avisa e mantem o padrao (nunca 0, que
                 // apagaria a cena). Uma chave ruim nao invalida as outras.
                 bool ok = false;
                 if (key == "Exposure")        ok = ParseFloat(value, render.Exposure);
                 else if (key == "Ambient")    ok = ParseFloat(value, render.Ambient);
+                else if (key == "SkyColor")   ok = ParseFloat3(value, render.SkyColor);
+                else if (key == "SkyRotation")  ok = ParseFloat(value, render.SkyRotation);
+                else if (key == "SkyIntensity") ok = ParseFloat(value, render.SkyIntensity);
                 else if (key == "EnvZenith")  ok = ParseFloat3(value, render.EnvZenith);
                 else if (key == "EnvHorizon") ok = ParseFloat3(value, render.EnvHorizon);
                 else                          ok = ParseFloat3(value, render.EnvGround);
