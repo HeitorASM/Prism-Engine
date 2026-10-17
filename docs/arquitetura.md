@@ -19,6 +19,7 @@ O projeto tem dois alvos CMake:
 | `Scene/` | `Scene`, `Entity`, `Components`, `ComponentRegistry`, serializadores |
 | `Scripting/` | `ScriptEngine` (Lua via sol2) |
 | `Physics/` | `PhysicsEngine` (Jolt) |
+| `Audio/` | `AudioEngine` (miniaudio) |
 | `ImGui/` | `ImGuiLayer` |
 | `Project/` | `Project`, `ProjectSerializer` |
 | `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry`, `ModelLoader` |
@@ -29,7 +30,7 @@ O projeto tem dois alvos CMake:
 
 Uma entidade não tem "tipo": ela é a soma dos components que possui. Um personagem, por exemplo, é uma entidade com `MeshRenderer` + `Collider` + `RigidBody` + `Script`. Os presets do menu Entidade (Criar Luz, Criar Character etc.) são atalhos que adicionam combinações comuns.
 
-Components disponíveis: `Tag`, `Transform`, `MeshRenderer`, `Material`, `Camera`, `Light`, `Collider`, `RigidBody`, `Relationship`, `Script`, `Raycast`.
+Components disponíveis: `Tag`, `Transform`, `MeshRenderer`, `Material`, `Camera`, `Light`, `Collider`, `RigidBody`, `Relationship`, `Script`, `Raycast`, `AudioSource`, `AudioListener`.
 
 ### Hierarquia (parenting)
 
@@ -140,6 +141,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | ImGuiColorTextEdit | editor de código | FetchContent |
 | Lua 5.4.7 + sol2 3.3.0 | scripting | FetchContent |
 | Jolt Physics 5.2.0 | física | FetchContent |
+| miniaudio 0.11.22 | áudio | FetchContent (só o header) |
 | Assimp | importação de modelos (`.obj`/`.fbx`/`.gltf`/`.glb`), via `Assets/ModelLoader` | FetchContent |
 
 As versões são fixadas em `vendor/CMakeLists.txt`.

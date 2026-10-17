@@ -1,5 +1,6 @@
 #include <glad/gl.h> // sempre primeiro - ver OpenGLContext.cpp
 #include "Application.h"
+#include "../Audio/AudioEngine.h"
 
 #include "Log.h"
 #include "LogBuffer.h"
@@ -39,6 +40,10 @@ namespace Prism {
         // inicializacao.
         ScriptEngine::Init();
 
+        // Audio (miniaudio): abre o dispositivo de som padrao. Sem
+        // dispositivo, so avisa e o jogo roda mudo (ver AudioEngine.h).
+        AudioEngine::Init();
+
         m_ImGuiLayer = new ImGuiLayer();
         PushOverlay(m_ImGuiLayer);
     }
@@ -52,6 +57,7 @@ namespace Prism {
         m_CloseRequestHandler = nullptr;
 
         ScriptEngine::Shutdown();
+        AudioEngine::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
     }

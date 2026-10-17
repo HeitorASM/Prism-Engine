@@ -299,6 +299,28 @@ FetchContent_MakeAvailable(assimp)
 # proprio Assimp, que e ON; ver comentario em Prism/CMakeLists.txt sobre
 # copiar a .dll/.so para perto do executavel no Windows).
 
+# --- miniaudio (audio: decodifica WAV/MP3/OGG/FLAC e toca pelo dispositivo padrao) ---
+# Header unico (miniaudio.h), dominio publico/MIT-0. So baixamos o codigo-fonte;
+# a IMPLEMENTACAO (#define MINIAUDIO_IMPLEMENTATION) e compilada em exatamente
+# um .cpp da engine: Prism/src/Prism/Audio/AudioEngine.cpp.
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.22
+    GIT_SHALLOW TRUE
+    # So baixa: nao existe CMakeLists.txt nesta subpasta, entao o
+    # FetchContent nao chama add_subdirectory (o CMake do repositorio
+    # compilaria exemplos/testes que a engine nao usa). Mesmo truque do Jolt.
+    SOURCE_SUBDIR _prism_download_only
+)
+FetchContent_MakeAvailable(miniaudio)
+# Usamos so o header: um alvo INTERFACE proprio aponta para a pasta baixada.
+add_library(prism_miniaudio INTERFACE)
+target_include_directories(prism_miniaudio INTERFACE ${miniaudio_SOURCE_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(prism_miniaudio INTERFACE ${CMAKE_DL_LIBS} pthread m)
+endif()
+
 # --- stb_image (carregamento de PNG/JPG/etc) ---
 # Header-only, um unico arquivo (stb_image.h), sem depender de
 # libpng/libjpeg/zlib. Usado por Prism::Texture2D para ler a imagem do

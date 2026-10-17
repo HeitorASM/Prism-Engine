@@ -63,6 +63,8 @@ namespace PrismEditor {
         void DrawRaycastUI();
         void DrawCameraUI();
         void DrawScriptUI();
+        void DrawAudioSourceUI();
+        void DrawAudioListenerUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e
@@ -151,6 +153,7 @@ namespace PrismEditor {
         Prism::RigidBodyComponent m_RigidBodyBeforeEdit;
         Prism::CameraComponent m_CameraBeforeEdit;
         Prism::RaycastComponent m_RaycastBeforeEdit;
+        Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
 
         // Estado do popup modal "Novo Script" (mesmo padrao de
         // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao

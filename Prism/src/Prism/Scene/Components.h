@@ -522,6 +522,33 @@ namespace Prism {
         ScriptComponent(const std::string& scriptPath) : ScriptPath(scriptPath) {}
     };
 
+    // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver
+    // Audio/AudioEngine.h): comeca sozinha com PlayOnStart, ou por script
+    // (entity:PlaySound()). Espacial (3D): volume cai com a distancia ate o
+    // AudioListenerComponent (ou a camera primaria, se nao houver listener).
+    struct AudioSourceComponent {
+        AssetID Clip;                  // asset de audio (.wav/.mp3/.ogg/.flac); invalido = sem som
+        float Volume = 1.0f;           // 0..2
+        float Pitch = 1.0f;            // 0.1..4 (1 = normal)
+        bool Loop = false;
+        bool PlayOnStart = true;       // tocar ao iniciar o Play
+        bool Spatial = true;           // false = som 2D (ignora posicao, ex: musica/UI)
+        float MinDistance = 1.0f;      // ate aqui, volume cheio
+        float MaxDistance = 25.0f;     // a partir daqui, mudo (queda linear entre os dois)
+
+        AudioSourceComponent() = default;
+        AudioSourceComponent(const AudioSourceComponent&) = default;
+    };
+
+    // Marca a entidade cujos "ouvidos" definem o som 3D (posicao/orientacao).
+    // Com varios, vale o primeiro Active. Sem nenhum, a camera primaria faz o papel.
+    struct AudioListenerComponent {
+        bool Active = true;
+
+        AudioListenerComponent() = default;
+        AudioListenerComponent(const AudioListenerComponent&) = default;
+    };
+
     // Um raio FISICO (contra ColliderComponent, via Jolt - mesmo raycast
     // que Physics.Raycast expoe ao Lua, ver PhysicsEngine::Raycast) que
     // dispara automaticamente TODO FRAME enquanto a Scene esta rodando

@@ -13,7 +13,8 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
 - Iluminação PBR multi-luz (Point/Spot/Directional) com roughness/metallic, normal map, sombras direcionais e SSAO
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
-- Scripting em Lua com acesso a transform, física, input e raycast
+- Scripting em Lua 
+- Áudio (miniaudio): Audio Source/Listener com som 3D
 - Modo Play em janela separada, rodando uma cópia da cena
 - Mapas (`.prismmap`), prefabs (`.prismprefab`) e materiais (`.prismmat`)
 
@@ -65,6 +66,7 @@ docs/             documentação detalhada
 - [Scripting Lua](docs/scripting-lua.md)
 - [Física](docs/fisica.md)
 - [Renderização](docs/renderizacao.md)
+- [Áudio](docs/audio.md)
 - [Formatos de arquivo](docs/formatos-de-arquivo.md)
 
 ## Licença
@@ -76,7 +78,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 ## Roadmap
 
 - [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp), com um material por submesh e texturas embutidas extraídas
-- [ ] Áudio 
+- [x] Áudio: Audio Source/Listener, som 3D, API Lua (miniaudio; ver [docs/audio.md](docs/audio.md))
 - [ ] API de scripting Lua mais completa
 - [ ] Scripts em C++ (módulo nativo com hot reload)
 - [ ] BSP/CSG e ferramentas de construção de mapas

@@ -3,6 +3,7 @@
 #include "ComponentRegistry.h"
 #include "../Scripting/ScriptEngine.h"
 #include "../Physics/PhysicsEngine.h"
+#include "../Audio/AudioEngine.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
 #include "../Renderer/Renderer.h"
@@ -399,6 +400,10 @@ namespace Prism {
             // de dentro dos bindings Lua (ver ScriptEngine.cpp).
             ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+
+        // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
+        // scripts neste frame e move o listener junto da camera/entidade.
+        AudioEngine::OnSceneUpdate(*this);
     }
 
     void Scene::UpdateRaycastComponents() {
@@ -476,6 +481,10 @@ namespace Prism {
         // corpo fisico ja precisa existir nesse momento.
         PhysicsEngine::OnSceneStart(*this);
 
+        // Audio antes dos scripts: fontes com PlayOnStart ja estao tocando
+        // quando OnCreate() roda (que ainda pode para-las/reinicia-las).
+        AudioEngine::OnSceneStart(*this);
+
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view) {
             auto& script = view.get<ScriptComponent>(entityHandle);
@@ -509,6 +518,8 @@ namespace Prism {
         // querer ler a posicao final do corpo fisico (ex: salvar onde o
         // personagem parou) antes do mundo fisico ser destruido.
         PhysicsEngine::OnSceneStop(*this);
+
+        AudioEngine::OnSceneStop(*this);
     }
 
 }

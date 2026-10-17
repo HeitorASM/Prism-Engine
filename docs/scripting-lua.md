@@ -123,3 +123,7 @@ Só `base`, `math`, `string` e `table` estão abertas. `io`, `os`, `package` e `
 - Sem hot-reload: edite o `.lua`, pare e rode de novo.
 - Scripts enxergam a própria entidade e o que alcançam pela hierarquia (`GetParent`, `GetChild`) e por raycast; não há busca global de entidades.
 - Sem debugger nem breakpoints.
+
+## Áudio
+
+`entity:PlaySound()`, `entity:StopSound()`, `entity:IsSoundPlaying()`, `entity:SetSoundVolume(v)`, `entity:SetSoundPitch(p)` (precisam de um Audio Source) e a tabela global `Audio` (`Play`, `Play3D`, `SetMasterVolume`, `GetMasterVolume`). Detalhes em [audio.md](audio.md).

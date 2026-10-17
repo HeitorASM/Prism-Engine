@@ -66,6 +66,12 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ScriptComponent>())
             DrawScriptUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioSourceComponent>())
+            DrawAudioSourceUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioListenerComponent>())
+            DrawAudioListenerUI();
+
         ImGui::Dummy(ImVec2(0, 8));
         RenderAddComponentButton();
 
@@ -170,6 +176,10 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(entity, displayName));
         else if (displayName == "Material")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::MaterialComponent>>(entity, displayName));
+        else if (displayName == "Audio Source")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioSourceComponent>>(entity, displayName));
+        else if (displayName == "Audio Listener")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioListenerComponent>>(entity, displayName));
         else {
             // Fallback generico SEM Undo - usado so se um Component for
             // registrado em ComponentRegistration.cpp mas esquecido aqui

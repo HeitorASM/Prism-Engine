@@ -27,6 +27,7 @@ target_link_libraries(Prism PUBLIC
     Jolt
     stb
     assimp
+    prism_miniaudio
 )
 
 target_compile_features(Prism PUBLIC cxx_std_20)

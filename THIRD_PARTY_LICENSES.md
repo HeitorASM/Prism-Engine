@@ -29,6 +29,7 @@ Dois grupos de dependências:
 | [sol2](https://github.com/ThePhD/sol2) | v3.3.0 | MIT | FetchContent |
 | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | v5.2.0 | MIT | FetchContent |
 | [Assimp](https://github.com/assimp/assimp) | v5.4.3 | BSD-3-Clause | FetchContent |
+| [miniaudio](https://github.com/mackron/miniaudio) | 0.11.22 | Domínio público ou MIT-0 | FetchContent |
 
 Nenhuma destas licenças é copyleft: todas permitem uso em projetos
 closed source, com ou sem modificação, desde que os avisos sejam mantidos.
@@ -598,3 +599,9 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## miniaudio
+
+Usada por `Prism::AudioEngine` (ver `Prism/src/Prism/Audio/AudioEngine.h`) para decodificar e tocar áudio.
+Licenciada à escolha como domínio público (Unlicense) ou MIT-0 (MIT No Attribution), o que dispensa aviso de copyright.
+Texto completo no final do `miniaudio.h` (https://github.com/mackron/miniaudio).

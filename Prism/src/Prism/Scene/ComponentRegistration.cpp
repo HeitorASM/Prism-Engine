@@ -305,6 +305,47 @@ namespace Prism {
                 return true;
             }
         );
+
+        // --- AudioSourceComponent (v15) --------------------------------------
+        Register<AudioSourceComponent>(
+            "Audio Source",
+            [](std::ofstream& out, Entity e) {
+                auto& c = e.GetComponent<AudioSourceComponent>();
+                WriteRaw(out, c.Clip);
+                WriteRaw(out, c.Volume);
+                WriteRaw(out, c.Pitch);
+                WriteRaw(out, c.Loop);
+                WriteRaw(out, c.PlayOnStart);
+                WriteRaw(out, c.Spatial);
+                WriteRaw(out, c.MinDistance);
+                WriteRaw(out, c.MaxDistance);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<AudioSourceComponent>();
+                if (!(ReadRaw(in, c.Clip) && ReadRaw(in, c.Volume) && ReadRaw(in, c.Pitch) && ReadRaw(in, c.Loop)
+                    && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Spatial) && ReadRaw(in, c.MinDistance) && ReadRaw(in, c.MaxDistance))) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (audio source da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+
+        // --- AudioListenerComponent (v15) ------------------------------------
+        Register<AudioListenerComponent>(
+            "Audio Listener",
+            [](std::ofstream& out, Entity e) {
+                WriteRaw(out, e.GetComponent<AudioListenerComponent>().Active);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<AudioListenerComponent>();
+                if (!ReadRaw(in, c.Active)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (audio listener da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
     }
 
 }

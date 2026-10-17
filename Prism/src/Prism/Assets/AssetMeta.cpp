@@ -46,7 +46,7 @@ namespace Prism {
         if (ext == ".prismmap")    return AssetType::Scene;
         if (ext == ".lua")         return AssetType::Script;
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") return AssetType::Model;
-        if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return AssetType::Audio;
+        if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac") return AssetType::Audio;
         return AssetType::Unknown;
     }
 

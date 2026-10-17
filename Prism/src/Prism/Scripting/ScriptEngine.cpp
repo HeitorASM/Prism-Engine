@@ -4,6 +4,8 @@
 #include "../Scene/Components.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Core/Input.h"
+#include "../Audio/AudioEngine.h"
+#include "../Project/Project.h"
 #include "../Core/Log.h"
 
 #include <fstream>
@@ -178,6 +180,21 @@ namespace Prism {
             "GetChildAt", [](Entity& e, size_t index) -> Entity { return e.GetChildAt(index); },
             "GetChild", [](Entity& e, const std::string& name) -> Entity { return e.GetChild(name); },
             "IsValid", [](Entity& e) -> bool { return e.IsValid(); },
+            // --- Audio (AudioSourceComponent) ---------------------------------
+            // So funcionam em entidades com Audio Source; sem ele, silenciosas.
+            // Volume/pitch escrevem no component e valem no mesmo frame
+            // (AudioEngine::OnSceneUpdate relê todo frame).
+            "PlaySound", [](Entity& e) { AudioEngine::PlayEntity(e); },
+            "StopSound", [](Entity& e) { AudioEngine::StopEntity(e); },
+            "IsSoundPlaying", [](Entity& e) -> bool { return AudioEngine::IsEntityPlaying(e); },
+            "SetSoundVolume", [](Entity& e, float volume) {
+                if (e.HasComponent<AudioSourceComponent>())
+                    e.GetComponent<AudioSourceComponent>().Volume = volume;
+            },
+            "SetSoundPitch", [](Entity& e, float pitch) {
+                if (e.HasComponent<AudioSourceComponent>())
+                    e.GetComponent<AudioSourceComponent>().Pitch = pitch;
+            },
             // Compara pelo handle+Scene (ver Entity::operator==,
             // Entity.h) - necessario para um script poder checar
             // "hit:GetEntity() == entity" (ver RaycastHit:GetEntity()
@@ -277,6 +294,39 @@ namespace Prism {
         lua["log_error"] = [](const std::string& message) {
             Log::AppLog(LogLevel::Error, "[Lua] ", message);
         };
+
+        // --- Audio -----------------------------------------------------
+        // Tabela global `Audio`: sons soltos (efeitos) e volume global.
+        // 'path' e RELATIVO a pasta do projeto, como os caminhos de textura
+        // (ex: "Assets/Sounds/tiro.wav"). Formatos: .wav, .mp3, .flac.
+        //   Audio.Play("Assets/Sounds/tiro.wav")                  -- 2D, volume 1
+        //   Audio.Play("Assets/Sounds/tiro.wav", 0.5, 1.2)        -- volume, pitch
+        //   Audio.Play3D("Assets/Sounds/boom.wav", x, y, z, 1.0)  -- na posicao do mundo
+        //   Audio.SetMasterVolume(0.8)
+        sol::table audioTable = lua.create_table();
+        auto resolveProjectPath = [](const std::string& relative) -> std::filesystem::path {
+            auto project = Project::GetActive();
+            if (!project)
+                return {};
+            return project->GetProjectDirectory() / relative;
+        };
+        audioTable["Play"] = [resolveProjectPath](const std::string& path, sol::optional<float> volume, sol::optional<float> pitch) {
+            AudioPlayOptions options;
+            options.Volume = volume.value_or(1.0f);
+            options.Pitch = pitch.value_or(1.0f);
+            AudioEngine::PlayOneShot(resolveProjectPath(path), options);
+        };
+        audioTable["Play3D"] = [resolveProjectPath](const std::string& path, float x, float y, float z, sol::optional<float> volume, sol::optional<float> pitch) {
+            AudioPlayOptions options;
+            options.Volume = volume.value_or(1.0f);
+            options.Pitch = pitch.value_or(1.0f);
+            options.Spatial = true;
+            options.Position = { x, y, z };
+            AudioEngine::PlayOneShot(resolveProjectPath(path), options);
+        };
+        audioTable["SetMasterVolume"] = [](float volume) { AudioEngine::SetMasterVolume(volume); };
+        audioTable["GetMasterVolume"] = []() { return AudioEngine::GetMasterVolume(); };
+        lua["Audio"] = audioTable;
 
         // --- Input -----------------------------------------------------
         // Tabela global `Input` (polling - ver Core/Input.h para o porque
