@@ -24,6 +24,7 @@
 // ============================================================================
 
 #include <Prism.h>
+#include "../Core/ModelImport.h"
 #include <string>
 #include <utility>
 #include <functional>
@@ -976,26 +977,61 @@ namespace PrismEditor {
             if (!m_Entity || !m_Entity.HasComponent<Prism::MeshRendererComponent>())
                 return;
             auto& meshRenderer = m_Entity.GetComponent<Prism::MeshRendererComponent>();
-            m_Before = meshRenderer.ModelAsset;
-            meshRenderer.ModelAsset = ResolveAssetID();
+            m_BeforeAsset = meshRenderer.ModelAsset;
+            m_BeforeSubmesh = meshRenderer.SubmeshIndex;
+            m_HadMaterial = m_Entity.HasComponent<Prism::MaterialComponent>();
+            if (m_HadMaterial)
+                m_BeforeMaterial = m_Entity.GetComponent<Prism::MaterialComponent>();
+            m_AppliedMaterial = false;
+
+            // Le o modelo (e extrai texturas embutidas). Modelo com UM material:
+            // aplica esse material a entidade. Com varios: a entidade usa a
+            // malha mesclada (sem materiais) - para ter um material por parte,
+            // arraste o modelo para a Hierarquia/Viewport.
+            ModelImport::PreparedModel prepared = ModelImport::Prepare(m_AssetPath);
+            if (!prepared.Success) {
+                PRISM_WARN("Nao foi possivel importar o modelo (", prepared.Error, ") - tentando apenas vincular o arquivo.");
+                meshRenderer.ModelAsset = ResolveAssetID();
+                meshRenderer.SubmeshIndex = -1;
+                return;
+            }
+
+            meshRenderer.ModelAsset = prepared.Asset;
+            if (prepared.Parts.size() == 1) {
+                meshRenderer.SubmeshIndex = 0;
+                if (m_HadMaterial)
+                    m_Entity.GetComponent<Prism::MaterialComponent>() = prepared.Parts[0].Material;
+                else
+                    m_Entity.AddComponent<Prism::MaterialComponent>(prepared.Parts[0].Material);
+                m_AppliedMaterial = true;
+            }
+            else {
+                meshRenderer.SubmeshIndex = -1;
+                PRISM_INFO("O modelo tem ", prepared.Parts.size(), " materiais. Para importar cada um, arraste o arquivo para a Hierarquia ou a Viewport.");
+            }
         }
 
         void Undo() override {
-            if (m_Entity && m_Entity.HasComponent<Prism::MeshRendererComponent>())
-                m_Entity.GetComponent<Prism::MeshRendererComponent>().ModelAsset = m_Before;
+            if (!m_Entity || !m_Entity.HasComponent<Prism::MeshRendererComponent>())
+                return;
+            auto& meshRenderer = m_Entity.GetComponent<Prism::MeshRendererComponent>();
+            meshRenderer.ModelAsset = m_BeforeAsset;
+            meshRenderer.SubmeshIndex = m_BeforeSubmesh;
+            if (m_AppliedMaterial) {
+                if (m_HadMaterial)
+                    m_Entity.GetComponent<Prism::MaterialComponent>() = m_BeforeMaterial;
+                else if (m_Entity.HasComponent<Prism::MaterialComponent>())
+                    m_Entity.RemoveComponent<Prism::MaterialComponent>();
+            }
         }
 
         std::string GetName() const override { return "Carregar Modelo de Asset"; }
 
     private:
-        // Mesmo padrao de LoadMaterialAssetCommand::ResolveAssetID acima -
-        // AssetID{} (invalido) se nao houver Project ativo ou o caminho
-        // nao resolver para um asset conhecido (ex: arquivo copiado para
-        // dentro de Assets por fora do editor, antes de um Refresh
-        // rodar). Tenta um Refresh() como segunda chance (mesmo padrao de
-        // InstantiatePrefabCommand::ResolveAssetID) antes de desistir -
-        // arrastar um modelo recem-copiado para a pasta e um caso comum
-        // o bastante para valer a segunda tentativa.
+        // Plano B quando a importacao completa falha (arquivo invalido):
+        // AssetID{} (invalido) se nao houver Project ativo ou o caminho nao
+        // resolver para um asset conhecido. Tenta um Refresh() como segunda
+        // chance (mesmo padrao de InstantiatePrefabCommand::ResolveAssetID).
         Prism::AssetID ResolveAssetID() const {
             auto project = Prism::Project::GetActive();
             if (!project)
@@ -1018,7 +1054,74 @@ namespace PrismEditor {
 
         Prism::Entity m_Entity;
         std::filesystem::path m_AssetPath;
-        Prism::AssetID m_Before;
+        Prism::AssetID m_BeforeAsset;
+        int32_t m_BeforeSubmesh = -1;
+        bool m_HadMaterial = false;
+        bool m_AppliedMaterial = false;
+        Prism::MaterialComponent m_BeforeMaterial;
+    };
+
+    // Instancia um modelo (.obj/.fbx/.gltf/.glb) na cena: uma entidade raiz com
+    // o nome do arquivo e, se o modelo tiver varios materiais, uma entidade
+    // FILHA por material (cada uma com MeshRenderer apontando para o submesh e
+    // MaterialComponent com as texturas importadas). Com um unico material,
+    // a propria raiz recebe MeshRenderer + Material. Usado pelo drag-and-drop
+    // de um modelo do Content Browser para a Hierarquia/Viewport (ver
+    // EntityOps::InstantiateModel). A leitura do arquivo acontece uma vez; Redo
+    // reaproveita o resultado.
+    class InstantiateModelCommand : public Prism::Command {
+    public:
+        InstantiateModelCommand(Prism::Ref<Prism::Scene> scene, std::filesystem::path modelPath)
+            : m_Scene(scene), m_ModelPath(std::move(modelPath)) {}
+
+        void Execute() override {
+            if (!m_Prepared) {
+                m_Model = ModelImport::Prepare(m_ModelPath);
+                m_Prepared = true;
+            }
+            if (!m_Model.Success || m_Model.Parts.empty()) {
+                PRISM_ERROR("Nao foi possivel importar o modelo '", m_ModelPath.string(), "': ", m_Model.Error);
+                return;
+            }
+
+            auto addParts = [&](Prism::Entity entity, const ModelImport::Part& part) {
+                auto& meshRenderer = entity.AddComponent<Prism::MeshRendererComponent>();
+                meshRenderer.ModelAsset = m_Model.Asset;
+                meshRenderer.SubmeshIndex = part.SubmeshIndex;
+                entity.AddComponent<Prism::MaterialComponent>(part.Material);
+            };
+
+            Prism::Entity root = m_Scene->CreateEntity(m_Model.Name);
+            if (m_Model.Parts.size() == 1) {
+                addParts(root, m_Model.Parts[0]);
+            }
+            else {
+                for (const ModelImport::Part& part : m_Model.Parts) {
+                    Prism::Entity child = m_Scene->CreateEntity(part.Name);
+                    addParts(child, part);
+                    m_Scene->SetParent(child, root);
+                }
+            }
+            m_Root = root;
+        }
+
+        void Undo() override {
+            if (m_Root)
+                m_Scene->DestroyEntity(m_Root); // recursivo: leva os filhos junto
+            m_Root = {};
+        }
+
+        std::string GetName() const override { return "Instanciar Modelo"; }
+
+        // Valido apos Execute(), ate o proximo Undo() - o chamador seleciona a raiz.
+        Prism::Entity GetInstantiatedEntity() const { return m_Root; }
+
+    private:
+        Prism::Ref<Prism::Scene> m_Scene;
+        std::filesystem::path m_ModelPath;
+        ModelImport::PreparedModel m_Model;
+        bool m_Prepared = false;
+        Prism::Entity m_Root;
     };
 
     // Reparenta uma entidade (drag-and-drop na Hierarchy panel - ver

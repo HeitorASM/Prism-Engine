@@ -53,6 +53,7 @@ namespace Prism {
                 WriteRaw(out, c.Mesh);
                 WriteRaw(out, c.Color);
                 WriteRaw(out, c.ModelAsset); // AssetID e so um uint64_t (trivialmente copiavel) - mesmo padrao de MaterialComponent::LinkedAsset
+                WriteRaw(out, c.SubmeshIndex); // v14
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MeshRendererComponent>();
@@ -87,6 +88,10 @@ namespace Prism {
                 // primitiva" e preferivel a perder a entidade toda por
                 // causa so do campo mais novo.
                 ReadRaw(in, c.ModelAsset);
+                // SubmeshIndex (v14): mesmo tratamento gracioso de ModelAsset.
+                // Valor invalido (< -1) vira -1 = malha mesclada.
+                if (!ReadRaw(in, c.SubmeshIndex) || c.SubmeshIndex < -1)
+                    c.SubmeshIndex = -1;
                 return true;
             }
         );

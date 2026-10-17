@@ -34,6 +34,7 @@
 #include <utility> 
 #include <string>
 #include <unordered_map>
+#include <filesystem>
 
 struct GLFWwindow;
 
@@ -188,7 +189,14 @@ namespace Prism {
         // Recarrega automaticamente se o Model correspondente for
         // recarregado via InvalidateModelCache (ex: apos reimportar o
         // mesmo arquivo).
-        static Mesh* GetOrLoadModelMesh(AssetID modelAsset);
+        //
+        // 'submeshIndex' >= 0 devolve o submesh (um por material) com esse
+        // indice - ver MeshRendererComponent::SubmeshIndex; -1 (ou fora do
+        // intervalo) devolve a malha mesclada de todos os submeshes. A malha
+        // mesclada de um modelo com varios submeshes so e construida (relendo
+        // o arquivo) na primeira vez que alguem a pede, para nao gastar o
+        // dobro de VRAM com modelos usados so por submesh.
+        static Mesh* GetOrLoadModelMesh(AssetID modelAsset, int submeshIndex = -1);
 
         // Resolve QUAL Mesh (GPU) desenhar/testar picking para um
         // MeshRendererComponent: um modelo IMPORTADO (ModelAsset valido)
@@ -498,15 +506,21 @@ namespace Prism {
         static std::unordered_map<std::string, Scope<Texture2D>> s_TextureCache;
 
         // Cache de malhas de MODELOS IMPORTADOS, indexado por AssetID (ver
-        // GetOrLoadModelMesh acima). Scope<Mesh> nulo (entrada presente,
-        // ponteiro vazio) e o marcador de "ja tentei importar este
+        // GetOrLoadModelMesh acima). ModelCacheEntry::Failed (entrada presente) e o marcador de "ja tentei importar este
         // AssetID e FALHOU" - distinto de "AssetID nunca visto" (entrada
         // ausente do map), que dispara uma nova tentativa de
         // ModelLoader::Load. Sem essa distincao, uma entidade apontando
         // para um arquivo quebrado tentaria reimportar (reler o arquivo
         // inteiro do disco) TODO FRAME, ja que DrawScene chama
         // GetOrLoadModelMesh a cada chamada.
-        static std::unordered_map<AssetID, Scope<Mesh>> s_ModelMeshCache;
+        struct ModelCacheEntry {
+            bool Failed = false;                    // importacao falhou - nao tentar de novo
+            std::filesystem::path AbsolutePath;     // para reler o arquivo ao construir a malha mesclada sob demanda
+            std::vector<Scope<Mesh>> Submeshes;     // um por material
+            Scope<Mesh> Merged;                     // so para modelos com > 1 submesh, e so depois de pedida
+            bool MergedTried = false;
+        };
+        static std::unordered_map<AssetID, ModelCacheEntry> s_ModelMeshCache;
     };
 
 }

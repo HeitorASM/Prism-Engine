@@ -56,6 +56,20 @@ namespace PrismEditor::EntityOps {
         ctx.SelectedEntity = instantiated;
     }
 
+    void InstantiateModel(EditorContext& ctx, const std::filesystem::path& modelPath, Prism::Entity parent) {
+        auto command = Prism::CreateScope<InstantiateModelCommand>(ctx.ActiveScene, modelPath);
+        InstantiateModelCommand* raw = command.get();
+        ctx.History.Execute(std::move(command));
+        Prism::Entity instantiated = raw->GetInstantiatedEntity();
+        if (!instantiated)
+            return; // importacao falhou (erro ja logado)
+
+        if (parent)
+            ctx.History.Execute(Prism::CreateScope<SetParentCommand>(ctx.ActiveScene, instantiated, Prism::Entity{}, parent));
+
+        ctx.SelectedEntity = instantiated;
+    }
+
     void DuplicateEntity(EditorContext& ctx, Prism::Entity entity) {
         if (!entity)
             return;

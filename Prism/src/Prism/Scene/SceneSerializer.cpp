@@ -51,6 +51,9 @@ namespace Prism {
     //       (.obj/.fbx/.gltf/.glb). Invalido (0) para toda entidade salva
     //       antes desta versao (equivale a "sem modelo importado, usa a
     //       primitiva 'Mesh'" - o comportamento de sempre).
+    //   v14 MeshRendererComponent::SubmeshIndex (int32_t, logo apos
+    //       ModelAsset) - qual submesh/material do modelo importado a
+    //       entidade desenha (-1 = malha mesclada de todos os submeshes).
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -63,7 +66,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 13;
+    static constexpr uint32_t kSceneFormatVersion = 14;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

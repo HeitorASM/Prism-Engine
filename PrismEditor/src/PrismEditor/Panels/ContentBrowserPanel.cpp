@@ -186,7 +186,7 @@ namespace PrismEditor {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.25f));
                 if (isSelected)
                     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.85f, 0.55f, 0.20f, 1.0f));
-                clicked = ImGui::ImageButton("##thumb", (ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(cellSize - 8.0f, cellSize - 8.0f));
+                clicked = ImGui::ImageButton("##thumb", (ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(cellSize - 8.0f, cellSize - 8.0f), ImVec2(0, 1), ImVec2(1, 0)); // V invertido: Texture2D guarda a imagem de cabeca para baixo (stbi flip, ver Texture.cpp)
                 if (isSelected)
                     ImGui::PopStyleColor();
                 ImGui::PopStyleColor(3);
@@ -244,7 +244,7 @@ namespace PrismEditor {
                 std::string pathString = entry.Path.string();
                 ImGui::SetDragDropPayload("CONTENT_BROWSER_IMAGE_PATH", pathString.c_str(), pathString.size() + 1);
                 if (hasThumbnail)
-                    ImGui::Image((ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(48, 48));
+                    ImGui::Image((ImTextureID)(uintptr_t)thumbnail->GetRendererID(), ImVec2(48, 48), ImVec2(0, 1), ImVec2(1, 0));
                 ImGui::Text("%s", entry.Name.c_str());
                 ImGui::EndDragDropSource();
             }

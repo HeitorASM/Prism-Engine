@@ -75,7 +75,10 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 
 ## Roadmap
 
-- [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp) - áudio e texturas pelo editor ainda pendente
+- [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp), com um material por submesh e texturas embutidas extraídas
+- [ ] Áudio 
+- [ ] API de scripting Lua mais completa
+- [ ] Scripts em C++ (módulo nativo com hot reload)
 - [ ] BSP/CSG e ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)

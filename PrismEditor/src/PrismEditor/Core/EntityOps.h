@@ -37,6 +37,11 @@ namespace PrismEditor::EntityOps {
     // logica compartilhada entre o menu de contexto (m_EntityContextMenu,
     // ver Panels/EntityContextMenuPanel.h) e o atalho de teclado Ctrl+D
     // (ver OnUpdate).
+    // Instancia o modelo 3D em 'modelPath' (uma entidade por material, ver
+    // InstantiateModelCommand) e seleciona a raiz criada. Com 'parent' valido,
+    // a raiz fica filha dele. Mesmo padrao de InstantiatePrefab.
+    void InstantiateModel(EditorContext& ctx, const std::filesystem::path& modelPath, Prism::Entity parent = {});
+
     void DuplicateEntity(EditorContext& ctx, Prism::Entity entity);
 
         // Exclui 'entity' via DeleteEntityCommand e limpa a selecao se ela

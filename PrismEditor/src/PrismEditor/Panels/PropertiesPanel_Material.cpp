@@ -161,7 +161,7 @@ namespace PrismEditor {
                 // --- Preview / drop target (coluna esquerda) --------
                 ImGui::BeginGroup();
                 if (hasValidTexture) {
-                    ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(previewSize, previewSize));
+                    ImGui::Image((ImTextureID)(uintptr_t)texture->GetRendererID(), ImVec2(previewSize, previewSize), ImVec2(0, 1), ImVec2(1, 0)); // V invertido: Texture2D guarda a imagem espelhada em Y (stbi flip, ver Texture.cpp)
                 }
                 else {
                     // Sem textura (ou path quebrado): um botao vazio

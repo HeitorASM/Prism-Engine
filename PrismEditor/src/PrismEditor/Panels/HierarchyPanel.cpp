@@ -71,6 +71,11 @@ namespace PrismEditor {
                 std::string pathString((const char*)payload->Data, payload->DataSize - 1); // -1: string no payload inclui o terminador nulo
                 EntityOps::InstantiatePrefab(m_Ctx, pathString);
             }
+            // Modelo 3D (.obj/.fbx/.gltf/.glb): instancia com um material por parte.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_MODEL_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                EntityOps::InstantiateModel(m_Ctx, pathString);
+            }
             ImGui::EndDragDropTarget();
         }
 
@@ -175,6 +180,10 @@ namespace PrismEditor {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_PREFAB_PATH")) {
                 std::string pathString((const char*)payload->Data, payload->DataSize - 1);
                 EntityOps::InstantiatePrefab(m_Ctx, pathString, entity);
+            }
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_MODEL_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                EntityOps::InstantiateModel(m_Ctx, pathString, entity);
             }
             ImGui::EndDragDropTarget();
         }

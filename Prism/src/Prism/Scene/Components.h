@@ -100,6 +100,14 @@ namespace Prism {
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
         AssetID ModelAsset; // ver comentario acima - invalido = usa 'Mesh' (primitiva)
 
+        // Qual submesh (um por MATERIAL do arquivo, ver ImportedSubmesh em
+        // Assets/ModelLoader.h) do modelo desenhar. -1 (padrao) = a malha
+        // mesclada de todos os submeshes (comportamento da v1 da importacao).
+        // O editor instancia um modelo com varios materiais como uma entidade
+        // por submesh, cada uma com o seu MaterialComponent. Ignorado se
+        // ModelAsset for invalido; fora do intervalo cai na malha mesclada.
+        int32_t SubmeshIndex = -1;
+
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;
     };

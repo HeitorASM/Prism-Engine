@@ -9,37 +9,66 @@
 // Renderer::DrawMesh) nunca precisa saber se uma malha veio de uma formula
 // (esfera/cubo/...) ou de um arquivo importado.
 //
-// ESCOPO ATUAL (v1 da importacao):
-//   - Um arquivo de modelo pode conter varios "meshes" da parte da Assimp
-//     (um por material/submesh, ex: um carro com "Carroceria"/"Vidro"/
-//     "Pneu" separados). Esta engine ainda nao tem multi-material por
-//     entidade (MaterialComponent e UM material por entidade, ver
-//     Components.h) - por isso TODOS os submeshes do arquivo sao
-//     mesclados (merge) numa UNICA GeneratedMesh, na leitura, perdendo a
-//     divisao por material. Reflete diretamente a limitacao ja documentada
-//     em MaterialComponent: "um material por entidade".
-//   - So a HIERARQUIA DE VERTICES/TRIANGULOS e importada - nao ha
-//     importacao de: esqueleto/skinning (animacao), camera/luzes embutidas
-//     no arquivo, ou multiplos nos (cada no do arquivo vira so mais
-//     triangulos mesclados na mesma malha, sem preservar a hierarquia de
-//     transformacoes entre nos). Ver docs/formatos-de-arquivo.md para o
-//     estado exato desta limitacao.
-//   - Texturas embutidas no proprio arquivo (ex: .glb com imagens
-//     empacotadas) NAO sao extraidas ainda - so a geometria. O material
-//     visual de uma entidade com modelo importado continua vindo de
-//     MaterialComponent, configurado a parte pelo usuario no editor.
+// ESCOPO ATUAL (v2 da importacao):
+//   - Um arquivo de modelo pode conter varios "meshes" do Assimp. Eles sao
+//     AGRUPADOS POR MATERIAL em ImportedSubmesh (um submesh por material do
+//     arquivo, com a hierarquia de nos "gravada" nos vertices). O editor usa
+//     isso para criar uma entidade por submesh, cada uma com o seu
+//     MaterialComponent (ver MeshRendererComponent::SubmeshIndex). A malha
+//     mesclada de TODOS os submeshes (ModelImportResult::Mesh) continua
+//     disponivel para quem so precisa da geometria inteira.
+//   - Materiais: cada ImportedSubmesh traz um ImportedMaterial com os
+//     caminhos (ABSOLUTOS) das texturas de albedo/normal/roughness-metallic
+//     e os fatores (cor base, roughness, metallic). Texturas EMBUTIDAS no
+//     arquivo (ex: .glb) so sao gravadas em disco quando
+//     ModelImportOptions::ExtractEmbeddedTextures e true - o carregamento
+//     em runtime do Renderer nunca escreve nada no disco.
+//   - NAO e importado: esqueleto/skinning (animacao), camera/luzes embutidas
+//     no arquivo, nem a hierarquia de nos como entidades separadas.
 // ============================================================================
 
 #include "../Renderer/PrimitiveMeshFactory.h" // GeneratedMesh
+#include <glm/glm.hpp>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace Prism {
 
+    // Material de um submesh, ja traduzido para o modelo PBR metallic/
+    // roughness da engine (ver MaterialComponent, Components.h). Caminhos
+    // ABSOLUTOS (vazio = sem aquela textura) - quem consome converte para
+    // relativo a pasta do projeto.
+    struct ImportedMaterial {
+        std::string Name;
+        std::filesystem::path AlbedoPath;
+        std::filesystem::path NormalPath;
+        std::filesystem::path RoughnessMetallicPath; // convencao glTF: G = roughness, B = metallic
+        glm::vec3 AlbedoTint = { 1.0f, 1.0f, 1.0f };
+        float Roughness = 0.5f;
+        float Metallic = 0.0f;
+    };
+
+    // Todos os triangulos do arquivo que usam o MESMO material.
+    struct ImportedSubmesh {
+        std::string Name; // nome do material (ou "Submesh N" se o material nao tiver nome)
+        GeneratedMesh Mesh;
+        ImportedMaterial Material;
+    };
+
+    struct ModelImportOptions {
+        // true: grava em 'TextureOutputDir' as texturas embutidas no arquivo
+        // (ex: imagens dentro de um .glb) e devolve o caminho do arquivo
+        // gravado. false (padrao): texturas embutidas sao ignoradas.
+        bool ExtractEmbeddedTextures = false;
+        std::filesystem::path TextureOutputDir;
+    };
+
     struct ModelImportResult {
         bool Success = false;
-        std::string Error;     // vazio se Success == true; mensagem legivel se false
-        GeneratedMesh Mesh;     // valido somente se Success == true
+        std::string Error;                   // vazio se Success == true; mensagem legivel se false
+        GeneratedMesh Mesh;                  // TODOS os submeshes mesclados - valido somente se Success == true
+        std::vector<ImportedSubmesh> Submeshes; // um por material usado - valido somente se Success == true
     };
 
     class ModelLoader {
@@ -51,7 +80,7 @@ namespace Prism {
         // calculo de tangentes) - pensada para ser usada na hora de
         // (re)carregar um asset de Model (Renderer::GetOrLoadModelMesh, ver
         // Renderer.h), nunca dentro do loop de desenho por frame.
-        static ModelImportResult Load(const std::filesystem::path& absolutePath);
+        static ModelImportResult Load(const std::filesystem::path& absolutePath, const ModelImportOptions& options = {});
 
         // Extensoes de arquivo suportadas por esta engine (subconjunto do
         // que o Assimp entende de verdade - ver ASSIMP_BUILD_*_IMPORTER em

@@ -43,7 +43,7 @@ namespace Prism {
     float Renderer::s_EnvHorizon[3] = { RenderSettings{}.EnvHorizon[0], RenderSettings{}.EnvHorizon[1], RenderSettings{}.EnvHorizon[2] };
     float Renderer::s_EnvGround[3]  = { RenderSettings{}.EnvGround[0],  RenderSettings{}.EnvGround[1],  RenderSettings{}.EnvGround[2] };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
-    std::unordered_map<AssetID, Scope<Mesh>> Renderer::s_ModelMeshCache;
+    std::unordered_map<AssetID, Renderer::ModelCacheEntry> Renderer::s_ModelMeshCache;
 
     // ========================================================================
     // Shaders: ficam em arquivos (Prism/shaders/*.vert|*.frag), nao mais em
@@ -273,17 +273,36 @@ namespace Prism {
         return result;
     }
 
-    Mesh* Renderer::GetOrLoadModelMesh(AssetID modelAsset) {
+    Mesh* Renderer::GetOrLoadModelMesh(AssetID modelAsset, int submeshIndex) {
         if (!modelAsset.IsValid())
             return nullptr; // "sem modelo importado" - ver comentario em Renderer.h, sem logar erro
 
+        // Escolhe a malha dentro de uma entrada ja carregada.
+        auto pick = [submeshIndex](ModelCacheEntry& entry) -> Mesh* {
+            if (entry.Failed || entry.Submeshes.empty())
+                return nullptr;
+            if (submeshIndex >= 0 && submeshIndex < (int)entry.Submeshes.size())
+                return entry.Submeshes[submeshIndex].get();
+            if (entry.Submeshes.size() == 1)
+                return entry.Submeshes[0].get(); // um unico material: a malha mesclada E o submesh 0
+
+            // Malha mesclada de varios submeshes: construida sob demanda.
+            if (!entry.Merged && !entry.MergedTried) {
+                entry.MergedTried = true;
+                ModelImportResult again = ModelLoader::Load(entry.AbsolutePath);
+                if (again.Success)
+                    entry.Merged = Mesh::Create(again.Mesh.Vertices, again.Mesh.Indices);
+            }
+            return entry.Merged.get();
+        };
+
         // find() (nao operator[]) para distinguir "entrada ausente" (nunca
-        // tentamos) de "entrada presente com Scope nulo" (ja tentamos e
-        // FALHOU - ver comentario grande em s_ModelMeshCache, Renderer.h)
-        // sem criar uma entrada nova so de consultar.
+        // tentamos) de "entrada com Failed" (ja tentamos e FALHOU - ver
+        // comentario grande em s_ModelMeshCache, Renderer.h) sem criar uma
+        // entrada nova so de consultar.
         auto it = s_ModelMeshCache.find(modelAsset);
         if (it != s_ModelMeshCache.end())
-            return it->second.get(); // pode ser nullptr de proposito (falha em cache)
+            return pick(it->second);
 
         auto project = Project::GetActive();
         if (!project) {
@@ -303,27 +322,28 @@ namespace Prism {
             // .meta perdido - ver comentario grande em AssetRegistry.h).
             // ESTE caso E cacheado como falha: o ID continua invalido ate
             // o usuario trocar o vinculo (ou o asset reaparecer e um
-            // Refresh() rodar) - reter 'null' evita reconsultar o
+            // Refresh() rodar) - reter a falha evita reconsultar o
             // AssetRegistry a cada frame por uma referencia que sabemos
             // estar quebrada agora.
             PRISM_CORE_ERROR("Renderer: MeshRendererComponent::ModelAsset (", modelAsset.ToString(), ") nao resolve para nenhum arquivo - asset apagado ou .meta ausente?");
-            s_ModelMeshCache[modelAsset] = nullptr;
+            s_ModelMeshCache[modelAsset].Failed = true;
             return nullptr;
         }
 
         ModelImportResult imported = ModelLoader::Load(absolutePath);
+        ModelCacheEntry& entry = s_ModelMeshCache[modelAsset];
+        entry.AbsolutePath = absolutePath;
         if (!imported.Success) {
             // ModelLoader::Load ja loga o erro detalhado (PRISM_CORE_ERROR,
-            // ver ModelLoader.cpp) - aqui so cacheia a falha, mesma logica
-            // do bloco acima.
-            s_ModelMeshCache[modelAsset] = nullptr;
+            // ver ModelLoader.cpp) - aqui so cacheia a falha.
+            entry.Failed = true;
             return nullptr;
         }
 
-        auto mesh = Mesh::Create(imported.Mesh.Vertices, imported.Mesh.Indices);
-        Mesh* result = mesh.get();
-        s_ModelMeshCache[modelAsset] = std::move(mesh);
-        return result;
+        entry.Submeshes.reserve(imported.Submeshes.size());
+        for (const ImportedSubmesh& submesh : imported.Submeshes)
+            entry.Submeshes.push_back(Mesh::Create(submesh.Mesh.Vertices, submesh.Mesh.Indices));
+        return pick(entry);
     }
 
     void Renderer::InvalidateModelCache(AssetID modelAsset) {
@@ -332,7 +352,7 @@ namespace Prism {
 
     Mesh* Renderer::ResolveMesh(const MeshRendererComponent& meshRenderer) {
         if (meshRenderer.ModelAsset.IsValid()) {
-            Mesh* modelMesh = GetOrLoadModelMesh(meshRenderer.ModelAsset);
+            Mesh* modelMesh = GetOrLoadModelMesh(meshRenderer.ModelAsset, meshRenderer.SubmeshIndex);
             if (modelMesh)
                 return modelMesh;
             // Vinculo quebrado ou importacao falhou (ver comentario

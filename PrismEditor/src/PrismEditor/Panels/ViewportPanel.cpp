@@ -133,6 +133,10 @@ namespace PrismEditor {
                 std::string pathString((const char*)payload->Data, payload->DataSize - 1);
                 EntityOps::InstantiatePrefab(m_Ctx, pathString);
             }
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_MODEL_PATH")) {
+                std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                EntityOps::InstantiateModel(m_Ctx, pathString);
+            }
             ImGui::EndDragDropTarget();
         }
 

@@ -53,7 +53,7 @@ namespace PrismEditor {
                 // vinculo - por isso um terceiro texto de selo em vez
                 // de reusar "vinculo quebrado" para os dois casos.
                 bool linkBroken = modelPath.empty();
-                bool importFailed = !linkBroken && Prism::Renderer::GetOrLoadModelMesh(meshRenderer.ModelAsset) == nullptr;
+                bool importFailed = !linkBroken && Prism::Renderer::GetOrLoadModelMesh(meshRenderer.ModelAsset, meshRenderer.SubmeshIndex) == nullptr;
                 ImVec4 badgeColor = (linkBroken || importFailed) ? ImVec4(0.85f, 0.35f, 0.35f, 1.0f) : ImVec4(0.35f, 0.65f, 0.85f, 1.0f); // azul = modelo ok, vermelho = problema
                 const char* badgeText = linkBroken ? "[Modelo: vinculo quebrado]" : importFailed ? "[Modelo: falha ao importar]" : "[Modelo importado]";
                 ImGui::TextColored(badgeColor, "%s", badgeText);
@@ -72,9 +72,12 @@ namespace PrismEditor {
                     // so voltar a marcar ModelAsset, custo identico ao
                     // de reabrir o modelo - nao justifica undo proprio.
                     meshRenderer.ModelAsset = {};
+                    meshRenderer.SubmeshIndex = -1;
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Remove o modelo importado. A entidade volta a usar a primitiva 'Mesh' escolhida abaixo.");
+                if (meshRenderer.SubmeshIndex >= 0)
+                    ImGui::TextDisabled("Submesh (material) %d do modelo", meshRenderer.SubmeshIndex);
                 ImGui::Separator();
             }
 

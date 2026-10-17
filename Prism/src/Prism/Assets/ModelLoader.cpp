@@ -3,8 +3,14 @@
 #include "../Core/Log.h"
 
 #include <assimp/Importer.hpp>
+#include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <system_error>
 
 namespace Prism {
 
@@ -140,34 +146,174 @@ namespace Prism {
         }
     }
 
+    // Estado compartilhado pela travessia da arvore de nos: para cada
+    // indice de material do Assimp, qual ImportedSubmesh (em 'Submeshes')
+    // ja foi criado para ele (-1 = ainda nenhum). Criado sob demanda, na
+    // ordem em que os meshes aparecem - assim materiais sem nenhum
+    // triangulo valido nao geram submesh vazio.
+    struct ImportContext {
+        const aiScene* Scene = nullptr;
+        std::vector<ImportedSubmesh>* Submeshes = nullptr;
+        std::vector<int> MaterialToSubmesh;
+    };
+
     // Percorre a arvore de nos (aiNode) recursivamente, acumulando a
     // transformacao de cada no (aiNode::mTransformation, relativa ao PAI)
     // e aplicando-a aos vertices de cada aiMesh referenciado por aquele
-    // no ANTES de acrescentar a 'out' - e assim que um arquivo com
-    // "Carroceria" e "Rodas" como nos-filhos, cada um com sua propria
-    // posicao/rotacao relativa ao no raiz, aparece na engine no lugar e
-    // orientacao CORRETOS mesmo apos o merge (ver comentario grande no
-    // .h): a hierarquia de transformacoes e "gravada" (baked) direto nos
-    // vertices, ja que MeshRendererComponent nao tem como preservar uma
-    // arvore de sub-transformacoes.
-    static void ProcessNode(const aiNode* node, const aiScene* scene, const aiMatrix4x4& parentTransform, GeneratedMesh& out) {
+    // no ANTES de acrescentar ao submesh do material dele - e assim que um
+    // arquivo com "Carroceria" e "Rodas" como nos-filhos, cada um com sua
+    // propria posicao/rotacao relativa ao no raiz, aparece na engine no
+    // lugar e orientacao CORRETOS: a hierarquia de transformacoes e
+    // "gravada" (baked) direto nos vertices, ja que MeshRendererComponent
+    // nao tem como preservar uma arvore de sub-transformacoes.
+    static void ProcessNode(const aiNode* node, ImportContext& ctx, const aiMatrix4x4& parentTransform) {
         aiMatrix4x4 worldTransform = parentTransform * node->mTransformation;
         bool isIdentity = worldTransform.IsIdentity();
 
         for (unsigned int i = 0; i < node->mNumMeshes; i++) {
-            const aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+            const aiMesh* mesh = ctx.Scene->mMeshes[node->mMeshes[i]];
+            if (!mesh->HasPositions() || !mesh->HasFaces())
+                continue;
+
+            unsigned int materialIndex = mesh->mMaterialIndex;
+            if (materialIndex >= ctx.MaterialToSubmesh.size())
+                materialIndex = 0; // indice invalido (arquivo estranho): usa o primeiro material
+            int& submeshIndex = ctx.MaterialToSubmesh[materialIndex];
+            if (submeshIndex < 0) {
+                submeshIndex = (int)ctx.Submeshes->size();
+                ctx.Submeshes->emplace_back();
+            }
             // nullptr quando identidade: AppendAiMesh usa isso para pular
             // o trabalho de transformar vertice a vertice quando nao ha
             // nada a fazer (caso comum: arquivo com um unico no raiz sem
             // rotacao/escala/translacao propria).
-            AppendAiMesh(mesh, isIdentity ? nullptr : &worldTransform, out);
+            AppendAiMesh(mesh, isIdentity ? nullptr : &worldTransform, (*ctx.Submeshes)[submeshIndex].Mesh);
         }
 
         for (unsigned int i = 0; i < node->mNumChildren; i++)
-            ProcessNode(node->mChildren[i], scene, worldTransform, out);
+            ProcessNode(node->mChildren[i], ctx, worldTransform);
     }
 
-    ModelImportResult ModelLoader::Load(const std::filesystem::path& absolutePath) {
+    static std::string SanitizeFileName(std::string name) {
+        for (char& c : name) {
+            if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.'))
+                c = '_';
+        }
+        if (name.empty() || name == "." || name == "..")
+            name = "texture";
+        return name;
+    }
+
+    // Resolve a textura de 'type' (primeira do tipo, indice 0) de 'material'
+    // para um caminho ABSOLUTO em disco, ou vazio se nao houver / nao puder
+    // ser resolvida. Dois casos:
+    //   - Textura EMBUTIDA no arquivo (referencia "*N" ou nome casando com
+    //     scene->GetEmbeddedTexture): so e usada se options pedir extracao;
+    //     os bytes (PNG/JPG ja comprimidos, mHeight == 0) sao gravados em
+    //     options.TextureOutputDir e o caminho gravado e devolvido. Texturas
+    //     embutidas NAO comprimidas (mHeight > 0, pixels crus) sao raras e
+    //     nao sao suportadas (aviso no log).
+    //   - Textura EXTERNA: o Assimp devolve o caminho como escrito no
+    //     arquivo (geralmente relativo a pasta do modelo, as vezes com '\\'
+    //     do Windows ou absoluto de outra maquina). Tenta relativo a pasta
+    //     do modelo e, se nao existir, so o nome do arquivo na pasta do
+    //     modelo.
+    static std::filesystem::path ResolveTexture(const aiScene* scene, const aiMaterial* material, aiTextureType type,
+        const std::filesystem::path& modelDir, const std::string& modelStem, const ModelImportOptions& options) {
+        aiString ref;
+        if (material->GetTextureCount(type) == 0 || material->GetTexture(type, 0, &ref) != AI_SUCCESS)
+            return {};
+        std::string reference = ref.C_Str();
+        if (reference.empty())
+            return {};
+
+        if (const aiTexture* embedded = scene->GetEmbeddedTexture(reference.c_str())) {
+            if (!options.ExtractEmbeddedTextures || options.TextureOutputDir.empty())
+                return {};
+            if (embedded->mHeight != 0) {
+                PRISM_CORE_WARN("ModelLoader: textura embutida '", reference, "' nao esta comprimida (PNG/JPG) - ignorada.");
+                return {};
+            }
+
+            std::string extension = embedded->achFormatHint; // ex: "png", "jpg"
+            if (extension.empty() || extension.size() > 4)
+                extension = "png";
+            std::string baseName;
+            if (reference[0] == '*')
+                baseName = modelStem + "_tex" + reference.substr(1);
+            else
+                baseName = std::filesystem::path(reference).stem().string();
+            std::filesystem::path outPath = options.TextureOutputDir / (SanitizeFileName(baseName) + "." + SanitizeFileName(extension));
+
+            std::error_code ec;
+            std::filesystem::create_directories(options.TextureOutputDir, ec);
+            if (!std::filesystem::exists(outPath, ec)) {
+                std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+                if (!out.is_open()) {
+                    PRISM_CORE_ERROR("ModelLoader: nao foi possivel gravar a textura extraida: ", outPath.string());
+                    return {};
+                }
+                out.write(reinterpret_cast<const char*>(embedded->pcData), (std::streamsize)embedded->mWidth);
+            }
+            return outPath;
+        }
+
+        std::replace(reference.begin(), reference.end(), '\\', '/');
+        std::filesystem::path texturePath(reference);
+        std::error_code ec;
+        if (texturePath.is_relative())
+            texturePath = modelDir / texturePath;
+        if (!std::filesystem::exists(texturePath, ec))
+            texturePath = modelDir / std::filesystem::path(reference).filename();
+        if (!std::filesystem::exists(texturePath, ec)) {
+            PRISM_CORE_WARN("ModelLoader: textura '", reference, "' referenciada pelo modelo nao foi encontrada.");
+            return {};
+        }
+        return texturePath.lexically_normal();
+    }
+
+    // Traduz um aiMaterial para ImportedMaterial. Para glTF, a textura
+    // metallic-roughness vem como aiTextureType_UNKNOWN (indice 0) e ja usa
+    // a convencao da engine (G = roughness, B = metallic); para .obj/.fbx
+    // nao ha equivalente, e os fatores ficam nos valores padrao.
+    static ImportedMaterial BuildMaterial(const aiScene* scene, const aiMaterial* material, bool isGltf,
+        const std::filesystem::path& modelDir, const std::string& modelStem, const ModelImportOptions& options) {
+        ImportedMaterial result;
+
+        aiString name;
+        if (material->Get(AI_MATKEY_NAME, name) == AI_SUCCESS)
+            result.Name = name.C_Str();
+
+        result.AlbedoPath = ResolveTexture(scene, material, aiTextureType_BASE_COLOR, modelDir, modelStem, options);
+        if (result.AlbedoPath.empty())
+            result.AlbedoPath = ResolveTexture(scene, material, aiTextureType_DIFFUSE, modelDir, modelStem, options);
+
+        result.NormalPath = ResolveTexture(scene, material, aiTextureType_NORMALS, modelDir, modelStem, options);
+        if (result.NormalPath.empty())
+            result.NormalPath = ResolveTexture(scene, material, aiTextureType_HEIGHT, modelDir, modelStem, options); // .obj: "map_bump" cai em HEIGHT
+
+        if (isGltf)
+            result.RoughnessMetallicPath = ResolveTexture(scene, material, aiTextureType_UNKNOWN, modelDir, modelStem, options);
+
+        aiColor4D color;
+        if (material->Get(AI_MATKEY_BASE_COLOR, color) == AI_SUCCESS)
+            result.AlbedoTint = { color.r, color.g, color.b };
+        else if (result.AlbedoPath.empty() && material->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS)
+            result.AlbedoTint = { color.r, color.g, color.b };
+        // Com textura de albedo e sem fator PBR explicito (.obj/.fbx), o
+        // "Kd" costuma ser so um cinza de fallback - multiplicar a textura
+        // por ele escureceria o modelo, entao o tint fica branco.
+
+        float factor = 0.0f;
+        if (material->Get(AI_MATKEY_METALLIC_FACTOR, factor) == AI_SUCCESS)
+            result.Metallic = std::clamp(factor, 0.0f, 1.0f);
+        if (material->Get(AI_MATKEY_ROUGHNESS_FACTOR, factor) == AI_SUCCESS)
+            result.Roughness = std::clamp(factor, 0.0f, 1.0f);
+
+        return result;
+    }
+
+    ModelImportResult ModelLoader::Load(const std::filesystem::path& absolutePath, const ModelImportOptions& options) {
         ModelImportResult result;
 
         Assimp::Importer importer;
@@ -189,11 +335,13 @@ namespace Prism {
         // aiProcess_JoinIdenticalVertices: reduz o numero de vertices
         //   duplicados (varios .obj exportam um vertice por combinacao
         //   pos/uv/normal repetida) - reduz o tamanho do VBO final.
-        // aiProcess_FlipUVs: Assimp usa a convencao "V cresce para BAIXO"
-        //   (comum em DirectX/glTF); MeshVertex::UV documenta a convencao
-        //   OPENGL desta engine ("V cresce para CIMA", ver Mesh.h) - sem
-        //   este flag, toda textura de um modelo importado apareceria de
-        //   cabeca para baixo.
+        // NAO usar aiProcess_FlipUVs: Texture2D ja carrega a imagem
+        //   invertida em Y (stbi_set_flip_vertically_on_load, ver
+        //   Texture.cpp), ou seja, espera UV na convencao OpenGL (V cresce
+        //   para CIMA). O Assimp ja entrega UV nessa convencao para .obj e
+        //   .fbx, e o importador de glTF ja converte (v = 1 - v) por conta
+        //   propria - aplicar FlipUVs por cima invertia a textura de TODO
+        //   modelo importado.
         // aiProcess_LimitBoneWeights: sem efeito em meshes sem esqueleto
         //   (a maioria dos casos aqui, ja que skinning nao e importado -
         //   ver comentario no .h), inofensivo deixar ligado para os que tem.
@@ -201,7 +349,6 @@ namespace Prism {
             | aiProcess_CalcTangentSpace
             | aiProcess_GenSmoothNormals
             | aiProcess_JoinIdenticalVertices
-            | aiProcess_FlipUVs
             | aiProcess_ImproveCacheLocality
             | aiProcess_ValidateDataStructure;
 
@@ -223,7 +370,38 @@ namespace Prism {
             return result;
         }
 
-        ProcessNode(scene->mRootNode, scene, aiMatrix4x4(), result.Mesh);
+        ImportContext ctx;
+        ctx.Scene = scene;
+        ctx.Submeshes = &result.Submeshes;
+        ctx.MaterialToSubmesh.assign(std::max(1u, scene->mNumMaterials), -1);
+        ProcessNode(scene->mRootNode, ctx, aiMatrix4x4());
+
+        // Materiais dos submeshes + malha mesclada (todos os submeshes
+        // concatenados, com os indices deslocados pelo numero de vertices ja
+        // acumulados).
+        std::string extension = absolutePath.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        bool isGltf = (extension == ".gltf" || extension == ".glb");
+        std::filesystem::path modelDir = absolutePath.parent_path();
+        std::string modelStem = absolutePath.stem().string();
+
+        for (unsigned int materialIndex = 0; materialIndex < ctx.MaterialToSubmesh.size(); materialIndex++) {
+            int submeshIndex = ctx.MaterialToSubmesh[materialIndex];
+            if (submeshIndex < 0)
+                continue;
+            ImportedSubmesh& submesh = result.Submeshes[submeshIndex];
+            if (materialIndex < scene->mNumMaterials)
+                submesh.Material = BuildMaterial(scene, scene->mMaterials[materialIndex], isGltf, modelDir, modelStem, options);
+            submesh.Name = submesh.Material.Name.empty() ? ("Submesh " + std::to_string(submeshIndex)) : submesh.Material.Name;
+        }
+
+        for (const ImportedSubmesh& submesh : result.Submeshes) {
+            uint32_t baseVertex = (uint32_t)result.Mesh.Vertices.size();
+            result.Mesh.Vertices.insert(result.Mesh.Vertices.end(), submesh.Mesh.Vertices.begin(), submesh.Mesh.Vertices.end());
+            result.Mesh.Indices.reserve(result.Mesh.Indices.size() + submesh.Mesh.Indices.size());
+            for (uint32_t index : submesh.Mesh.Indices)
+                result.Mesh.Indices.push_back(baseVertex + index);
+        }
 
         if (result.Mesh.Vertices.empty() || result.Mesh.Indices.empty()) {
             result.Success = false;
@@ -234,7 +412,7 @@ namespace Prism {
 
         result.Success = true;
         PRISM_CORE_INFO("ModelLoader: '", absolutePath.string(), "' importado (", result.Mesh.Vertices.size(),
-            " vertices, ", result.Mesh.Indices.size() / 3, " triangulos, ", scene->mNumMeshes, " submesh(es) mesclados).");
+            " vertices, ", result.Mesh.Indices.size() / 3, " triangulos, ", result.Submeshes.size(), " material(is)/submesh(es)).");
         return result;
     }
 

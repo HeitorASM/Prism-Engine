@@ -39,7 +39,7 @@ EnvGround=0.22,0.2,0.18
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **13** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
+- Versão atual: **14** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
 
 > Sera resetada futuramente, atualmente so e upada para motivos de desenvolvimento
 
@@ -57,17 +57,29 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v11 | `Material::LinkedAsset` (vínculo vivo com `.prismmat`) |
 | v12 | `PrefabInstanceRoot`/`PrefabInstanceMember` (vínculo vivo com prefab, bloco à parte) |
 | v13 | `MeshRenderer::ModelAsset` (modelo importado) |
+| v14 | `MeshRenderer::SubmeshIndex` (qual material/submesh do modelo a entidade desenha; `-1` = malha mesclada) |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
 
 Do `RaycastComponent` só `TargetPosition`, `Enabled` e `IgnoreParentAndSiblings` são gravados; os campos de resultado (`Hit`, `HitPoint` etc.) são de runtime.
 
+## Modelos 3D (`.obj`, `.fbx`, `.gltf`, `.glb`)
+
+Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **por material** (um submesh por material do arquivo, com a hierarquia de nós já aplicada nos vértices). Arrastar o modelo para a **Hierarquia** ou a **Viewport** cria uma entidade raiz com o nome do arquivo e, se houver mais de um material, uma entidade filha por material; cada uma recebe `MeshRenderer` (com `SubmeshIndex`) e `Material` já preenchido (albedo, normal, roughness/metallic, cor base e fatores).
+
+- Texturas externas são procuradas relativas à pasta do modelo (ou só pelo nome do arquivo ali).
+- Texturas embutidas (ex.: dentro de um `.glb`) são extraídas para `<pasta do modelo>/<nome>_textures/`.
+- A textura roughness/metallic só é importada de glTF (canal G = roughness, canal B = metallic).
+- UVs seguem a convenção OpenGL (V para cima), igual às texturas carregadas pela engine; **não** use `aiProcess_FlipUVs`.
+- Arrastar um modelo para o painel *Mesh Renderer* de uma entidade existente aplica o material dele quando o modelo tem um único material; com vários materiais usa a malha mesclada, sem materiais.
+- Ainda **não** importados: esqueleto/animação, câmeras e luzes do arquivo.
+
 ## `.prismprefab`
 
 - Magic: `PPFB`
-- Versão atual: **1** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`)
+- Versão atual: **2** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`)
 
-Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry`, mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
+Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa: `MeshRenderer::SubmeshIndex`), mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
 
 ## `.prismmat`
 
