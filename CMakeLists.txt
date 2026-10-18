@@ -30,6 +30,9 @@ endif()
 # Debug/Release definem PRISM_DEBUG para habilitar PRISM_ASSERT etc.
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DPRISM_DEBUG")
 
+# Nome/versao/build vem do Version.py (gera <build>/generated/PrismVersion.h).
+include(cmake/PrismVersion.cmake)
+
 add_subdirectory(vendor)
 add_subdirectory(Prism)
 add_subdirectory(PrismEditor)

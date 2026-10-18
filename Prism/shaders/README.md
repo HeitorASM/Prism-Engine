@@ -9,6 +9,7 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `BasicLit` | `basic.vert` | `basic.frag` | Shader principal: PBR Cook-Torrance, multi-luz, sombras, SSAO, ambiente, tone mapping |
 | `Line` | `line.vert` | `line.frag` | Linhas de gizmo (cor sólida) |
 | `Particle` | `particle.vert` | `particle.frag` | Partículas: billboards instanciados lendo um SSBO |
+| `UI` | `ui.vert` | `ui.frag` | UI in-game: quads em pixels lendo um SSBO (cor, textura ou glifo da fonte) |
 | `Sky` | `sky.vert` | `sky.frag` | Skybox: cor, gradiente do ambiente ou panorama equirretangular |
 | `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Passe de profundidade do ponto de vista da luz |
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |

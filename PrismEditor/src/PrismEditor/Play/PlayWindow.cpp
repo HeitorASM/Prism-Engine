@@ -2,6 +2,7 @@
 // comentario extenso em Prism/src/Prism/Renderer/OpenGLContext.cpp).
 #include <glad/gl.h>
 #include "PlayWindow.h"
+#include <Prism/UI/UISystem.h>
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -136,6 +137,7 @@ namespace PrismEditor {
         // OnCreate() (o caso de uso mais comum, ver script de exemplo
         // example_player_input_raycast.lua).
         Prism::Input::SetContext(m_Window);
+        Prism::UISystem::ResetInput();
 
         // Fisica/scripts comecam a rodar imediatamente - Play "de verdade"
         // comeca no instante em que a janela abre, sem um segundo botao
@@ -160,6 +162,7 @@ namespace PrismEditor {
         // de um GLFWwindow* que esta prestes a virar um ponteiro
         // pendurado (dangling) apos glfwDestroyWindow abaixo.
         Prism::Input::SetContext(nullptr);
+        Prism::UISystem::ResetInput();
 
         glfwDestroyWindow(m_Window);
         m_Window = nullptr;
@@ -274,6 +277,15 @@ namespace PrismEditor {
         // Sem CameraComponent::Primary na cena: so o Clear() acima aparece
         // (tela solida) - mesma limitacao que RenderCameraPreview ja tinha
         // (ver EditorLayer.cpp), nao e novo desta janela.
+
+        // UI in-game por cima da cena (e da tela vazia, se nao ha camera). O
+        // layout usa o tamanho da JANELA (mesma unidade do mouse em Input).
+        {
+            int windowWidth = 0, windowHeight = 0;
+            glfwGetWindowSize(m_Window, &windowWidth, &windowHeight);
+            if (windowWidth > 0 && windowHeight > 0 && framebufferWidth > 0 && framebufferHeight > 0)
+                Prism::UISystem::Render(*m_PlayScene, (float)windowWidth, (float)windowHeight, true);
+        }
 
         glfwSwapBuffers(m_Window);
 

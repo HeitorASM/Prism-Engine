@@ -44,7 +44,7 @@ SkyIntensity=1
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **18** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
+- Versão atual: **19** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
 
 > Sera resetada futuramente, atualmente so e upada para motivos de desenvolvimento
 
@@ -67,6 +67,7 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v16 | `Script::Properties` (variáveis públicas editadas) |
 | v17 | `NativeScript` (nome da classe do script C++) |
 | v18 | `ParticleEmitter` (emissor de partículas) |
+| v19 | `UIElement` (elemento de UI in-game) |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
 
@@ -88,7 +89,7 @@ Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **po
 - Magic: `PPFB`
 - Versão atual: **6** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`)
 
-Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — e a v6 a v18 — `ParticleEmitter`), mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
+Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — a v6 a v18 — `ParticleEmitter` — e a v7 a v19 — `UIElement`), mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
 
 ## `.prismmat`
 

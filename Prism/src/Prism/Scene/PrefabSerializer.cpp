@@ -44,7 +44,7 @@ namespace Prism {
     // desvincularam (ver botao "Desvincular" no painel Material), alem
     // de qualquer outra entidade fora do prefab que aponte para o mesmo
     // asset. Isto e intencional: o vinculo e do MATERIAL, nao do prefab.
-    static constexpr uint32_t kPrefabFormatVersion = 6; // v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
+    static constexpr uint32_t kPrefabFormatVersion = 7; // v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
     static constexpr char kMagic[4] = { 'P', 'P', 'F', 'B' };
 
     // --- helpers de escrita/leitura binaria - mesmas rotinas

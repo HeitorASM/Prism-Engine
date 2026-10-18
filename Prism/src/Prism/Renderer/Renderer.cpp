@@ -31,6 +31,8 @@ namespace Prism {
     Scope<SkyTexture> Renderer::s_SkyTexture = nullptr;
     std::string Renderer::s_SkyLoadedPath;
     uint32_t Renderer::s_ParticleSSBO = 0;
+    Ref<Shader> Renderer::s_UIShader = nullptr;
+    uint32_t Renderer::s_UISSBO = 0;
     Ref<Shader> Renderer::s_ShadowDepthShader = nullptr;
     Scope<ShadowMap> Renderer::s_ShadowMap = nullptr;
     uint32_t Renderer::s_ShadowCasterEntityId = 0;
@@ -136,6 +138,8 @@ namespace Prism {
         s_ParticleShader = loadShader("Particle", "particle.vert", "particle.frag");
         s_SkyShader = loadShader("Sky", "sky.vert", "sky.frag");
         glCreateBuffers(1, &s_ParticleSSBO);
+        s_UIShader = loadShader("UI", "ui.vert", "ui.frag");
+        glCreateBuffers(1, &s_UISSBO);
         s_ShadowDepthShader = loadShader("ShadowDepth", "shadow_depth.vert", "shadow_depth.frag");
         // s_ShadowMap NAO e criado aqui de proposito - ver comentario em
         // Renderer.h (s_ShadowMap) sobre alocacao sob demanda.
@@ -180,7 +184,7 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_SkyShader, &s_ShadowDepthShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_SkyShader, &s_ShadowDepthShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
@@ -193,6 +197,8 @@ namespace Prism {
         s_BasicShader.reset();
         s_LineShader.reset();
         s_ParticleShader.reset();
+        s_UIShader.reset();
+        if (s_UISSBO) { glDeleteBuffers(1, &s_UISSBO); s_UISSBO = 0; }
         s_SkyShader.reset();
         s_SkyTexture.reset();
         s_SkyLoadedPath.clear();
@@ -1199,6 +1205,39 @@ namespace Prism {
         // Particulas por ultimo: blend + sem escrita de profundidade, testando
         // contra a profundidade da geometria opaca ja desenhada.
         DrawParticles(scene, view, projection);
+    }
+
+    void Renderer::DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
+                               const Texture2D* texture, uint32_t fontTexture) {
+        if (!s_UIShader || s_UISSBO == 0 || count == 0 || screenWidth <= 0.0f || screenHeight <= 0.0f)
+            return;
+
+        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        bool depthWasEnabled = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
+        s_UIShader->Bind();
+        s_UIShader->SetFloat2("u_ScreenSize", screenWidth, screenHeight);
+        if (texture && texture->IsValid())
+            texture->Bind(0);
+        if (fontTexture != 0)
+            glBindTextureUnit(1, fontTexture);
+
+        glNamedBufferData(s_UISSBO, (GLsizeiptr)(count * sizeof(UIQuad)), quads, GL_STREAM_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_UISSBO);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)count);
+
+        glBindVertexArray(0);
+        s_UIShader->Unbind();
+        glDisable(GL_BLEND);
+        if (depthWasEnabled)
+            glEnable(GL_DEPTH_TEST);
+        if (cullWasEnabled)
+            glEnable(GL_CULL_FACE);
     }
 
     void Renderer::DrawParticles(Scene& scene, const float* view, const float* projection) {

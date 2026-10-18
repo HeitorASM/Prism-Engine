@@ -53,6 +53,8 @@ namespace Prism {
         static void UnloadScript(Entity entity);
         static void UnloadAll();
         static void DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger);
+        // Chama ScriptableEntity::OnClick da entidade (clique em botao de UI).
+        static void DispatchUIClick(Entity self);
         static bool HasInstances() { return !s_Instances.empty(); }
 
     private:

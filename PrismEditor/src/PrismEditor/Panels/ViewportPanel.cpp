@@ -2,6 +2,7 @@
 #include "EditorGizmos.h"
 #include "../Core/EntityOps.h"
 #include "../Commands/EditorCommands.h"
+#include <Prism/UI/UISystem.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <GLFW/glfw3.h>
@@ -73,6 +74,8 @@ namespace PrismEditor {
         // combinada) desde que DrawScene ganhou SSAO - ver comentario na
         // assinatura de Renderer::DrawScene (Renderer.h).
         Prism::Renderer::DrawScene(*m_Ctx.ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(m_Ctx.Camera.Position));
+        // UI in-game (so visualizacao, sem entrada): layout no tamanho do viewport.
+        Prism::UISystem::Render(*m_Ctx.ActiveScene, (float)spec.Width, (float)spec.Height, false);
         EditorGizmos::RenderCameraGizmos(m_Ctx, viewProjection);
         EditorGizmos::RenderSelectedColliderGizmo(m_Ctx, viewProjection);
         EditorGizmos::RenderLightGizmos(m_Ctx, viewProjection);

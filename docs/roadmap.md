@@ -1,0 +1,45 @@
+# Roadmap de melhorias atuais
+
+## Fase 1 — Modelos e texturas (feito)
+
+- [x] Texturas de modelos importados invertidas: removido `aiProcess_FlipUVs` (a engine já carrega as imagens com flip vertical).
+- [x] Previews de textura invertidos no editor (painel Material e Content Browser).
+- [x] Importação de materiais: um submesh por material, texturas externas e embutidas, fatores PBR.
+- [x] Arrastar modelo para Hierarquia/Viewport instancia com materiais (`MeshRenderer::SubmeshIndex`, mapa v14, prefab v2).
+
+## Fase 2 — Áudio (feito)
+
+- [x] `AudioEngine` em `Prism/Audio/` (miniaudio via FetchContent, só o header).
+- [x] Components `AudioSource` (clip, volume, pitch, loop, 3D, play on start) e `AudioListener` (mapa v15, prefab v3).
+- [x] Assets `.wav/.mp3/.flac` arrastáveis para o campo Clip; botão **Ouvir** no editor.
+- [x] API Lua: `entity:PlaySound()`, `Audio.Play/Play3D/SetMasterVolume`. Veja [audio.md](audio.md).
+- [ ] Pendente: `.ogg` (stb_vorbis), canais de volume, efeitos.
+
+## Fase 3 — Scripting Lua melhor (feito, exceto itens abaixo)
+
+- Ciclo de vida: `OnCreate`, `OnUpdate(dt)`, `OnFixedUpdate`, `OnDestroy`, `OnCollisionEnter/Exit`.
+- API de entidade: buscar por nome/tag, criar/destruir, acessar e modificar qualquer component, hierarquia.
+- `Time`, `Input` completo (ações, mouse, gamepad), `Scene.Load`, `Physics` (forças, raycast, overlap), `Log`.
+- Variáveis públicas do script editáveis no painel Propriedades.
+- Mensagens de erro de Lua com arquivo/linha no Console; hot reload de scripts.
+- Entregue: callbacks de colisão/trigger, `Time`, `Scene` (Find/Create/Instantiate/Destroy), getters de components, operadores de `Vec3`, `Mathf`, variáveis públicas (`Properties`).
+- Pendente: `OnFixedUpdate`, `Scene.Load`, gamepad, hot reload.
+
+## Fase 4 — Scripts em C++ (feito, exceto hot reload durante o Play)
+
+- Módulo nativo do projeto (DLL/.so) com CMake gerado pelo editor, carregado em runtime.
+- Interface `ScriptableEntity` (`OnCreate/OnUpdate/OnDestroy`) e registro por macro `PRISM_REGISTER_SCRIPT`.
+- Entregue: `ScriptableEntity`, `PRISM_REGISTER_SCRIPT`, módulo DLL/.so com CMake gerado, menu "Scripts C++" (gerar/compilar/recarregar), component "Native Script", API da engine para o módulo. Ver [scripting-cpp.md](scripting-cpp.md).
+- Pendente: recarregar o módulo com o jogo em Play, propriedades públicas dos scripts C++, `OnFixedUpdate`.
+
+## Fase 5 — Básicos que ainda faltam
+
+- [x] Sistema de partículas (5A): `ParticleEmitterComponent`, simulação CPU, billboards com blend, preview no editor, API Lua/C++.
+
+
+- Animação esquelética (skinning) e importação de animações.
+- [x] Skybox (5B): cor, gradiente ou panorama equirretangular (.hdr/.png/.jpg) por projeto.
+- [x] UI in-game (5C): `UIElementComponent` (Panel/Texto/Imagem/Botão), âncoras, hierarquia, `OnClick` em Lua/C++, fonte embutida (ver [docs/ui.md](ui.md)).
+
+- Pendente: IBL a partir do panorama (irradiância/reflexo), pós-processamento (bloom).
+- Exportar o jogo (runtime sem editor), gerenciador de assets mais completo (renomear/mover no editor).

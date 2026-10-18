@@ -53,6 +53,7 @@ namespace Prism {
         sol::protected_function OnCollisionExit;
         sol::protected_function OnTriggerEnter;
         sol::protected_function OnTriggerExit;
+        sol::protected_function OnClick; // botao de UI desta entidade clicado
         bool HasRuntimeError = false; // true apos qualquer chamada falhar - impede spam do mesmo erro todo frame
     };
 
@@ -105,6 +106,10 @@ namespace Prism {
         // 'self' (se existir), passando 'other'. Chamado por
         // PhysicsEngine::Simulate, na thread principal.
         static void DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger);
+
+        // Clique em botao de UI: chama OnClick() do script Lua e do script C++
+        // de 'self' (se existirem). Chamado pelo UISystem na thread principal.
+        static void DispatchUIClick(Entity self);
 
         // Destruicao ADIADA (entity:Destroy()/Scene.Destroy em Lua): destruir
         // uma entidade no meio de Scene::OnUpdate invalidaria a iteracao

@@ -40,6 +40,12 @@ namespace PrismEditor {
         using MapDoubleClickedFn = std::function<void(const std::filesystem::path&)>;
         void SetOnMapDoubleClicked(MapDoubleClickedFn fn) { m_OnMapDoubleClicked = std::move(fn); }
 
+        // Duplo-clique num arquivo "generico" (nao e pasta, mapa, projeto,
+        // prefab, material, modelo, audio nem imagem): o EditorLayer abre no
+        // Editor de Codigo, que recusa binarios.
+        using TextFileDoubleClickedFn = std::function<void(const std::filesystem::path&)>;
+        void SetOnTextFileDoubleClicked(TextFileDoubleClickedFn fn) { m_OnTextFileDoubleClicked = std::move(fn); }
+
         // Reseta a pasta atual para a raiz do projeto ativo - chamado
         // quando um projeto novo/diferente e aberto (ver EditorLayer::OnAttach),
         // para nao continuar mostrando a pasta do projeto anterior.
@@ -70,6 +76,7 @@ namespace PrismEditor {
         std::filesystem::path m_SelectedPath;
 
         MapDoubleClickedFn m_OnMapDoubleClicked;
+        TextFileDoubleClickedFn m_OnTextFileDoubleClicked;
 
         // Evita reconstruir a lista de entradas do diretorio a cada frame -
         // so relemos o disco quando a pasta atual muda (NavigateTo) ou

@@ -6,7 +6,7 @@ um. Os textos abaixo foram copiados dos repositórios originais.
 
 Dois grupos de dependências:
 
-- **Incluídas neste repositório** (`vendor/`): glad e stb_image. Estas
+- **Incluídas neste repositório** (`vendor/`): glad, stb_image e stb_truetype. Estas
   **são redistribuídas** junto com o código da engine.
 - **Baixadas pelo CMake na compilação** (`FetchContent`): as demais. O código
   delas **não** está neste repositório, mas quem distribuir um build da engine
@@ -19,6 +19,7 @@ Dois grupos de dependências:
 |---|---|---|---|
 | [glad](https://github.com/Dav1dde/glad) (gerado, OpenGL 4.5 Core) | 2.0.8 | WTFPL ou CC0-1.0 (código gerado); Apache-2.0 (specs Khronos); MIT (`khrplatform.h`) | incluída em `vendor/glad` |
 | [stb_image](https://github.com/nothings/stb) | 2.30 | MIT ou domínio público | incluída em `vendor/stb` |
+| [stb_truetype](https://github.com/nothings/stb) | 1.26 | MIT ou domínio público | incluída em `vendor/stb` |
 | [GLFW](https://github.com/glfw/glfw) | 3.4 | zlib | FetchContent |
 | [glm](https://github.com/g-truc/glm) | 1.0.1 | MIT (ou Happy Bunny) | FetchContent |
 | [EnTT](https://github.com/skypjack/entt) | v3.13.2 | MIT | FetchContent |
@@ -301,6 +302,12 @@ Copyright (c) 2013-2020 The Khronos Group Inc.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## stb_truetype
+
+`vendor/stb/stb_truetype.h`, v1.26, de Sean Barrett. Mesma licença dupla do
+stb_image (MIT ou domínio público, texto no final do próprio arquivo). Usada
+para rasterizar a fonte da UI in-game.
 
 ## stb_image
 
@@ -599,6 +606,12 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## DejaVu Sans
+
+A fonte da UI in-game é a DejaVu Sans, lida diretamente de `Prism/fonts/DejaVuSans.ttf` (copiada para `fonts/` ao lado do executável) e rasterizada em tempo de execução com `stb_truetype`. O aviso de licença acompanha a fonte em `Prism/fonts/DejaVu-LICENSE.txt`.
+Licença Bitstream Vera / DejaVu: livre para uso, cópia, modificação e redistribuição (inclusive embutida em software), desde que o aviso de copyright e a licença acompanhem as cópias da fonte e que a fonte não seja vendida isoladamente. Texto completo: https://dejavu-fonts.github.io/License.html
+Copyright (c) 2003 Bitstream, Inc.; DejaVu changes are in the public domain.
 
 ## miniaudio
 

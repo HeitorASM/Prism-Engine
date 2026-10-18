@@ -136,6 +136,7 @@ namespace PrismEditor {
         //Coreção de um erro em que por algum motivo ao fechar o editor ele crasha a engine sla
         std::filesystem::path navigateToPath;
         std::filesystem::path openMapPath;
+        std::filesystem::path openTextPath;
 
         for (const auto& entry : m_CachedEntries) {
             ImGui::PushID(entry.Path.string().c_str());
@@ -318,6 +319,9 @@ namespace PrismEditor {
                 else if (isMapFile && m_OnMapDoubleClicked) {
                     openMapPath = entry.Path;
                 }
+                else if (!isMapFile && !isProjectFile && !isPrefabFile && !isMaterialFile && !isModelFile && !isAudioFile && !isImage && m_OnTextFileDoubleClicked) {
+                    openTextPath = entry.Path;
+                }
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", entry.Path.string().c_str());
@@ -343,6 +347,9 @@ namespace PrismEditor {
         }
         else if (!openMapPath.empty() && m_OnMapDoubleClicked) {
             m_OnMapDoubleClicked(openMapPath);
+        }
+        else if (!openTextPath.empty() && m_OnTextFileDoubleClicked) {
+            m_OnTextFileDoubleClicked(openTextPath);
         }
     }
 

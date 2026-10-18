@@ -17,6 +17,7 @@ target_include_directories(Prism PUBLIC
 )
 
 target_link_libraries(Prism PUBLIC
+    prism_version
     glad
     glfw
     glm
@@ -61,6 +62,12 @@ endif()
 # PrismEditor/CMakeLists.txt).
 set(PRISM_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders CACHE INTERNAL "Pasta de shaders da engine")
 target_compile_definitions(Prism PRIVATE PRISM_SHADER_SOURCE_DIR="${PRISM_SHADER_DIR}")
+
+# Fonte da UI in-game (Prism/fonts/DejaVuSans.ttf): lida do disco em runtime
+# (ver UI/UISystem.cpp). Mesmo esquema dos shaders: em desenvolvimento vem da
+# pasta do codigo-fonte; num jogo distribuido, da copia ao lado do executavel.
+set(PRISM_FONT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fonts CACHE INTERNAL "Pasta de fontes da engine")
+target_compile_definitions(Prism PRIVATE PRISM_FONT_SOURCE_DIR="${PRISM_FONT_DIR}")
 
 # PRISM_PLATFORM_WINDOWS entra aqui quando formos abstrair diferencas de
 # plataforma de verdade (ex: dialogos nativos de arquivo). Por ora so

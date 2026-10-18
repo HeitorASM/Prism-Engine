@@ -307,6 +307,47 @@ namespace Prism {
             }
         );
 
+        // --- UIElementComponent (v19) -----------------------------------------------
+        Register<UIElementComponent>(
+            "UI Element",
+            [](std::ofstream& out, Entity e) {
+                auto& c = e.GetComponent<UIElementComponent>();
+                WriteRaw(out, c.Type);
+                WriteRaw(out, c.Visible);
+                WriteRaw(out, c.Layer);
+                WriteRaw(out, c.Anchor);
+                WriteRaw(out, c.Offset);
+                WriteRaw(out, c.Size);
+                WriteRaw(out, c.Color);
+                WriteString(out, c.TexturePath);
+                WriteString(out, c.Text);
+                WriteRaw(out, c.FontSize);
+                WriteRaw(out, c.Align);
+                WriteRaw(out, c.TextColor);
+                WriteRaw(out, c.Interactable);
+                WriteRaw(out, c.HoverColor);
+                WriteRaw(out, c.PressedColor);
+                WriteRaw(out, c.BlocksPointer);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<UIElementComponent>();
+                bool ok = ReadRaw(in, c.Type) && ReadRaw(in, c.Visible) && ReadRaw(in, c.Layer)
+                    && ReadRaw(in, c.Anchor) && ReadRaw(in, c.Offset) && ReadRaw(in, c.Size)
+                    && ReadRaw(in, c.Color) && ReadString(in, c.TexturePath) && ReadString(in, c.Text)
+                    && ReadRaw(in, c.FontSize) && ReadRaw(in, c.Align) && ReadRaw(in, c.TextColor)
+                    && ReadRaw(in, c.Interactable) && ReadRaw(in, c.HoverColor) && ReadRaw(in, c.PressedColor)
+                    && ReadRaw(in, c.BlocksPointer);
+                if (!ok
+                    || (int)c.Type < 0 || (int)c.Type > (int)UIElementType::Button
+                    || (int)c.Anchor < 0 || (int)c.Anchor > (int)UIAnchor::Stretch
+                    || (int)c.Align < 0 || (int)c.Align > (int)UITextAlign::Right) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (elemento de UI da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+
         // --- CameraComponent -----------------------------------------------------
         Register<CameraComponent>(
             "Camera",

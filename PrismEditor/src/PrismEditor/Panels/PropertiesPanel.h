@@ -66,6 +66,7 @@ namespace PrismEditor {
         void DrawAudioSourceUI();
         void DrawNativeScriptUI();
         void DrawParticleEmitterUI();
+        void DrawUIElementUI();
         void DrawAudioListenerUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
@@ -159,6 +160,7 @@ namespace PrismEditor {
         Prism::ScriptComponent m_ScriptBeforeEdit;
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
+        Prism::UIElementComponent m_UIBeforeEdit;
 
         // Cache das variaveis publicas (tabela `Properties`) do script
         // selecionado: relido so quando o arquivo ou o caminho mudam.

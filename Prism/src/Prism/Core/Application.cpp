@@ -1,10 +1,12 @@
 #include <glad/gl.h> // sempre primeiro - ver OpenGLContext.cpp
 #include "Application.h"
+#include "../UI/UISystem.h"
 #include "../Audio/AudioEngine.h"
 
 #include "Log.h"
 #include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
+#include <PrismVersion.h>
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/NativeScripting.h"
 #include <GLFW/glfw3.h>
@@ -61,6 +63,7 @@ namespace Prism {
         NativeScripting::Shutdown(); // antes da VM Lua: instancias C++ podem usar a API
         ScriptEngine::Shutdown();
         AudioEngine::Shutdown();
+        UISystem::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
     }
@@ -154,7 +157,7 @@ namespace Prism {
     }
 
     void Application::Run() {
-        PRISM_CORE_INFO("Prism Engine - loop principal iniciado.");
+        PRISM_CORE_INFO(Version::Full(), " - loop principal iniciado.");
 
         while (m_Running) {
             float time = (float)glfwGetTime();

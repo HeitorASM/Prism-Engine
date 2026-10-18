@@ -149,3 +149,18 @@ As versões são fixadas em `vendor/CMakeLists.txt`.
 ## Plataformas
 
 O desenvolvimento é focado em Windows. O `CrashHandler` só tem implementação no Windows (`PRISM_PLATFORM_WINDOWS`); nas outras plataformas ele é vazio.
+
+## Versão da engine
+
+`Version.py` (raiz) é a fonte única de nome, versão, estado e build:
+
+```python
+Name = "Prism"
+Long_name = "Prism Engine"
+Version = "0.1.0"
+Version_state = "pre-alpha"
+Editor_version = "0.1.0"
+Build = ""
+```
+
+`cmake/PrismVersion.cmake` lê o arquivo ao configurar e gera `<build>/generated/PrismVersion.h` (a partir de `Prism/src/Prism/Core/Version.h.in`); o CMake reconfigura sozinho quando o `Version.py` muda. No código: `#include <PrismVersion.h>` e `Prism::Version::Full()` ("Prism Engine 0.1.0 pre-alpha"), `Version::EditorFull()` (título da janela do editor), `Version::Number`, `Version::State`, `Version::Build` e as macros `PRISM_VERSION` etc. Para um build de CI: `cmake -DPRISM_BUILD=1234 ...` sobrescreve o `Build`. A versão é registrada no Console ao iniciar o loop principal. Não confundir com `kSceneFormatVersion`/`kPrefabFormatVersion`, que versionam os formatos de arquivo.

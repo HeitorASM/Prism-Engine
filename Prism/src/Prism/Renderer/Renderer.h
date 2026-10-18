@@ -340,6 +340,21 @@ namespace Prism {
         // da geometria opaca; exposto para quem desenha a cena por conta propria.
         static void DrawParticles(class Scene& scene, const float* view, const float* projection);
 
+        // UI in-game: um quad em espaco de tela (pixels, origem no canto superior
+        // esquerdo). Layout igual ao struct UIQuad de ui.vert (std430).
+        struct UIQuad {
+            glm::vec4 Rect;   // x, y, largura, altura
+            glm::vec4 UV;     // u0, v0, u1, v1
+            glm::vec4 Color;
+            glm::vec4 Params; // x = modo: 0 cor, 1 textura, 2 glifo de fonte
+        };
+        // Desenha 'count' quads por cima do que ja esta no framebuffer atual
+        // (blend normal, sem profundidade). 'texture' serve aos quads de modo 1
+        // (pode ser nullptr); 'fontTexture' e o id GL do atlas R8 dos de modo 2.
+        // Chamado pelo UISystem; o chamador cuida do viewport.
+        static void DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
+                                const Texture2D* texture, uint32_t fontTexture);
+
         // Varre 'scene' por toda entidade com TransformComponent +
         // LightComponent e traduz cada uma para um GPULight (ver comentario
         // na struct acima) usando a posicao/rotacao de MUNDO da entidade
@@ -410,6 +425,10 @@ namespace Prism {
         // O quad e gerado no vertex shader (sem VBO), com um VAO vazio por contexto.
         static Ref<Shader> s_ParticleShader;
         static uint32_t s_ParticleSSBO;
+
+        // UI in-game: shader (ui.vert/.frag) + SSBO reescrito a cada lote.
+        static Ref<Shader> s_UIShader;
+        static uint32_t s_UISSBO;
 
         // Skybox (fundo visivel): ver DrawSky e RenderSettings::Sky. Os valores
         // vem de ApplyRenderSettings; o panorama e carregado sob demanda e

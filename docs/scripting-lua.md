@@ -24,6 +24,7 @@ function OnCollisionEnter(other) end     -- começou a tocar 'other' (Entity)
 function OnCollisionExit(other) end      -- parou de tocar
 function OnTriggerEnter(other) end       -- 'other' entrou num collider marcado como Trigger
 function OnTriggerExit(other) end
+function OnClick() end                   -- botão de UI desta entidade foi clicado
 ```
 
 Os eventos de contato chegam na thread principal, depois da simulação do frame. Cada corpo envolvido recebe o evento com o outro como argumento.
@@ -125,7 +126,7 @@ Operam na cena do script que chamou.
 
 ### Mais métodos de `entity`
 
-`SetName`, `SetRotation(x, y, z)` (graus), `SetScale`, `SetParent(pai)`, `Destroy()`, `GetScript()` (as variáveis e funções do script daquela entidade, para scripts conversarem) e getters de components que devolvem `nil` se ausentes: `GetMeshRenderer()` (`Color`), `GetMaterial()` (`AlbedoTint`, `RoughnessFactor`, `MetallicFactor`, caminhos de textura), `GetLight()` (`Color`, `Intensity`, `Range`, `SpotAngle`…), `GetCamera()` (`FOV`, `Primary`…), `GetAudioSource()` (`Volume`, `Pitch`, `Loop`…), `GetParticleEmitter()` (`Enabled`, `EmissionRate`, `SpreadAngle`, `SetColorStart(r,g,b,a)`…). Partículas: `entity:PlayParticles()` (reinicia e solta o burst), `StopParticles()`, `ClearParticles()`, `IsParticlesPlaying()`, `GetParticleCount()`.
+`SetName`, `SetRotation(x, y, z)` (graus), `SetScale`, `SetParent(pai)`, `Destroy()`, `GetScript()` (as variáveis e funções do script daquela entidade, para scripts conversarem) e getters de components que devolvem `nil` se ausentes: `GetMeshRenderer()` (`Color`), `GetMaterial()` (`AlbedoTint`, `RoughnessFactor`, `MetallicFactor`, caminhos de textura), `GetLight()` (`Color`, `Intensity`, `Range`, `SpotAngle`…), `GetCamera()` (`FOV`, `Primary`…), `GetAudioSource()` (`Volume`, `Pitch`, `Loop`…), `GetUI()` (`Visible`, `Text`, `FontSize`, `Interactable`, `SetOffset(x, y)`, `SetSize(w, h)`, `SetColor(r,g,b,a)`…; ver [UI](ui.md)), `GetParticleEmitter()` (`Enabled`, `EmissionRate`, `SpreadAngle`, `SetColorStart(r,g,b,a)`…). Partículas: `entity:PlayParticles()` (reinicia e solta o burst), `StopParticles()`, `ClearParticles()`, `IsParticlesPlaying()`, `GetParticleCount()`.
 
 `print(...)` agora vai para o Console, como `log`.
 

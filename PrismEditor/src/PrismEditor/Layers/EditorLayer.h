@@ -38,6 +38,7 @@
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
+#include "../Panels/DocsPanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
@@ -55,6 +56,15 @@ namespace PrismEditor {
     private:
         void RenderDockspace();
         void RenderMenuBar();
+
+        // Barra superior fixa (Play/Parar, salvar, desfazer/refazer, layout).
+        void RenderToolbar();
+        // Monta o layout padrao dos paineis: Hierarquia a esquerda, Propriedades
+        // a direita, Viewport + Editor de Codigo (abas) no centro, Conteudo do
+        // Projeto + Console (abas) embaixo. Chamado na primeira abertura (sem
+        // layout salvo) e por "Janela > Restaurar layout padrao".
+        void BuildDefaultLayout(unsigned int dockspaceId, float width, float height);
+        bool m_ResetLayoutRequested = false;
 
         // Scripts C++ (menu "Scripts C++"): gerar projeto, compilar, recarregar o modulo.
         void RenderNativeScriptsMenu();
@@ -111,6 +121,7 @@ namespace PrismEditor {
         // um editor com abas ainda - ver ScriptEditorPanel::Open, que troca
         // o arquivo ativo em vez de abrir uma segunda instancia).
         ScriptEditorPanel m_ScriptEditor;
+        DocsPanel m_Docs; // painel "Documentacao" (botao na barra superior, menu Ajuda e F1)
 
         // Janela de Play (janela separada do SO, ver Play/PlayWindow.h) -
         // dona de uma Scene CLONADA, nunca a mesma instancia de

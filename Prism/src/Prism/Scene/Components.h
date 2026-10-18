@@ -592,6 +592,67 @@ namespace Prism {
         ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
     };
 
+    // --- UI in-game -----------------------------------------------------------
+    // Elemento de interface em espaco de TELA (pixels), desenhado por cima da
+    // cena (ver UI/UISystem.h). Uma entidade com este component NAO precisa de
+    // Transform util: o layout vem de Anchor/Offset/Size. Filhos (hierarquia)
+    // que tambem sao elementos de UI se ancoram dentro do retangulo do pai, e
+    // somem quando o pai some. Sem escala por resolucao: 1 unidade = 1 pixel
+    // (da janela de Play; no editor, do viewport).
+    enum class UIElementType : int {
+        Panel = 0,   // retangulo de cor (ou com textura, se TexturePath)
+        Text = 1,    // texto UTF-8 (Latin-1 coberto; \n quebra linha)
+        Image = 2,   // textura
+        Button = 3   // retangulo clicavel com rotulo (Text)
+    };
+
+    enum class UIAnchor : int {
+        TopLeft = 0, Top, TopRight,
+        Left, Center, Right,
+        BottomLeft, Bottom, BottomRight,
+        Stretch      // preenche o pai, menos a margem 'Offset' em cada lado
+    };
+
+    enum class UITextAlign : int {
+        Left = 0,
+        Center,
+        Right
+    };
+
+    struct UIElementComponent {
+        UIElementType Type = UIElementType::Panel;
+        bool Visible = true;
+        int Layer = 0;                 // ordem entre elementos RAIZ: maior = por cima
+
+        UIAnchor Anchor = UIAnchor::TopLeft;
+        // Margem para DENTRO a partir das bordas ancoradas (positivo = para dentro):
+        // TopLeft(16,16) fica a 16px do topo e da esquerda; BottomRight(16,16) a 16px
+        // do fundo e da direita. Center: deslocamento a partir do centro (x direita,
+        // y para baixo). Stretch: margem em cada lado (Size e ignorado).
+        glm::vec2 Offset = { 16.0f, 16.0f };
+        glm::vec2 Size = { 200.0f, 50.0f };
+
+        glm::vec4 Color = { 1.0f, 1.0f, 1.0f, 1.0f };   // fundo (Panel/Button), tint (Image), cor do texto (Text)
+        std::string TexturePath;                        // Image/Panel: relativo ao projeto
+
+        // Text/Button
+        std::string Text = "Texto";
+        float FontSize = 24.0f;                          // altura da fonte em pixels
+        UITextAlign Align = UITextAlign::Left;           // Button: sempre centralizado
+        glm::vec4 TextColor = { 1.0f, 1.0f, 1.0f, 1.0f };// rotulo do Button
+
+        // Button
+        bool Interactable = true;
+        glm::vec4 HoverColor = { 0.85f, 0.85f, 0.85f, 1.0f };   // multiplica Color com o mouse em cima
+        glm::vec4 PressedColor = { 0.65f, 0.65f, 0.65f, 1.0f }; // multiplica Color com o botao apertado
+
+        // O elemento barra o mouse para o jogo? (UI.IsPointerOverUI). Texto nao barra.
+        bool BlocksPointer = true;
+
+        UIElementComponent() = default;
+        UIElementComponent(const UIElementComponent&) = default;
+    };
+
     // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver
     // Audio/AudioEngine.h): comeca sozinha com PlayOnStart, ou por script
     // (entity:PlaySound()). Espacial (3D): volume cai com a distancia ate o

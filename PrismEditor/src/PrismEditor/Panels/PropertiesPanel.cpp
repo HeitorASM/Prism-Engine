@@ -72,6 +72,9 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ParticleEmitterComponent>())
             DrawParticleEmitterUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::UIElementComponent>())
+            DrawUIElementUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioSourceComponent>())
             DrawAudioSourceUI();
 
@@ -184,6 +187,8 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::MaterialComponent>>(entity, displayName));
         else if (displayName == "Particle Emitter")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::ParticleEmitterComponent>>(entity, displayName));
+        else if (displayName == "UI Element")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::UIElementComponent>>(entity, displayName));
         else if (displayName == "Native Script")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::NativeScriptComponent>>(entity, displayName));
         else if (displayName == "Audio Source")

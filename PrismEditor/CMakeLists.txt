@@ -62,6 +62,27 @@ add_custom_command(TARGET PrismEditor POST_BUILD
         $<TARGET_FILE_DIR:PrismEditor>/shaders
 )
 
+# Documentacao da engine (docs/*.md): painel "Documentacao" do editor (F1).
+# Em desenvolvimento le direto da pasta do codigo-fonte; fora dela, da copia
+# ao lado do executavel.
+set(PRISM_DOCS_DIR ${CMAKE_SOURCE_DIR}/docs)
+target_compile_definitions(PrismEditor PRIVATE PRISM_DOCS_SOURCE_DIR="${PRISM_DOCS_DIR}")
+# remove_directory antes: evita sobrar paginas antigas (renomeadas/apagadas) na copia.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        $<TARGET_FILE_DIR:PrismEditor>/docs
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${PRISM_DOCS_DIR}
+        $<TARGET_FILE_DIR:PrismEditor>/docs
+)
+
+# Copia as fontes (UI in-game) para perto do executavel - mesmo esquema dos shaders.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${PRISM_FONT_DIR}
+        $<TARGET_FILE_DIR:PrismEditor>/fonts
+)
+
 # SDK dos scripts em C++ (caminhos de include da engine) - lido pelo editor
 # ao gerar o projeto de scripts do usuario (NativeScripting::GetSdkFile).
 add_custom_command(TARGET PrismEditor POST_BUILD

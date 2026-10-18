@@ -2,7 +2,7 @@
 # vendor/CMakeLists.txt
 # Dependencias de terceiros da Prism Engine.
 #
-# glad e stb_image sao vendorizados localmente (vendor/glad, vendor/stb).
+# glad, stb_image e stb_truetype sao vendorizados localmente (vendor/glad, vendor/stb).
 # As demais dependencias sao baixadas pelo CMake na primeira configuracao
 # (FetchContent), o que exige conexao com a internet nessa primeira vez;
 # depois ficam em cache local.

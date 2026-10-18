@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 2;
+    constexpr uint32_t kNativeApiVersion = 3;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -109,6 +109,8 @@ namespace Prism {
         virtual void OnCollisionExit(Entity other) { (void)other; }
         virtual void OnTriggerEnter(Entity other) { (void)other; }
         virtual void OnTriggerExit(Entity other) { (void)other; }
+        // Botao de UI (UIElementComponent::Button) desta entidade foi clicado.
+        virtual void OnClick() {}
 
         // Uso da engine: associa a instancia a entidade antes de OnCreate.
         void PrismBind(Entity entity) { m_Entity = entity; }

@@ -2,6 +2,7 @@
 #include "../Core/EntityOps.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
+#include <imgui_internal.h> // DockBuilder (layout padrao dos paineis)
 #include <ImGuizmo.h>
 #include <GLFW/glfw3.h>
 
@@ -34,6 +35,10 @@ namespace PrismEditor {
         m_Viewport.Init();
 
         m_ContentBrowser.ResetToProjectRoot();
+        m_ContentBrowser.SetOnTextFileDoubleClicked([this](const std::filesystem::path& filePath) {
+            if (m_ScriptEditor.Open(filePath))
+                ImGui::SetWindowFocus("###ScriptEditorPanel"); // traz a aba do Editor de Codigo para frente
+            });
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             // Copia do path: o Content Browser pode reaproveitar o buffer
             // dele antes do popup "Salvar alteracoes?" ser respondido (a
@@ -190,7 +195,17 @@ namespace PrismEditor {
 
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+            RenderToolbar();
+
             ImGuiID dockspaceId = ImGui::GetID("PrismDockspace");
+            // Layout padrao: na primeira abertura (sem imgui.ini com este dockspace,
+            // ou com um dockspace vazio de uma sessao antiga quebrada) e ao pedir reset.
+            ImGuiDockNode* existingNode = ImGui::DockBuilderGetNode(dockspaceId);
+            bool emptyDockspace = existingNode == nullptr || (existingNode->IsLeafNode() && existingNode->Windows.Size == 0);
+            if (m_ResetLayoutRequested || emptyDockspace) {
+                m_ResetLayoutRequested = false;
+                BuildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
+            }
             ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
         }
 
@@ -199,7 +214,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
+        if (!io.WantTextInput && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_Ctx.History.Undo();
@@ -214,6 +229,8 @@ namespace PrismEditor {
             // convencao de Unity (Delete) e Blender (X/Delete); cobrimos os
             // dois para nao depender de um teclado especifico (alguns
             // notebooks nao tem uma tecla Delete dedicada facil de achar).
+            else if (ImGui::IsKeyPressed(ImGuiKey_F1, false))
+                m_Docs.Open();
             else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && m_Ctx.SelectedEntity)
                 EntityOps::DuplicateEntity(m_Ctx, m_Ctx.SelectedEntity);
             else if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && m_Ctx.SelectedEntity)
@@ -237,7 +254,95 @@ namespace PrismEditor {
         RenderConsolePanel();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
+        m_Docs.OnImGuiRender();
         // REMOVIDO: RenderCameraPreviewPanel() - agora integrado ao painel de Propriedades
+    }
+
+    void EditorLayer::BuildDefaultLayout(unsigned int dockspaceId, float width, float height) {
+        ImGuiID root = dockspaceId;
+        ImGui::DockBuilderRemoveNode(root);
+        ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(root, ImVec2(width, height));
+
+        ImGuiID center = root;
+        ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.17f, nullptr, &center);
+        ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+        ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+
+        ImGui::DockBuilderDockWindow("Hierarquia", left);
+        ImGui::DockBuilderDockWindow("Propriedades", right);
+        ImGui::DockBuilderDockWindow("Viewport", center);
+        ImGui::DockBuilderDockWindow("###ScriptEditorPanel", center); // aba ao lado do Viewport (ID fixo, ver ScriptEditorPanel)
+        ImGui::DockBuilderDockWindow("###DocsPanel", center);         // painel de documentacao (aparece como aba quando aberto)
+        ImGui::DockBuilderDockWindow("Conteudo do Projeto", bottom);
+        ImGui::DockBuilderDockWindow("Console", bottom);
+        ImGui::DockBuilderFinish(root);
+
+        // Viewport em foco (a aba do editor de script fica atras).
+        ImGui::SetWindowFocus("Viewport");
+    }
+
+    void EditorLayer::RenderToolbar() {
+        const float height = 38.0f;
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 0.0f);
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+        float width = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height),
+            ImGui::GetColorU32(ImGuiCol_MenuBarBg));
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(origin.x, origin.y + height - 1.0f), ImVec2(origin.x + width, origin.y + height - 1.0f),
+            ImGui::GetColorU32(ImGuiCol_Border));
+
+        float startY = ImGui::GetCursorPosY();
+        ImGui::SetCursorPos(ImVec2(10.0f, startY + 6.0f));
+
+        if (ImGui::Button("Salvar"))
+            m_Document.SaveActiveScene();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_Ctx.History.CanUndo());
+        if (ImGui::Button("Desfazer"))
+            m_Ctx.History.Undo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_Ctx.History.CanRedo());
+        if (ImGui::Button("Refazer"))
+            m_Ctx.History.Redo();
+        ImGui::EndDisabled();
+
+        // Play/Parar centralizado.
+        const float playButtonWidth = 90.0f;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX((width - playButtonWidth) * 0.5f);
+        ImGui::SetCursorPosY(startY + 6.0f);
+        if (m_PlayWindow.IsOpen()) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
+            if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
+                OnStopButtonClicked();
+            ImGui::PopStyleColor();
+        }
+        else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
+            if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
+                OnPlayButtonClicked();
+            ImGui::PopStyleColor();
+        }
+
+        // Direita: Documentacao (F1) e Restaurar layout.
+        const char* docsLabel = "Documentacao (F1)";
+        const char* resetLabel = "Restaurar layout";
+        const float framePadding = ImGui::GetStyle().FramePadding.x * 2.0f;
+        float resetWidth = ImGui::CalcTextSize(resetLabel).x + framePadding;
+        float docsWidth = ImGui::CalcTextSize(docsLabel).x + framePadding;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(width - resetWidth - docsWidth - ImGui::GetStyle().ItemSpacing.x - 10.0f);
+        ImGui::SetCursorPosY(startY + 6.0f);
+        if (ImGui::Button(docsLabel))
+            m_Docs.Open();
+        ImGui::SameLine();
+        if (ImGui::Button(resetLabel))
+            m_ResetLayoutRequested = true;
+
+        // Reserva a altura da barra: o dockspace comeca abaixo dela.
+        ImGui::SetCursorPos(ImVec2(0.0f, startY + height));
     }
 
     void EditorLayer::RenderMenuBar() {
@@ -338,6 +443,42 @@ namespace PrismEditor {
                     if (m_Ctx.SelectedEntity)
                         EntityOps::SetPrimaryCamera(m_Ctx, m_Ctx.SelectedEntity); // garante unicidade - desmarca qualquer Primary anterior
                 }
+                if (ImGui::BeginMenu("Criar UI")) {
+                    // Elementos de UI in-game (ver UI/UISystem.h). Nascem como raizes;
+                    // arraste na hierarquia para aninhar dentro de um Panel.
+                    auto createUI = [this](const char* name, std::function<void(Prism::UIElementComponent&)> setup) {
+                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, name, name,
+                            [setup](Prism::Entity entity) { setup(entity.AddComponent<Prism::UIElementComponent>()); });
+                        CreatePresetEntityCommand* raw = command.get();
+                        m_Ctx.History.Execute(std::move(command));
+                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                    };
+                    if (ImGui::MenuItem("Panel"))
+                        createUI("UI Panel", [](Prism::UIElementComponent& ui) {
+                            ui.Type = Prism::UIElementType::Panel;
+                            ui.Size = { 300.0f, 200.0f };
+                            ui.Color = { 0.1f, 0.1f, 0.12f, 0.8f };
+                        });
+                    if (ImGui::MenuItem("Texto"))
+                        createUI("UI Texto", [](Prism::UIElementComponent& ui) {
+                            ui.Type = Prism::UIElementType::Text;
+                            ui.Size = { 300.0f, 40.0f };
+                            ui.BlocksPointer = false;
+                        });
+                    if (ImGui::MenuItem("Botao"))
+                        createUI("UI Botao", [](Prism::UIElementComponent& ui) {
+                            ui.Type = Prism::UIElementType::Button;
+                            ui.Size = { 200.0f, 50.0f };
+                            ui.Color = { 0.25f, 0.45f, 0.85f, 1.0f };
+                            ui.Text = "Botao";
+                        });
+                    if (ImGui::MenuItem("Imagem"))
+                        createUI("UI Imagem", [](Prism::UIElementComponent& ui) {
+                            ui.Type = Prism::UIElementType::Image;
+                            ui.Size = { 128.0f, 128.0f };
+                        });
+                    ImGui::EndMenu();
+                }
                 if (ImGui::MenuItem("Criar Entidade Vazia")) {
                     // So Transform (todo Scene::CreateEntity ja da isso) -
                     // ponto de partida para montar qualquer combinacao de
@@ -358,37 +499,34 @@ namespace PrismEditor {
             RenderNativeScriptsMenu();
 
             if (ImGui::BeginMenu("Janela")) {
-                ImGui::MenuItem("Viewport", nullptr, true, false);
-                ImGui::MenuItem("Hierarquia", nullptr, true, false);
-                ImGui::MenuItem("Propriedades", nullptr, true, false);
-                ImGui::MenuItem("Console", nullptr, true, false);
-                ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
-                ImGui::MenuItem("Editor de Script", nullptr, true, false);
+                if (ImGui::MenuItem("Restaurar layout padrao"))
+                    m_ResetLayoutRequested = true;
+                ImGui::TextDisabled("Arraste as abas para reorganizar os paineis.");
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();
             }
 
             m_RenderSettings.OnImGuiRenderMenu();
 
-            // Botao Play/Parar: abre/fecha a PlayWindow (janela SEPARADA
-            // do SO, ver Play/PlayWindow.h) rodando uma copia clonada da
-            // Scene ativa - scripts/fisica nunca tocam a Scene de edicao
-            // (EditorContext::ActiveScene) diretamente. Alinhado a direita da menu bar
-            // via um espacador.
-            float playButtonWidth = 90.0f;
-            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - playButtonWidth - 16.0f);
-            bool isRunning = m_PlayWindow.IsOpen();
-            if (isRunning) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
-                if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
-                    OnStopButtonClicked();
-                ImGui::PopStyleColor();
-            }
-            else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
-                if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
-                    OnPlayButtonClicked();
-                ImGui::PopStyleColor();
+            if (ImGui::BeginMenu("Ajuda")) {
+                if (ImGui::MenuItem("Documentacao da engine", "F1"))
+                    m_Docs.Open();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Visao geral"))
+                    m_Docs.Open("00-visao-geral.md");
+                if (ImGui::MenuItem("Primeiros passos"))
+                    m_Docs.Open("01-primeiros-passos.md");
+                if (ImGui::MenuItem("Scripting em Lua"))
+                    m_Docs.Open("04-scripting-lua.md");
+                if (ImGui::MenuItem("Scripting em C++"))
+                    m_Docs.Open("05-scripting-cpp.md");
+                if (ImGui::MenuItem("API de scripting (Lua e C++)"))
+                    m_Docs.Open("06-api-de-scripting.md");
+                if (ImGui::MenuItem("UI in-game"))
+                    m_Docs.Open("10-ui-in-game.md");
+                if (ImGui::MenuItem("Como a engine funciona"))
+                    m_Docs.Open("11-como-a-engine-funciona.md");
+                ImGui::EndMenu();
             }
 
             ImGui::EndMenuBar();

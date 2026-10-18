@@ -68,8 +68,8 @@ namespace PrismEditor {
             ImGui::BeginDisabled(script.ScriptPath.empty());
             if (ImGui::Button("Editar")) {
                 auto project = Prism::Project::GetActive();
-                if (project)
-                    m_Ctx.ScriptEditor->Open(project->GetScriptDirectory() / script.ScriptPath);
+                if (project && m_Ctx.ScriptEditor->Open(project->GetScriptDirectory() / script.ScriptPath))
+                    ImGui::SetWindowFocus("###ScriptEditorPanel"); // traz a aba do Editor de Codigo para frente
             }
             ImGui::EndDisabled();
 

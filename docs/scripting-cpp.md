@@ -1,5 +1,7 @@
 # Scripting C++
 
+> No início do desenvolvimento a Prism só suportava Lua; agora suporta C++, e o scripting está sendo trabalhado para que o C++ se torne a linguagem principal, com o Lua como uma opção.
+
 Scripts de gameplay em C++ ao lado dos scripts Lua. O código do projeto vira uma biblioteca compartilhada (`NativeScripts.dll` / `.so` / `.dylib`) que o editor compila e carrega em runtime.
 
 ## Fluxo
@@ -36,7 +38,7 @@ public:
 PRISM_REGISTER_SCRIPT(Coletavel)
 ```
 
-Ciclo de vida (todos opcionais): `OnCreate`, `OnUpdate(dt)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`, `OnTriggerEnter/Exit(other)`. Mesma semântica dos scripts Lua; a mesma entidade pode ter um script Lua **e** um C++.
+Ciclo de vida (todos opcionais): `OnCreate`, `OnUpdate(dt)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`, `OnTriggerEnter/Exit(other)`, `OnClick()` (botão de UI; API v3). Mesma semântica dos scripts Lua; a mesma entidade pode ter um script Lua **e** um C++.
 
 Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `HasComponent<T>`, `GetTransform`, `LogInfo/Warn/Error`, `IsKeyDown/IsKeyPressed/IsMouseButtonDown`, `GetMouseDeltaX/Y`, `GetDeltaTime`, `GetElapsedTime`, `FindEntity`, `CreateEntity`, `Instantiate`, `Destroy`, `ApplyImpulse`, `SetVelocity`, `GetVelocity`, `Raycast`, `PlaySound`, `StopSound`, `PlayParticles`, `StopParticles`.
 

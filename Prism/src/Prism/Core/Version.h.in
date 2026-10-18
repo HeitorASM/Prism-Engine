@@ -1,0 +1,44 @@
+#pragma once
+
+// ============================================================================
+// Gerado pelo CMake a partir de Version.py (cmake/PrismVersion.cmake) - nao
+// edite o arquivo gerado: mude o Version.py na raiz do projeto.
+// Uso: #include <PrismVersion.h>   ->   Prism::Version::Full(), Prism::Version::Number...
+// ============================================================================
+
+#include <string>
+
+#define PRISM_NAME "@PRISM_NAME@"
+#define PRISM_LONG_NAME "@PRISM_LONG_NAME@"
+#define PRISM_VERSION "@PRISM_VERSION@"
+#define PRISM_VERSION_STATE "@PRISM_VERSION_STATE@"
+#define PRISM_EDITOR_VERSION "@PRISM_EDITOR_VERSION@"
+#define PRISM_BUILD "@PRISM_BUILD@"
+
+namespace Prism {
+
+    struct Version {
+        static constexpr const char* Name = PRISM_NAME;
+        static constexpr const char* LongName = PRISM_LONG_NAME;
+        static constexpr const char* Number = PRISM_VERSION;          // versao da engine
+        static constexpr const char* State = PRISM_VERSION_STATE;     // ex: "pre-alpha"
+        static constexpr const char* EditorNumber = PRISM_EDITOR_VERSION;
+        static constexpr const char* Build = PRISM_BUILD;             // "" = build nao oficial
+
+        // "Prism Engine 0.1.0 pre-alpha" (+ " build X" se houver build).
+        static std::string Full() {
+            std::string text = std::string(LongName) + " " + Number;
+            if (State[0] != '\0')
+                text += std::string(" ") + State;
+            if (Build[0] != '\0')
+                text += std::string(" build ") + Build;
+            return text;
+        }
+
+        // "Prism Editor 0.1.0" para titulo de janela.
+        static std::string EditorFull() {
+            return std::string(Name) + " Editor " + EditorNumber;
+        }
+    };
+
+}

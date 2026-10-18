@@ -16,6 +16,29 @@ MeuProjeto/
 
 Ao abrir o editor, a tela inicial permite criar ou abrir um projeto. O último mapa salvo é reaberto automaticamente.
 
+## Documentação
+
+O botão **Documentação (F1)** da barra superior (ou o menu **Ajuda**) abre o painel de documentação: a lista de documentos fica à esquerda e o conteúdo à direita, com **busca** (filtra a lista e destaca os trechos encontrados), botão **Voltar** e links entre documentos.
+
+Há **duas fontes**, alternadas pelo botão pequeno no fim da lista:
+
+- **Documentação da engine** (padrão): os guias para quem **usa** a engine, em `docs/inengine/*.md`. A primeira página é a "Visão geral". A ordem é a do nome do arquivo (`00-`, `01-`...).
+- **Docs do GitHub**: esta documentação técnica (`docs/*.md`), voltada a quem mexe no código da engine.
+
+O painel lê os `.md` da pasta `docs/` (ao lado do código ou, num build, a cópia ao lado do executável), então editar um doc e apertar **Recarregar** já mostra a mudança.
+
+## Layout padrão
+
+Na primeira abertura (sem layout salvo) os painéis já vêm organizados:
+
+- **Barra superior** (fixa): Salvar, Desfazer, Refazer, **Play/Parar** (centro) e **Restaurar layout**.
+- **Esquerda**: Hierarquia.
+- **Direita**: Propriedades.
+- **Centro**: Viewport e Editor de Código, em abas (a Documentação também abre aqui).
+- **Embaixo**: Conteúdo do Projeto e Console, em abas.
+
+Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini`). Se ficar bagunçado, use **Janela → Restaurar layout padrão** (ou o botão da barra superior).
+
 ## Painéis
 
 - **Viewport**: renderização da cena com gizmos.
@@ -23,7 +46,7 @@ Ao abrir o editor, a tela inicial permite criar ou abrir um projeto. O último m
 - **Propriedades**: uma seção por component, com botão "X" para remover e "+ Add Component" para adicionar. A seção Camera inclui uma preview do que a câmera vê.
 - **Console**: lê o `LogBuffer` (últimas 2000 mensagens), com cor por nível, filtro de texto, toggles de verbosidade e auto-scroll.
 - **Conteúdo do Projeto**: navega pelos arquivos do projeto. Duplo clique numa pasta entra nela; duplo clique num `.prismmap` carrega o mapa.
-- **Editor de Script**: edição de `.lua` com syntax highlight.
+- **Editor de Código**: abre `.lua` e `.cpp`/`.h` (com syntax highlight) e qualquer outro arquivo de texto (`.md`, `.txt`…) sem highlight. Dê duplo clique num arquivo no Conteúdo do Projeto, ou use "Editar" no component Script. Vários arquivos podem ficar abertos: a lateral esquerda do painel lista os abertos (clique troca, **x** ou clique do meio fecha, `*` marca alterações não salvas; fechar um arquivo alterado pergunta se salva). **Ctrl+S** salva o arquivo ativo (preservando CRLF/LF) e **Salvar tudo** salva todos. Com o foco no painel, os atalhos da cena (Ctrl+Z, Ctrl+S, Delete) ficam desligados. Arquivos binários ou maiores que 4 MB são recusados.
 
 ### Menu Renderização
 
@@ -104,6 +127,10 @@ Instâncias de prefab mantêm um vínculo com o `.prismprefab` de origem. Seleci
 - O Transform da **raiz** nunca conta como divergência: reposicionar a instância na cena é sempre livre.
 
 Carregar um material é uma **cópia pontual** (a menos que fique vinculado a um `.prismmat`).
+
+## UI in-game
+
+Menu **Entidade → Criar UI** cria Panel, Texto, Botão ou Imagem. O resultado aparece no viewport (só visualização) e na janela de Play. Detalhes em [UI in-game](ui.md).
 
 ## Modo Play
 
