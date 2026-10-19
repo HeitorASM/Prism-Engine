@@ -15,6 +15,7 @@
 #include "EditorCamera.h"
 #include "MaterialLinkSync.h"
 #include <filesystem>
+#include <functional>
 
 namespace PrismEditor {
 
@@ -56,6 +57,12 @@ namespace PrismEditor {
         PlayWindow* Play = nullptr;
         ContentBrowserPanel* ContentBrowser = nullptr;
         ScriptEditorPanel* ScriptEditor = nullptr;
+
+        // Estado do Play (aba Game OU janela separada): ligados pelo
+        // EditorLayer em OnAttach. Use estes em vez de consultar a PlayWindow
+        // diretamente, para cobrir os dois modos.
+        std::function<bool()> IsPlaying;
+        std::function<void()> StopPlaying;
     };
 
 }

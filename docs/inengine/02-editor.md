@@ -4,7 +4,7 @@
 
 Na primeira abertura os painéis já vêm organizados:
 
-- **Barra superior**: Salvar, Desfazer, Refazer, **Play/Parar** (centro), **Documentação (F1)** e **Restaurar layout**.
+- **Barra superior**: Salvar, Desfazer, Refazer, **Play/Em janela/Parar** (centro), **Documentação (F1)** e **Restaurar layout**.
 - **Esquerda**: Hierarquia.
 - **Direita**: Propriedades.
 - **Centro**: Viewport, Editor de Código e Documentação, em abas.
@@ -68,13 +68,15 @@ Instâncias continuam ligadas ao arquivo: a seção **Prefab** das Propriedades 
 
 Na seção **Material**, **Salvar como Asset...** grava um `.prismmat`. Arraste uma imagem do Conteúdo do Projeto para um slot de textura para atribuí-la, e um `.prismmat` para carregar um material.
 
-## Menu Renderização
+## Ambiente e câmera
 
-Ajustes visuais **do projeto** (não da cena), com efeito ao vivo: exposição, intensidade do ambiente, as três cores do ambiente e o fundo (cor, gradiente ou panorama). Ficam no arquivo `.prismproj` e não entram no desfazer. Veja [Visual e renderização](09-visual-e-renderizacao.md).
+O visual vive na cena e na câmera: o component **Environment** (entidade "Ambiente") guarda a luz ambiente e o skybox no mapa, e o component **Camera** tem exposição, fundo e SSAO. Entram no desfazer. Veja [Visual e renderização](09-visual-e-renderizacao.md).
 
 ## Modo Play
 
-O **Play** abre uma janela separada (1280×720) com uma cópia da cena, onde rodam scripts, física, áudio, partículas e UI. A cena de edição nunca é tocada. Não há recarga de script durante o Play: edite o arquivo, pare e rode de novo.
+O **Play** roda uma cópia da cena na aba **Game** (ao lado da Viewport): clique na imagem para jogar, **Esc** devolve o controle ao editor. **Em janela** abre a mesma cópia numa janela separada (1280×720). Rodam scripts, física, áudio, partículas e UI; a cena de edição nunca é tocada. Não há recarga de script durante o Play: edite o arquivo, pare e rode de novo.
+
+Para jogar sem o editor, use o executável **PrismRuntime** (`PrismRuntime <pasta-do-projeto>`): abre o mapa inicial do projeto; **F11** alterna tela cheia.
 
 ## O que o Desfazer cobre
 

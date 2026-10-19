@@ -233,58 +233,28 @@ namespace PrismEditor {
             Prism::Renderer::SetViewport((uint32_t)framebufferWidth, (uint32_t)framebufferHeight);
         }
 
-        Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
-
-        // Acha a entidade com CameraComponent::Primary=true na Scene
-        // CLONADA (nao na Scene de edicao) - mesma busca que
-        // PropertiesPanel::RenderCameraPreview ja fazia, agora usada aqui para
-        // a janela de Play de verdade em vez de so uma preview.
-        Prism::Entity primaryCameraEntity;
-        auto cameraView = m_PlayScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
-        for (auto entityHandle : cameraView) {
-            auto& camera = cameraView.get<Prism::CameraComponent>(entityHandle);
-            if (camera.Primary) {
-                primaryCameraEntity = Prism::Entity(entityHandle, m_PlayScene.get());
-                break;
-            }
-        }
-
-        if (primaryCameraEntity) {
-            float aspect = framebufferHeight > 0 ? (float)framebufferWidth / (float)framebufferHeight : 1.0f;
-            auto& camera = primaryCameraEntity.GetComponent<Prism::CameraComponent>();
-
-            glm::mat4 worldTransform = m_PlayScene->GetWorldTransform(primaryCameraEntity);
-            glm::mat4 view = glm::inverse(worldTransform);
-            glm::mat4 projection = camera.GetProjection(aspect);
-            glm::vec3 worldPos = glm::vec3(worldTransform[3]);
-
-            Prism::Renderer::DrawScene(*m_PlayScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos), Prism::CameraRenderSettings::From(camera));
-        } else if (!m_LoggedNoCameraWarning) {
-            // Log UMA vez so (nao a cada frame) avisando por que a tela
-            // fica preta - ajuda a diagnosticar sem inundar o console.
-            // Motivos tipicos: nenhuma entidade tem CameraComponent na
-            // cena, ou existe uma mas com Primary=false (o default do
-            // component e Primary=true - ver Components.h - entao isso so
-            // acontece se o usuario desmarcou manualmente no Properties
-            // panel, ou se ha mais de uma camera e outra "ganhou").
-            uint32_t cameraCount = 0;
-            for (auto entityHandle : cameraView) { (void)entityHandle; ++cameraCount; }
-            PRISM_CORE_WARN("PlayWindow: nenhuma entidade com CameraComponent::Primary=true encontrada na Scene (",
-                cameraCount, " CameraComponent(s) no total) - a tela ficara preta ate existir uma. "
-                "Confira o Properties panel da entidade camera.");
-            m_LoggedNoCameraWarning = true;
-        }
-        // Sem CameraComponent::Primary na cena: so o Clear() acima aparece
-        // (tela solida) - mesma limitacao que RenderCameraPreview ja tinha
-        // (ver EditorLayer.cpp), nao e novo desta janela.
-
-        // UI in-game por cima da cena (e da tela vazia, se nao ha camera). O
-        // layout usa o tamanho da JANELA (mesma unidade do mouse em Input).
+        // Desenho compartilhado com a aba Game e o Runtime (GameView): camera
+        // principal da Scene CLONADA + UI in-game por cima. O layout da UI usa
+        // o tamanho da JANELA (mesma unidade do mouse em Input).
         {
             int windowWidth = 0, windowHeight = 0;
             glfwGetWindowSize(m_Window, &windowWidth, &windowHeight);
-            if (windowWidth > 0 && windowHeight > 0 && framebufferWidth > 0 && framebufferHeight > 0)
-                Prism::UISystem::Render(*m_PlayScene, (float)windowWidth, (float)windowHeight, true);
+            bool drewCamera = false;
+            if (framebufferWidth > 0 && framebufferHeight > 0)
+                drewCamera = Prism::GameView::Render(*m_PlayScene, (float)windowWidth, (float)windowHeight, true);
+
+            if (!drewCamera && !m_LoggedNoCameraWarning) {
+                // Log UMA vez so (nao a cada frame) avisando por que a tela
+                // fica vazia. Motivos tipicos: nenhuma entidade tem
+                // CameraComponent na cena, ou existe uma mas com Primary=false.
+                uint32_t cameraCount = 0;
+                auto cameraView = m_PlayScene->GetRegistry().view<Prism::CameraComponent>();
+                for (auto entityHandle : cameraView) { (void)entityHandle; ++cameraCount; }
+                PRISM_CORE_WARN("PlayWindow: nenhuma entidade com CameraComponent::Primary=true encontrada na Scene (",
+                    cameraCount, " CameraComponent(s) no total) - a tela ficara vazia ate existir uma. "
+                    "Confira o Properties panel da entidade camera.");
+                m_LoggedNoCameraWarning = true;
+            }
         }
 
         glfwSwapBuffers(m_Window);

@@ -16,8 +16,8 @@ namespace PrismEditor {
         // copia depois que o mapa que a originou deixou de ser o ativo no
         // editor. EditorContext::ActiveScene em si NUNCA roda scripts/fisica, entao
         // trocar de mapa e uma operacao simples, sem nada para "desfazer".
-        if (m_Ctx.Play->IsOpen())
-            m_Ctx.Play->Close();
+        if (m_Ctx.IsPlaying())
+            m_Ctx.StopPlaying();
 
         Prism::SceneSerializer serializer(Prism::Scene::Create());
         if (!serializer.Deserialize(mapPath)) {
@@ -49,8 +49,8 @@ namespace PrismEditor {
         // NewMap() em si descarta a cena sem perguntar - quem pergunta e
         // o CHAMADOR, via RunAfterUnsavedCheck (ver RenderMenuBar). Assim
         // chamadas internas/programaticas nao ficam presas num popup.
-        if (m_Ctx.Play->IsOpen())
-            m_Ctx.Play->Close(); // ver comentario identico em LoadScene()
+        if (m_Ctx.IsPlaying())
+            m_Ctx.StopPlaying(); // ver comentario identico em LoadScene()
 
         // Ver comentario identico em LoadScene() sobre por que isto vem
         // ANTES de substituir EditorContext::ActiveScene.

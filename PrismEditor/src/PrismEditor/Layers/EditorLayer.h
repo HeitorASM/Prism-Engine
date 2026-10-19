@@ -38,6 +38,7 @@
 #include "../Panels/ScriptEditorPanel.h"
 #include "../Panels/DocsPanel.h"
 #include "../Panels/BuildOutputPanel.h"
+#include "../Panels/GamePanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
@@ -81,6 +82,11 @@ namespace PrismEditor {
         // Scene ativa. A Scene de edicao nunca e tocada por scripts/fisica,
         // entao nao ha nada para restaurar ao parar.
         void OnPlayButtonClicked();
+        // Play em janela separada do SO (PlayWindow), alternativa a aba Game.
+        void OnPlayWindowButtonClicked();
+        // true se o jogo roda na aba Game OU na janela separada.
+        bool IsPlaying() const;
+        void StopPlaying();
 
         // Chamado pelo botao "Parar" (so aparece quando a PlayWindow esta
         // aberta) - fecha a PlayWindow (para scripts/fisica da copia e
@@ -146,6 +152,9 @@ namespace PrismEditor {
         BuildOutputPanel m_BuildOutput;     // aba "Saida de Build"
         bool m_BuildNativeOnOpen = false;
         bool m_LastNativeBuildFailed = false;
+
+        // Aba "Game" (jogo rodando dentro do editor, ver Panels/GamePanel.h).
+        GamePanel m_Game;
     };
 
 }

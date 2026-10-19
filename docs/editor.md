@@ -31,10 +31,10 @@ O painel lê os `.md` da pasta `docs/` (ao lado do código ou, num build, a cóp
 
 Na primeira abertura (sem layout salvo) os painéis já vêm organizados:
 
-- **Barra superior** (fixa): Salvar, Desfazer, Refazer, **Compilar** (scripts C++, com o estado do módulo ao lado), **Play/Parar** (centro) e **Restaurar layout**.
+- **Barra superior** (fixa): Salvar, Desfazer, Refazer, **Compilar** (scripts C++, com o estado do módulo ao lado), **Play / Em janela / Parar** (centro) e **Restaurar layout**.
 - **Esquerda**: Hierarquia.
 - **Direita**: Propriedades.
-- **Centro**: Viewport e Editor de Código, em abas (a Documentação também abre aqui).
+- **Centro**: Viewport, **Game** e Editor de Código, em abas (a Documentação também abre aqui).
 - **Embaixo**: Conteúdo do Projeto, Console e **Saída de Build**, em abas.
 
 Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini`). Se ficar bagunçado, use **Janela → Restaurar layout padrão** (ou o botão da barra superior).
@@ -49,16 +49,14 @@ Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini
 - **Conteúdo do Projeto**: navega pelos arquivos do projeto. Duplo clique numa pasta entra nela; duplo clique num `.prismmap` carrega o mapa.
 - **Editor de Código**: abre `.lua` e `.cpp`/`.h` (com syntax highlight) e qualquer outro arquivo de texto (`.md`, `.txt`…) sem highlight. Dê duplo clique num arquivo no Conteúdo do Projeto, ou use "Editar" no component Script. Vários arquivos podem ficar abertos: a lateral esquerda do painel lista os abertos (clique troca, **x** ou clique do meio fecha, `*` marca alterações não salvas; fechar um arquivo alterado pergunta se salva). **Ctrl+S** salva o arquivo ativo (preservando CRLF/LF) e **Salvar tudo** salva todos. Com o foco no painel, os atalhos da cena (Ctrl+Z, Ctrl+S, Delete) ficam desligados. Arquivos binários ou maiores que 4 MB são recusados.
 
-### Menu Renderização
+### Ambiente e câmera (visual)
 
-Na barra de menus, ao lado de **Janela**. Ao clicar, abre um painel com:
+O visual **não é mais um menu do editor**: pertence à cena e à câmera.
 
-- **Exposição** (0.1 a 8, escala logarítmica): brilho final da imagem, aplicado antes do tone mapping. 1.0 é neutro.
-- **Intensidade** (0 a 1): brilho médio da luz ambiente. Com 0, só as luzes iluminam.
-- **Céu**, **Horizonte** e **Chão**: as três cores do gradiente de ambiente.
-- **Restaurar padrão**.
+- **Environment** (component da entidade "Ambiente", criada com cada mapa novo; ou **Entidade → Criar Ambiente**): intensidade, cores Céu/Horizonte/Chão e o fundo (cor, gradiente ou panorama). É gravado no mapa, então cada mapa tem o seu visual, e as edições entram no desfazer.
+- **Camera**, seção **Render**: fundo (skybox da cena ou cor chapada), exposição e SSAO, por câmera.
 
-As mudanças aparecem **ao vivo** na viewport e na janela de Play. Ficam salvas **no projeto** (`.prismproj`), não na cena: cada projeto tem o seu visual, e mudar isso não marca o mapa como "com alterações não salvas" nem entra no undo/redo. O arquivo só é gravado quando você para de mexer (mouse solto e cerca de 0,35 s sem editar), não a cada frame do arrasto, e o que ficou pendente é gravado ao fechar o editor.
+A viewport livre do editor usa o ambiente da cena e as opções padrão de câmera. Detalhes em [Renderização](renderizacao.md).
 
 ## Atalhos
 
@@ -131,21 +129,25 @@ Carregar um material é uma **cópia pontual** (a menos que fique vinculado a um
 
 ## UI in-game
 
-Menu **Entidade → Criar UI** cria Panel, Texto, Botão ou Imagem. O resultado aparece no viewport (só visualização) e na janela de Play. Detalhes em [UI in-game](ui.md).
+Menu **Entidade → Criar UI** cria Panel, Texto, Botão ou Imagem. O resultado aparece no viewport (só visualização) e no Play. Detalhes em [UI in-game](ui.md).
 
 ## Modo Play
 
-O botão **Play** na barra de menu abre uma **janela separada do sistema operacional** (1280×720, redimensionável) rodando uma cópia da cena. A cena de edição nunca é tocada por scripts ou física, então não há nada para restaurar ao parar.
+O botão **Play** roda o jogo na aba **Game**, ao lado da Viewport. **Em janela** roda o mesmo jogo numa janela separada do sistema (1280×720, redimensionável). Nos dois casos roda uma **cópia** da cena: a cena de edição nunca é tocada por scripts ou física, então não há nada para restaurar ao parar.
 
-- **Parar**, fechar a janela ou apertar **Esc** encerram o Play e descartam a cópia.
-- A janela de Play compartilha o contexto OpenGL do editor, então meshes e shaders já carregados valem nas duas janelas.
-- Só uma janela de Play por vez.
-- Sem câmera `Primary` na cena, a janela mostra apenas a cor de fundo.
+- **Aba Game**: clique na imagem para o jogo receber teclado e mouse; **Esc** devolve o controle ao editor (e solta o cursor, se um script o travou). Enquanto o jogo controla o teclado, atalhos do editor como Delete e Ctrl+Z ficam desligados. A UI in-game é clicável com o mouse relativo à imagem. A aba precisa ficar **docada** na janela do editor: arrastada para uma janela própria, o mouse não bate com a imagem.
+- **Janela separada**: **Esc** ou fechar a janela encerram o Play; ela compartilha o contexto OpenGL do editor.
+- **Parar** (barra superior) encerra qualquer um dos dois e descarta a cópia.
+- Só um Play por vez (aba ou janela).
+- Sem câmera `Primary` na cena, aparece só a cor de fundo (um aviso vai para o Console).
 - Não há hot-reload de script durante o Play: edite o `.lua`, pare e rode de novo.
+
+### Rodar sem o editor (PrismRuntime)
+
+O alvo **PrismRuntime** é um executável só do jogo: `PrismRuntime <pasta-do-projeto | arquivo.prismproj>`. Carrega o projeto, abre o **mapa inicial** (o último salvo no editor), carrega os scripts C++ compilados (`Binaries/`) e roda com a câmera `Primary`. **F11** alterna tela cheia. Sem argumento, procura um projeto em `Game/` ao lado do executável.
 
 ## Limitações conhecidas
 
 - Os campos de Light, Collider, RigidBody, Camera e a troca de mesh não geram comandos de undo individuais. Geram undo: Transform, cor, criar/duplicar/excluir entidade, reparentar, instanciar prefab, carregar material e adicionar/remover component.
 - Não há copiar/colar de subárvores.
 - Não há resolução configurável para a janela de Play.
-- Os ajustes do menu Renderização não entram no undo/redo (Ctrl+Z não os desfaz); use **Restaurar padrão**.

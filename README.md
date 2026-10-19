@@ -7,7 +7,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 ## Recursos
 
 - Editor com viewport, hierarquia em árvore, propriedades, console, content browser, editor de código (vários arquivos) e documentação embutida (F1)
-- Menu de renderização no editor (exposição e ambiente), salvo por projeto
+- Ambiente e skybox por cena (component Environment) e opções de render por câmera
 - Gizmo de mover/rotacionar/escalar (ImGuizmo) e seleção por clique na viewport
 - Undo/redo para as operações principais e aviso de alterações não salvas ao fechar o editor ou trocar de mapa
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
@@ -15,7 +15,7 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
 - Scripting em Lua com acesso a transform, física, input, raycast e áudio
 - Áudio (miniaudio): Audio Source/Listener com som 3D
-- Modo Play em janela separada, rodando uma cópia da cena
+- Modo Play na aba Game (ou em janela separada), rodando uma cópia da cena, e o executável PrismRuntime para rodar um projeto sem o editor
 - Mapas (`.prismmap`), prefabs (`.prismprefab`) e materiais (`.prismmat`)
 
 > Muitos recursos ainda estão em fase incial de desenvolvimento e são sucetiveis a erros/poblemas
@@ -54,6 +54,7 @@ Prism/            engine (biblioteca estática)
     Assets/       AssetID, AssetMeta, AssetRegistry (identidade dos assets, .meta)
   shaders/        shaders GLSL (.vert/.frag), com #include e hot reload
 PrismEditor/      executável do editor (ver "Estrutura do editor" em docs/arquitetura.md)
+PrismRuntime/     executável que roda um projeto sem o editor
 tests/            testes automatizados, opt-in (ver docs/arquitetura.md)
 vendor/           dependências (glad e stb locais; o resto via FetchContent)
 docs/             documentação técnica (GitHub)
@@ -86,7 +87,8 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [ ] BSP/CSG e ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
-- [x] Skybox visível (cor, gradiente ou panorama HDR)
+- [x] Skybox visível (cor, gradiente ou panorama HDR)
+
 - [x] UI in-game (painéis, texto, imagens e botões com `OnClick`; ver `docs/ui.md`)
 - [ ] Reflexão de ambiente com IBL de verdade (irradiance/prefiltered maps a partir do panorama)
 - [x] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
@@ -94,4 +96,5 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [ ] Editor de código com autocomplete e debugger
 - [ ] Vínculo vivo entre instâncias e seus prefabs/materiais
 - [x] Aviso de alterações não salvas (dirty flag)
-- [ ] Modo Runtime (jogo exportado, sem editor)
+- [x] PrismRuntime: executável que roda um projeto sem o editor
+- [ ] Exportar/empacotar o jogo (pasta distribuível com o Runtime + projeto)

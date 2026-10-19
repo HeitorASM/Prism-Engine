@@ -15,7 +15,7 @@ A Prism é um projeto de hobby em desenvolvimento: o que está aqui pode mudar o
 ## Limitações conhecidas
 
 - **Arquivos antigos**: sem migração entre versões de formato. Atualizar a engine pode tornar mapas e prefabs antigos ilegíveis.
-- **Desfazer**: não cobre os campos de Light, Collider, Rigid Body e Camera, nem o menu Renderização. Desfazer a exclusão de uma entidade não restaura Material e Audio Source.
+- **Desfazer**: não cobre os campos de Light, Collider, Rigid Body e Camera, . Desfazer a exclusão de uma entidade não restaura Material e Audio Source.
 - **Linguagem principal**: o scripting está sendo trabalhado para que o **C++ vire a linguagem principal** da Prism e o Lua seja uma opção. O que o Lua tem e o C++ ainda não (os "—" da [API de scripting](06-api-de-scripting.md)) deve ser trazido para o C++.
 - **Scripts**: sem recarga durante o Play, sem `Scene.Load`, sem gamepad, sem depurador. Variáveis públicas ainda não existem para C++.
 - **Física**: sem juntas; sem camadas configuráveis; corpos físicos devem ser raízes (sem pai).
@@ -23,7 +23,7 @@ A Prism é um projeto de hobby em desenvolvimento: o que está aqui pode mudar o
 - **Iluminação**: o fundo (panorama) não ilumina a cena; não há IBL.
 - **Áudio**: `.ogg` não toca; sem canais de volume nem efeitos.
 - **UI**: sem escala por resolução, sem quebra automática de texto, só letras latinas.
-- **Editor**: sem copiar/colar subárvores; janela de Play com tamanho fixo (1280×720).
+- **Editor**: sem copiar/colar subárvores; janela de Play com tamanho fixo (1280×720); a aba Game precisa ficar docada na janela do editor para o mouse bater com a imagem.
 - **Exportação**: ainda não dá para gerar o jogo como um programa independente do editor.
 
 ## Ideias para o futuro

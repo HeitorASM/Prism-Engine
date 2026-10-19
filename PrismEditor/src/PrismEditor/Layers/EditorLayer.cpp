@@ -18,7 +18,7 @@ namespace PrismEditor {
 
     EditorLayer::EditorLayer(bool buildNativeOnOpen)
         : Layer("EditorLayer"), m_Document(m_Ctx), m_Viewport(m_Ctx), m_Hierarchy(m_Ctx), m_Properties(m_Ctx),
-          m_BuildNativeOnOpen(buildNativeOnOpen) {}
+          m_BuildNativeOnOpen(buildNativeOnOpen), m_Game(m_Ctx) {}
 
     void EditorLayer::OnAttach() {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
@@ -27,6 +27,8 @@ namespace PrismEditor {
         // Liga os ponteiros do contexto compartilhado aos paineis que outros
         // paineis precisam chamar (ver EditorContext.h).
         m_Ctx.Play = &m_PlayWindow;
+        m_Ctx.IsPlaying = [this]() { return IsPlaying(); };
+        m_Ctx.StopPlaying = [this]() { StopPlaying(); };
         m_Ctx.ContentBrowser = &m_ContentBrowser;
         m_Ctx.ScriptEditor = &m_ScriptEditor;
 
@@ -135,6 +137,10 @@ namespace PrismEditor {
 
         m_Viewport.RenderScene(deltaTime);
 
+        // Aba Game: simula e desenha a COPIA da cena no framebuffer dela (no
+        // contexto do editor, sem trocar de contexto). No-op se nao ha Play.
+        m_Game.OnUpdate(deltaTime);
+
         // Nao chamamos mais PropertiesPanel::RenderCameraPreview() aqui - agora ela e
         // chamada sob demanda dentro de PropertiesPanel::OnImGuiRender().
 
@@ -226,7 +232,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
+        if (!io.WantTextInput && !m_Game.IsCapturingInput() && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_Ctx.History.Undo();
@@ -261,6 +267,7 @@ namespace PrismEditor {
         // Paineis - cada um e sua propria janela ImGui, e o dockspace acima
         // permite que o usuario os arraste/organize livremente.
         m_Viewport.OnImGuiRender();
+        m_Game.OnImGuiRender();
         m_Hierarchy.OnImGuiRender();
         m_Properties.OnImGuiRender();
         RenderConsolePanel();
@@ -285,6 +292,7 @@ namespace PrismEditor {
         ImGui::DockBuilderDockWindow("Hierarquia", left);
         ImGui::DockBuilderDockWindow("Propriedades", right);
         ImGui::DockBuilderDockWindow("Viewport", center);
+        ImGui::DockBuilderDockWindow("Game", center);                 // aba ao lado da Viewport: o jogo rodando no editor
         ImGui::DockBuilderDockWindow("###ScriptEditorPanel", center); // aba ao lado do Viewport (ID fixo, ver ScriptEditorPanel)
         ImGui::DockBuilderDockWindow("###DocsPanel", center);         // painel de documentacao (aparece como aba quando aberto)
         ImGui::DockBuilderDockWindow("Conteudo do Projeto", bottom);
@@ -330,7 +338,7 @@ namespace PrismEditor {
         ImGui::SameLine();
         ImGui::SetCursorPosX((width - playButtonWidth) * 0.5f);
         ImGui::SetCursorPosY(startY + 6.0f);
-        if (m_PlayWindow.IsOpen()) {
+        if (IsPlaying()) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
             if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
                 OnStopButtonClicked();
@@ -341,6 +349,13 @@ namespace PrismEditor {
             if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
                 OnPlayButtonClicked();
             ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Roda o jogo na aba Game.");
+            ImGui::SameLine();
+            if (ImGui::Button("Em janela"))
+                OnPlayWindowButtonClicked();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Roda o jogo numa janela separada do sistema.");
         }
 
         // Direita: Documentacao (F1) e Restaurar layout.
@@ -565,15 +580,34 @@ namespace PrismEditor {
     // compartilhar - ver comentario extenso sobre isso no topo de
     // PlayWindow.h.
     void EditorLayer::OnPlayButtonClicked() {
-        if (m_PlayWindow.IsOpen())
-            return; // ja aberta - o botao vira "Parar" nesse caso, ver RenderDockspace, entao isto nao deveria ser alcancavel na pratica
+        if (IsPlaying())
+            return; // ja rodando - o botao vira "Parar" nesse caso, ver RenderDockspace, entao isto nao deveria ser alcancavel na pratica
 
         // Modulo compilado por fora do editor (ou antes de abrir): garante carregado.
         if (!Prism::NativeScripting::IsModuleLoaded())
             Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
 
+        m_Game.Open(m_Ctx.ActiveScene);
+    }
+
+    void EditorLayer::OnPlayWindowButtonClicked() {
+        if (IsPlaying())
+            return;
+
+        if (!Prism::NativeScripting::IsModuleLoaded())
+            Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
+
         GLFWwindow* editorWindow = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow();
         m_PlayWindow.Open(m_Ctx.ActiveScene, editorWindow);
+    }
+
+    bool EditorLayer::IsPlaying() const {
+        return m_PlayWindow.IsOpen() || m_Game.IsOpen();
+    }
+
+    void EditorLayer::StopPlaying() {
+        m_PlayWindow.Close();
+        m_Game.Close();
     }
 
     void EditorLayer::StartNativeBuild() {
@@ -611,7 +645,7 @@ namespace PrismEditor {
     // Botao "Compilar" + estado dos scripts C++, na barra de ferramentas.
     void EditorLayer::RenderBuildToolbarGroup() {
         const bool building = m_NativeBuilder.IsRunning();
-        const bool playing = m_PlayWindow.IsOpen();
+        const bool playing = IsPlaying();
         const bool hasProject = Prism::Project::GetActive() != nullptr;
 
         ImGui::BeginDisabled(!hasProject || building || playing);
@@ -662,7 +696,7 @@ namespace PrismEditor {
         }
 
         // Recarrega quando nao ha Play (instancias vivas usam o codigo do modulo).
-        if (m_NativeReloadPending && !m_PlayWindow.IsOpen()) {
+        if (m_NativeReloadPending && !IsPlaying()) {
             m_NativeReloadPending = false;
             if (auto project = Prism::Project::GetActive())
                 Prism::NativeScripting::LoadProjectModule(*project);
@@ -670,8 +704,7 @@ namespace PrismEditor {
     }
 
     void EditorLayer::CloseProject() {
-        if (m_PlayWindow.IsOpen())
-            m_PlayWindow.Close();
+        StopPlaying();
 
         // O modulo C++ e as instancias de script pertencem a este projeto.
         Prism::NativeScripting::UnloadModule();
@@ -688,7 +721,7 @@ namespace PrismEditor {
     }
 
     void EditorLayer::OnStopButtonClicked() {
-        m_PlayWindow.Close();
+        StopPlaying();
     }
 
     void EditorLayer::RenderConsolePanel() {

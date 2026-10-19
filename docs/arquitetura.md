@@ -2,20 +2,21 @@
 
 ## Visão geral
 
-`Application` roda o loop principal e mantém uma `LayerStack`. O editor não é um caso especial: é uma `Layer` empilhada, como qualquer outra. Um futuro modo Runtime (jogo exportado, sem editor) seria apenas outra `Layer` ou outro executável, sem mudanças no core.
+`Application` roda o loop principal e mantém uma `LayerStack`. O editor não é um caso especial: é uma `Layer` empilhada, como qualquer outra. O modo Runtime (jogo sem editor) é só outro executável com a sua própria `Layer`, sem mudanças no core.
 
-O projeto tem dois alvos CMake:
+O projeto tem três alvos CMake:
 
 - **Prism**: biblioteca estática com a engine. Não define `main()`; ele vem de `Core/EntryPoint.h`, incluído pelo executável que consome a biblioteca.
 - **PrismEditor**: executável do editor. Implementa `Prism::CreateApplication()` em `EditorApp.cpp`.
+- **PrismRuntime**: executável que roda um projeto sem o editor (`PrismRuntime <projeto>`). Implementa `CreateApplication()` em `RuntimeApp.cpp`; a `RuntimeLayer` carrega o projeto e o mapa inicial e desenha com `GameView`. Os argumentos de linha de comando chegam por `GetLaunchArguments()` (`Core/CommandLine.h`).
 
 ## Módulos da engine
 
 | Pasta | Conteúdo |
 |---|---|
-| `Core/` | `Application`, `Window`/`GlfwWindow`, eventos, `Input`, `Log`/`LogBuffer`, `Command`/`CommandHistory`, `CrashHandler` |
+| `Core/` | `Application`, `Window`/`GlfwWindow`, eventos, `Input`, `CommandLine`, `Log`/`LogBuffer`, `Command`/`CommandHistory`, `CrashHandler` |
 | `Layer/` | `Layer`, `LayerStack` |
-| `Renderer/` | `Renderer`, `Shader`, `Mesh`, `PrimitiveMeshFactory`, `Framebuffer`, `Texture`, `ShadowMap`, `SSAO`, `GeometryBuffer`, `GraphicsContext` |
+| `Renderer/` | `Renderer`, `Shader`, `Mesh`, `PrimitiveMeshFactory`, `Framebuffer`, `GameView`, `Texture`, `ShadowMap`, `SSAO`, `GeometryBuffer`, `GraphicsContext` |
 | `Scene/` | `Scene`, `Entity`, `Components`, `ComponentRegistry`, serializadores |
 | `Scripting/` | `ScriptEngine` (Lua via sol2), `NativeScripting` + `NativeScript.h` (scripts C++ em módulo DLL/.so) |
 | `Physics/` | `PhysicsEngine` (Jolt) |
@@ -118,6 +119,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | `Panels/EditorGizmos` | Gizmos de linha: câmera, collider, luz, raycast |
 | `Panels/HierarchyPanel` | Árvore de entidades, menu de contexto, popup "Criar Prefab" |
 | `Panels/PropertiesPanel` (+ `_Prefab.cpp` e um `_<Component>.cpp` por component) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
+| `Panels/GamePanel` | Aba Game: roda a cópia da cena no editor (framebuffer, captura de input) |
 | `Panels/PropertiesPanel_Environment` | UI do `EnvironmentComponent` (ambiente e skybox da cena) |
 | `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
 | `Panels/BuildOutputPanel` | Aba "Saída de Build": saída da compilação dos scripts C++, com erros clicáveis |

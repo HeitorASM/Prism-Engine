@@ -76,7 +76,7 @@ namespace PrismEditor {
             if (script.ScriptPath.empty()) {
                 ImGui::TextDisabled("Nenhum arquivo escolhido ainda.");
             }
-            else if (m_Ctx.Play->IsOpen()) {
+            else if (m_Ctx.IsPlaying()) {
                 // A PlayWindow roda uma COPIA clonada da Scene (ver
                 // Play/PlayWindow.h) - EditorContext::SelectedEntity pertence a
                 // Scene de EDICAO, uma entidade DIFERENTE (ainda que

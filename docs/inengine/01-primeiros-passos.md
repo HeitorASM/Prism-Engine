@@ -44,9 +44,9 @@ Para navegar na viewport, segure o **botão direito** e use **WASD** (Q/E descem
 
 ## 4. Rodar
 
-Clique em **Play** (barra superior). Abre uma janela separada com uma **cópia** da cena: o que acontece lá não altera a cena que você está editando. **Parar**, fechar a janela ou apertar **Esc** encerram o Play.
+Clique em **Play** (barra superior). O jogo roda na aba **Game**, numa **cópia** da cena: o que acontece lá não altera a cena que você está editando. Clique na imagem para controlar o jogo e aperte **Esc** para devolver o teclado ao editor. **Parar** encerra o Play. (**Em janela** roda o mesmo jogo numa janela separada.)
 
-> Sem câmera `Primary`, a janela de Play mostra só a cor de fundo. Se a tela ficar vazia, confira isso.
+> Sem câmera `Primary`, a aba Game mostra só a cor de fundo. Se a tela ficar vazia, confira isso.
 
 ## 5. Seu primeiro script
 

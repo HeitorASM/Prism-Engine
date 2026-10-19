@@ -46,7 +46,7 @@ namespace PrismEditor {
                     "Classe '%s' nao esta no modulo carregado.", script.ClassName.c_str());
                 ImGui::TextDisabled("Clique em Compilar na barra superior.");
             }
-            else if (m_Ctx.Play->IsOpen()) {
+            else if (m_Ctx.IsPlaying()) {
                 ImGui::TextDisabled("Play em andamento - Pare e aperte Play de novo para aplicar mudancas.");
             }
         }

@@ -18,10 +18,10 @@ Cada tipo de component é registrado num **registro** central. Salvar/carregar m
 No editor a cena está **parada**: scripts, física, áudio e partículas não rodam. Ao apertar **Play**, a engine:
 
 1. **Clona** a cena de edição (nada do que acontece no Play volta para ela).
-2. Abre uma **janela separada**, compartilhando o contexto OpenGL do editor.
+2. Mostra o jogo na aba **Game** (ou abre uma **janela separada**, compartilhando o contexto OpenGL do editor).
 3. Inicia a física, carrega os scripts (Lua e C++), prepara o áudio e as partículas, e chama `OnCreate` de cada script.
 
-Ao parar, a janela e a cópia da cena são descartadas.
+Ao parar, a aba/janela e a cópia da cena são descartadas.
 
 ## O que acontece em cada frame do Play
 
@@ -46,7 +46,7 @@ Por isso um script enxerga a posição que a física acabou de calcular no mesmo
 5. **Cor**: cada entidade com malha, com iluminação PBR de até 16 luzes.
 6. **Partículas** e, depois de tudo, a **UI**.
 
-Os dois lados (a viewport do editor e a janela de Play) usam o mesmo desenho.
+A viewport do editor e o jogo (aba Game, janela de Play e PrismRuntime) usam o mesmo desenho; o jogo é desenhado por `GameView`, sempre pela câmera `Primary`.
 
 ## Scripts: Lua x C++
 
@@ -56,5 +56,5 @@ Os dois lados (a viewport do editor e a janela de Play) usam o mesmo desenho.
 ## Arquivos
 
 - **Mapas** (`.prismmap`), **prefabs** (`.prismprefab`) e **materiais** (`.prismmat`) são arquivos binários com número de versão. Quando um component novo entra na engine, a versão sobe e arquivos antigos **não são migrados** (por enquanto): guarde cópias dos seus projetos ao atualizar a engine.
-- O projeto (`.prismproj`) é texto simples e guarda os ajustes visuais do menu Renderização.
+- O projeto (`.prismproj`) é texto simples (nome, pastas, mapa inicial, versão da engine). O visual fica no mapa (component Environment) e na câmera.
 - Cada asset ganha um arquivo `.meta` com um identificador, para que mover um arquivo não quebre as referências.

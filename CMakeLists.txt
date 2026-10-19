@@ -36,6 +36,7 @@ include(cmake/PrismVersion.cmake)
 add_subdirectory(vendor)
 add_subdirectory(Prism)
 add_subdirectory(PrismEditor)
+add_subdirectory(PrismRuntime)
 
 # Testes automatizados: opt-in (nao afetam o build normal). Ver tests/CMakeLists.txt.
 option(PRISM_BUILD_TESTS "Compila os testes automatizados" OFF)

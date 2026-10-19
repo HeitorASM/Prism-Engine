@@ -1,7 +1,5 @@
 # Roadmap de melhorias
 
-Plano de trabalho por fases. Cada fase termina com a engine funcionando e a documentação atualizada.
-
 ## Fase 1 — Modelos e texturas (feito)
 
 - [x] Texturas de modelos importados invertidas: removido `aiProcess_FlipUVs` (a engine já carrega as imagens com flip vertical).
@@ -44,4 +42,4 @@ Plano de trabalho por fases. Cada fase termina com a engine funcionando e a docu
 - [x] UI in-game (5C): `UIElementComponent` (Panel/Texto/Imagem/Botão), âncoras, hierarquia, `OnClick` em Lua/C++, fonte embutida (ver [docs/ui.md](ui.md)).
 
 - Pendente: IBL a partir do panorama (irradiância/reflexo), pós-processamento (bloom).
-- Exportar o jogo (runtime sem editor), gerenciador de assets mais completo (renomear/mover no editor).
+- Exportar o jogo em pasta distribuível (o `PrismRuntime` já roda um projeto sem o editor), gerenciador de assets mais completo (renomear/mover no editor).

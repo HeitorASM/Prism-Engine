@@ -2,7 +2,7 @@
 
 // ============================================================================
 // EntryPoint.h
-// Define o main() real do executavel. O Editor (e futuramente o Runtime)
+// Define o main() real do executavel. O Editor e o Runtime
 // so precisa implementar Prism::CreateApplication() em algum .cpp seu -
 // nao escreve main() nenhum. Isso garante que toda aplicacao construida
 // sobre a engine inicializa exatamente da mesma forma.
@@ -11,12 +11,14 @@
 #include "Application.h"
 #include "Log.h"
 #include "CrashHandler.h"
+#include "CommandLine.h"
 
 #include <exception>
 #include <cstdlib>
 
 int main(int argc, char** argv) {
     Prism::InstallCrashHandler();
+    Prism::SetLaunchArguments(argc, argv);
 
     // Sem isso, qualquer excecao C++ nao capturada em algum lugar da engine
     // (std::filesystem::filesystem_error, std::out_of_range, etc.) sobe ate
