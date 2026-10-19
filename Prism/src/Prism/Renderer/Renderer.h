@@ -89,6 +89,29 @@ namespace Prism {
     // alem do maior array copiado por frame).
     static constexpr uint32_t MAX_LIGHTS = 16;
 
+    // Opcoes de render de UMA camera, passadas a Renderer::DrawScene. O
+    // Renderer NAO guarda configuracao do usuario: tudo que muda o visual
+    // vem da CENA (EnvironmentComponent: ambiente e skybox) ou da CAMERA
+    // (CameraComponent: fundo, exposicao, SSAO). Os padroes abaixo sao os do
+    // CameraComponent - e o que a viewport livre do editor usa.
+    struct CameraRenderSettings {
+        CameraClearMode ClearMode = CameraClearMode::Skybox;
+        float ClearColor[3] = { 0.05f, 0.05f, 0.07f }; // sRGB, so ClearMode == SolidColor
+        float Exposure = 1.0f;
+        bool SSAO = true;
+
+        static CameraRenderSettings From(const CameraComponent& camera) {
+            CameraRenderSettings r;
+            r.ClearMode = camera.ClearMode;
+            r.ClearColor[0] = camera.ClearColor.x;
+            r.ClearColor[1] = camera.ClearColor.y;
+            r.ClearColor[2] = camera.ClearColor.z;
+            r.Exposure = camera.Exposure;
+            r.SSAO = camera.SSAO;
+            return r;
+        }
+    };
+
     class Renderer {
     public:
         // Deve ser chamado uma vez, com um contexto OpenGL ja valido (ou
@@ -256,54 +279,10 @@ namespace Prism {
         // antes de qualquer DrawMesh() daquele framebuffer.
         static void SetCameraPosition(const float* worldPos);
 
-        // Exposicao (multiplicador de brilho aplicado em espaco LINEAR,
-        // ANTES do tone mapping ACES - ver ToneMapACES em shaders/basic.frag,
-        // Renderer.cpp). 1.0 = neutro (padrao). Valores > 1 clareiam a
-        // cena, < 1 escurecem; 0 (ou negativo) e ignorado e mantem o valor
-        // anterior, porque exposicao 0 deixaria a cena inteira preta.
-        //
-        // E estado GLOBAL do Renderer (nao por cena/por chamada), igual a
-        // SetCameraPosition: vale para toda DrawMesh/DrawScene seguinte, em
-        // qualquer framebuffer (viewport, preview de camera, janela de
-        // Play). Ainda nao exposto na UI do editor.
-        static void SetExposure(float exposure);
-        static float GetExposure();
-
-        // Intensidade do AMBIENTE (o gradiente de 3 cores abaixo). Padrao
-        // 0.10 = brilho MEDIO do ambiente, o mesmo do cinza uniforme que o
-        // gradiente substituiu: cenas existentes mantem o brilho medio, e
-        // ganham variacao ceu/chao nas superficies e, principalmente, reflexo
-        // nos metais (antes eles ficavam pretos sem luz direta). Aceita 0
-        // (cena sem ambiente: so luzes iluminam), mas ignora valores
-        // negativos. Multiplicado pelo albedo (difuso) e pelo SSAO.
-        // Estado GLOBAL, igual a SetExposure. Ainda nao exposto na UI.
-        static void SetAmbient(float ambient);
-        static float GetAmbient();
-
-        // Cores do gradiente de ambiente, em sRGB (o que o color picker
-        // mostra; o shader converte para linear). zenith = ceu (direcao +Y),
-        // horizon = linha do horizonte, ground = chao (direcao -Y). Cada
-        // ponteiro aponta para 3 floats (RGB); nullptr mantem a cor atual.
-        //
-        // O shader NAO precisa ser reajustado ao trocar as cores: a
-        // irradiancia e linear nelas (ver EnvironmentIrradiance em
-        // Renderer.cpp). Valores fora de [0,1] sao limitados a esse intervalo.
-        //
-        // E um gradiente ANALITICO, nao um skybox: nao ha reflexo de objetos
-        // da cena nem de imagem HDR. Quando existir IBL de verdade, as
-        // funcoes Environment* do shader sao o ponto de troca.
-        static void SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground);
-        static void GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround);
-
-        // Aplica de uma vez os ajustes de renderizacao de um projeto
-        // (exposicao, intensidade e cores do ambiente - ver RenderSettings em
-        // Project.h). Equivale a chamar SetExposure, SetAmbient e
-        // SetEnvironmentColors com os campos de 'settings', com as mesmas
-        // regras de cada uma (valores invalidos sao ignorados). O editor
-        // chama isto ao abrir um projeto e a cada edicao no menu
-        // "Renderizacao"; um futuro modo Runtime deve chama-lo ao carregar o
-        // projeto, para o jogo exportado ter o mesmo visual do editor.
-        static void ApplyRenderSettings(const RenderSettings& settings);
+        // (Exposicao, ambiente e skybox NAO sao mais configurados aqui: vem do
+        // CameraRenderSettings e do EnvironmentComponent da cena passados a
+        // DrawScene - ver o comentario dela. Valores invalidos/fora de faixa
+        // sao limitados pelo Renderer, que nunca confia no dado.)
 
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
@@ -333,7 +312,14 @@ namespace Prism {
         // da profundidade (unproject). viewProjection = projection * view
         // e calculada internamente, ja que o pass de cor final ainda
         // precisa dela combinada.
-        static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos);
+        //
+        // 'camera' = opcoes de render desta camera (fundo, exposicao, SSAO);
+        // o ambiente (luz ambiente + skybox) vem do EnvironmentComponent da
+        // cena (o primeiro encontrado; sem nenhum, valem os padroes do
+        // component). Chamadores sem CameraComponent (viewport livre do
+        // editor) usam o argumento padrao. NAO precisa de Clear() antes: o
+        // fundo (skybox ou cor chapada) cobre a tela inteira.
+        static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera = CameraRenderSettings{});
 
         // Desenha as particulas de todos os emissores da cena (billboards com
         // blend, sem escrever profundidade). Chamado no fim de DrawScene, depois
@@ -430,14 +416,19 @@ namespace Prism {
         static Ref<Shader> s_UIShader;
         static uint32_t s_UISSBO;
 
-        // Skybox (fundo visivel): ver DrawSky e RenderSettings::Sky. Os valores
-        // vem de ApplyRenderSettings; o panorama e carregado sob demanda e
-        // recarregado quando o caminho muda.
+        // Estado POR QUADRO do ambiente e do fundo: reescrito por inteiro no
+        // inicio de cada DrawScene (ApplyFrameState) a partir do
+        // EnvironmentComponent da cena e do CameraRenderSettings. NAO e
+        // configuracao do usuario - nada fora de DrawScene deve escreve-lo.
+        // O panorama e carregado sob demanda e recarregado quando o caminho
+        // ABSOLUTO muda (nao o AssetID: trocar de projeto com o mesmo ID nao
+        // reaproveita a textura do projeto anterior).
+        static void ApplyFrameState(class Scene& scene, const CameraRenderSettings& camera);
         static void DrawSky(const float* view, const float* projection, const float* cameraWorldPos);
         static Ref<Shader> s_SkyShader;
         static SkyMode s_SkyMode;
         static float s_SkyColor[3];
-        static std::string s_SkyTexturePath;
+        static std::string s_SkyTexturePath;  // caminho ABSOLUTO resolvido ("" = sem textura)
         static float s_SkyRotation;
         static float s_SkyIntensity;
         static Scope<SkyTexture> s_SkyTexture;

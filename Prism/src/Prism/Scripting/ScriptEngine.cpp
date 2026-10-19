@@ -145,7 +145,28 @@ namespace Prism {
             "OrthoSize", &CameraComponent::OrthoSize,
             "NearClip", &CameraComponent::NearClip,
             "FarClip", &CameraComponent::FarClip,
-            "Primary", &CameraComponent::Primary
+            "Primary", &CameraComponent::Primary,
+            // Opcoes de render da camera (v20). ClearMode: 0 = skybox, 1 = cor chapada.
+            "ClearMode", sol::property(
+                [](CameraComponent& c) { return (int)c.ClearMode; },
+                [](CameraComponent& c, int v) { c.ClearMode = (v == 1) ? CameraClearMode::SolidColor : CameraClearMode::Skybox; }),
+            "ClearColor", &CameraComponent::ClearColor,
+            "Exposure", &CameraComponent::Exposure,
+            "SSAO", &CameraComponent::SSAO
+        );
+        // Ambiente da cena (ciclo dia/noite etc). Sky: 0 = cor, 1 = gradiente, 2 = panorama.
+        // O Renderer limita os valores, entao um script nao deixa a cena preta/NaN.
+        lua.new_usertype<EnvironmentComponent>("Environment",
+            "Ambient", &EnvironmentComponent::Ambient,
+            "Zenith", &EnvironmentComponent::Zenith,
+            "Horizon", &EnvironmentComponent::Horizon,
+            "Ground", &EnvironmentComponent::Ground,
+            "Sky", sol::property(
+                [](EnvironmentComponent& c) { return (int)c.Sky; },
+                [](EnvironmentComponent& c, int v) { c.Sky = (SkyMode)std::min(std::max(v, 0), 2); }),
+            "SkyColor", &EnvironmentComponent::SkyColor,
+            "SkyRotation", &EnvironmentComponent::SkyRotation,
+            "SkyIntensity", &EnvironmentComponent::SkyIntensity
         );
         lua.new_usertype<ParticleEmitterComponent>("ParticleEmitter",
             "Enabled", &ParticleEmitterComponent::Enabled,
@@ -314,6 +335,7 @@ namespace Prism {
             "GetMaterial", [](Entity& e) -> MaterialComponent* { return e.HasComponent<MaterialComponent>() ? &e.GetComponent<MaterialComponent>() : nullptr; },
             "GetLight", [](Entity& e) -> LightComponent* { return e.HasComponent<LightComponent>() ? &e.GetComponent<LightComponent>() : nullptr; },
             "GetCamera", [](Entity& e) -> CameraComponent* { return e.HasComponent<CameraComponent>() ? &e.GetComponent<CameraComponent>() : nullptr; },
+            "GetEnvironment", [](Entity& e) -> EnvironmentComponent* { return e.HasComponent<EnvironmentComponent>() ? &e.GetComponent<EnvironmentComponent>() : nullptr; },
             "GetAudioSource", [](Entity& e) -> AudioSourceComponent* { return e.HasComponent<AudioSourceComponent>() ? &e.GetComponent<AudioSourceComponent>() : nullptr; },
             "GetUI", [](Entity& e) -> UIElementComponent* { return e.HasComponent<UIElementComponent>() ? &e.GetComponent<UIElementComponent>() : nullptr; },
             "GetParticleEmitter", [](Entity& e) -> ParticleEmitterComponent* { return e.HasComponent<ParticleEmitterComponent>() ? &e.GetComponent<ParticleEmitterComponent>() : nullptr; },

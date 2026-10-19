@@ -30,6 +30,7 @@
 // tocado so por causa de um Component novo, a partir desta mudanca.
 // ============================================================================
 
+#include <cmath>
 #include "ComponentRegistry.h"
 #include "Components.h"
 #include "../Core/Log.h"
@@ -359,12 +360,19 @@ namespace Prism {
                 WriteRaw(out, c.NearClip);
                 WriteRaw(out, c.FarClip);
                 WriteRaw(out, c.Primary);
+                // v20: opcoes de render da camera.
+                WriteRaw(out, c.ClearMode);
+                WriteRaw(out, c.ClearColor);
+                WriteRaw(out, c.Exposure);
+                WriteRaw(out, c.SSAO);
             },
             [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<CameraComponent>();
                 bool ok = ReadRaw(in, c.ProjectionType) && ReadRaw(in, c.FOV)
                        && ReadRaw(in, c.OrthoSize) && ReadRaw(in, c.NearClip)
-                       && ReadRaw(in, c.FarClip) && ReadRaw(in, c.Primary);
+                       && ReadRaw(in, c.FarClip) && ReadRaw(in, c.Primary)
+                       && ReadRaw(in, c.ClearMode) && ReadRaw(in, c.ClearColor)
+                       && ReadRaw(in, c.Exposure) && ReadRaw(in, c.SSAO);
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", entityIndex, ").");
                     return false;
@@ -373,6 +381,15 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: CameraProjectionType invalido na entidade ", entityIndex, ".");
                     return false;
                 }
+                if (c.ClearMode != CameraClearMode::Skybox && c.ClearMode != CameraClearMode::SolidColor) {
+                    PRISM_CORE_ERROR("SceneSerializer: CameraClearMode invalido na entidade ", entityIndex, ".");
+                    return false;
+                }
+                // Valores de render fora de faixa nao sao fatais: o Renderer
+                // tambem limita, mas corrigir aqui mantem o inspetor coerente.
+                if (!std::isfinite(c.Exposure) || c.Exposure <= 0.0f) c.Exposure = 1.0f;
+                for (int i = 0; i < 3; i++)
+                    if (!std::isfinite(c.ClearColor[i])) c.ClearColor[i] = 0.0f;
                 return true;
             },
             // OnAfterAddInEditor: CameraComponent nasce com Primary=true
@@ -462,6 +479,40 @@ namespace Prism {
                 auto& c = e.AddComponent<AudioListenerComponent>();
                 if (!ReadRaw(in, c.Active)) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (audio listener da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+
+        // --- EnvironmentComponent (v20) --------------------------------------
+        // Ambiente da cena: luz ambiente + skybox. Vale o PRIMEIRO da cena;
+        // um segundo e inutil e o editor avisa (ver PropertiesPanel_Environment.cpp).
+        Register<EnvironmentComponent>(
+            "Environment",
+            [](std::ofstream& out, Entity e) {
+                auto& c = e.GetComponent<EnvironmentComponent>();
+                WriteRaw(out, c.Ambient);
+                WriteRaw(out, c.Zenith);
+                WriteRaw(out, c.Horizon);
+                WriteRaw(out, c.Ground);
+                WriteRaw(out, c.Sky);
+                WriteRaw(out, c.SkyColor);
+                WriteRaw(out, c.SkyTexture); // AssetID e so um uint64_t - mesmo padrao de MeshRendererComponent::ModelAsset
+                WriteRaw(out, c.SkyRotation);
+                WriteRaw(out, c.SkyIntensity);
+            },
+            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<EnvironmentComponent>();
+                bool ok = ReadRaw(in, c.Ambient) && ReadRaw(in, c.Zenith) && ReadRaw(in, c.Horizon)
+                       && ReadRaw(in, c.Ground) && ReadRaw(in, c.Sky) && ReadRaw(in, c.SkyColor)
+                       && ReadRaw(in, c.SkyTexture) && ReadRaw(in, c.SkyRotation) && ReadRaw(in, c.SkyIntensity);
+                if (!ok) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (ambiente da entidade ", entityIndex, ").");
+                    return false;
+                }
+                if (c.Sky != SkyMode::Solid && c.Sky != SkyMode::Gradient && c.Sky != SkyMode::Panorama) {
+                    PRISM_CORE_ERROR("SceneSerializer: SkyMode invalido na entidade ", entityIndex, ".");
                     return false;
                 }
                 return true;

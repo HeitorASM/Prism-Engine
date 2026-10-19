@@ -24,17 +24,13 @@ Sem Material, a entidade usa a cor do Mesh Renderer. Com o component **Material*
 
 Rugosidade alta = fosco; baixa = brilhante. Metálico = reflete o ambiente. Arraste imagens do Conteúdo do Projeto para os slots. Modelos importados já trazem seus materiais.
 
-## Ambiente e exposição
+## Ambiente e skybox (por cena)
 
-O menu **Renderização** controla o visual do projeto:
+O visual da cena vive na entidade **Ambiente**, com o component **Environment**. Todo mapa novo já nasce com uma; para criar uma, use **Entidade → Criar Ambiente** (só uma por cena). Ele é gravado no mapa, então cada mapa tem o seu visual:
 
-- **Exposição**: brilho final da imagem (1.0 é neutro).
 - **Intensidade**: o quanto o ambiente ilumina. Com 0, só as luzes iluminam.
 - **Céu, Horizonte e Chão**: as três cores do ambiente. É o que dá um tom às sombras e o reflexo dos metais.
-
-## Fundo (skybox)
-
-**Renderização → Fundo (Skybox)** escolhe o que aparece atrás da cena:
+- **Fundo (skybox)**: o que aparece atrás da cena.
 
 | Modo | Resultado |
 |---|---|
@@ -42,7 +38,11 @@ O menu **Renderização** controla o visual do projeto:
 | Gradiente | O mesmo gradiente Céu/Horizonte/Chão do ambiente |
 | Panorama | Uma imagem equirretangular (2:1): `.hdr`, `.png`, `.jpg`, `.tga` ou `.bmp` |
 
-Há rotação e intensidade para o panorama. **Importante:** o fundo **não ilumina** a cena; a luz de ambiente continua vindo do gradiente de três cores.
+Há rotação e brilho para o panorama. **Importante:** o fundo **não ilumina** a cena; a luz de ambiente continua vindo do gradiente de três cores.
+
+## Opções de render da câmera
+
+O component **Camera** tem a seção **Render**: **Fundo** (skybox da cena ou uma cor chapada), **Exposição** (brilho final, 1.0 é neutro) e **SSAO**. Cada câmera pode ter as suas. Por script: `entity:GetCamera().Exposure`, `entity:GetEnvironment().Ambient` etc. (bom para ciclo dia/noite).
 
 ## Efeitos que já vêm ligados
 

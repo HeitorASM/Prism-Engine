@@ -66,6 +66,25 @@ namespace PrismEditor {
             if (!isPrimary)
                 ImGui::TextDisabled("Nao e a camera principal - o modo Play/viewport nao vai usar esta.");
 
+            ImGui::SeparatorText("Render");
+            const char* clearNames[] = { "Skybox da cena", "Cor chapada" };
+            int clearIndex = (int)camera.ClearMode;
+            if (ImGui::Combo("Fundo##Cam", &clearIndex, clearNames, IM_ARRAYSIZE(clearNames))) {
+                camera.ClearMode = (Prism::CameraClearMode)clearIndex;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            if (camera.ClearMode == Prism::CameraClearMode::SolidColor) {
+                ImGui::ColorEdit3("Cor de fundo##Cam", glm::value_ptr(camera.ClearColor));
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
+            ImGui::DragFloat("Exposicao##Cam", &camera.Exposure, 0.01f, 0.05f, 16.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            bool ssao = camera.SSAO;
+            if (ImGui::Checkbox("Oclusao de ambiente (SSAO)##Cam", &ssao)) {
+                camera.SSAO = ssao;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+
             // --- Pre-visualizacao da camera (integrada) ---
             ImGui::Separator();
             ImGui::TextDisabled("Pre-visualizacao");

@@ -19,7 +19,6 @@
 //   Panels/EditorGizmos.h     gizmos de linha (camera, collider, luz, raycast)
 //   Panels/HierarchyPanel.h   arvore de entidades e popup "Criar Prefab"
 //   Panels/PropertiesPanel.h  propriedades por component, prefab, popups de material/script
-//   Panels/RenderSettingsPanel.h  menu Renderizacao
 //   Panels/Console/ContentBrowser/ScriptEditor  paineis ja independentes
 //
 // Undo/Redo (Ctrl+Z / Ctrl+Y): ver EditorContext::History e
@@ -34,7 +33,6 @@
 #include "../Panels/ViewportPanel.h"
 #include "../Panels/HierarchyPanel.h"
 #include "../Panels/PropertiesPanel.h"
-#include "../Panels/RenderSettingsPanel.h"
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
@@ -111,7 +109,6 @@ namespace PrismEditor {
         ViewportPanel m_Viewport;
         HierarchyPanel m_Hierarchy;
         PropertiesPanel m_Properties;
-        RenderSettingsPanel m_RenderSettings;
 
         // Painel de Console - le do Prism::LogBuffer (ver Prism.h) e tem
         // seu proprio estado de UI (filtros, auto-scroll), por isso vive em

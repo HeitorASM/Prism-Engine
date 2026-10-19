@@ -68,6 +68,7 @@ namespace PrismEditor {
         void DrawParticleEmitterUI();
         void DrawUIElementUI();
         void DrawAudioListenerUI();
+        void DrawEnvironmentUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e
@@ -211,6 +212,10 @@ namespace PrismEditor {
         std::filesystem::file_time_type m_PrefabDiffCachedFileTime{};
 
         Prism::PrefabDiffResult m_PrefabDiffCache;
+
+        // NO FIM da classe de proposito (layout de membros antigos intacto
+        // em builds incrementais) - ver comentario equivalente em EditorLayer.h.
+        Prism::EnvironmentComponent m_EnvironmentBeforeEdit;
     };
 
 }

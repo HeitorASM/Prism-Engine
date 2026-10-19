@@ -24,11 +24,6 @@ namespace PrismEditor {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
             Prism::Project::GetActive()->GetConfig().Name);
 
-        // Visual do projeto (exposicao, ambiente): o Renderer e estatico e
-        // guarda o ultimo valor aplicado, entao SEMPRE reaplica ao abrir um
-        // projeto - senao ele herdaria os ajustes do projeto anterior.
-        Prism::Renderer::ApplyRenderSettings(Prism::Project::GetActive()->GetRenderSettings());
-
         // Liga os ponteiros do contexto compartilhado aos paineis que outros
         // paineis precisam chamar (ver EditorContext.h).
         m_Ctx.Play = &m_PlayWindow;
@@ -115,12 +110,10 @@ namespace PrismEditor {
         // e exatamente o que o comentario original desta funcao ja aceitava.
         m_Ctx.Camera.LookActive = false;
 
-        // Ajuste de renderizacao e edicao de material vinculado ainda pendentes
-        // (a espera do debounce nao acabou): gravados agora, porque nao vem mais
-        // nenhum frame. Nenhum dos dois usa Application::Get() - ver o comentario
-        // grande no topo desta funcao e RenderSettingsPanel::FlushOnShutdown /
-        // MaterialLinkSync::WritePendingOnShutdown.
-        m_RenderSettings.FlushOnShutdown();
+        // Edicao de material vinculado ainda pendente (a espera do debounce
+        // nao acabou): gravada agora, porque nao vem mais nenhum frame. Nao
+        // usa Application::Get() - ver o comentario grande no topo desta
+        // funcao e MaterialLinkSync::WritePendingOnShutdown.
         m_Ctx.MaterialLinks.WritePendingOnShutdown();
     }
 
@@ -370,8 +363,6 @@ namespace PrismEditor {
     }
 
     void EditorLayer::RenderMenuBar() {
-        m_RenderSettings.FlushSave();
-
         // Vinculo vivo de Material (ver comentario grande em
         // MaterialSerializer.h e EditorLayer.h): grava a edicao pendente
         // desta entidade (se o debounce ja passou) e depois releva
@@ -428,6 +419,20 @@ namespace PrismEditor {
                     CreatePresetEntityCommand* raw = command.get();
                     m_Ctx.History.Execute(std::move(command));
                     m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                }
+                {
+                    // Ambiente da cena (luz ambiente + skybox): so um por cena.
+                    auto environmentView = m_Ctx.ActiveScene->GetRegistry().view<Prism::EnvironmentComponent>();
+                    bool hasEnvironment = environmentView.begin() != environmentView.end();
+                    if (ImGui::MenuItem("Criar Ambiente", nullptr, false, !hasEnvironment)) {
+                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, "Ambiente", "Ambiente",
+                            [](Prism::Entity entity) { entity.AddComponent<Prism::EnvironmentComponent>(); });
+                        CreatePresetEntityCommand* raw = command.get();
+                        m_Ctx.History.Execute(std::move(command));
+                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                    }
+                    if (hasEnvironment && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("A cena ja tem um Ambiente.");
                 }
                 if (ImGui::MenuItem("Criar Character")) {
                     // Preset de conveniencia: combo comum para um NPC/player
@@ -528,8 +533,6 @@ namespace PrismEditor {
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();
             }
-
-            m_RenderSettings.OnImGuiRenderMenu();
 
             if (ImGui::BeginMenu("Ajuda")) {
                 if (ImGui::MenuItem("Documentacao da engine", "F1"))

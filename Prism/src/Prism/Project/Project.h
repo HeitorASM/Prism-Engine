@@ -50,58 +50,6 @@ namespace Prism {
         std::string EngineVersion;
     };
 
-    // Ajustes de renderizacao guardados POR PROJETO (no .prismproj): cada
-    // projeto tem o seu "look". Editados no menu "Renderizacao" do editor
-    // (RenderSettingsPanel::OnImGuiRenderMenu) e aplicados ao Renderer por
-    // Renderer::ApplyRenderSettings.
-    //
-    // Os valores padrao abaixo sao a FONTE UNICA da verdade: os estaticos
-    // do Renderer (s_Exposure, s_Ambient, s_Env*) sao inicializados a partir
-    // deles, entao os dois nunca divergem. As cores sao sRGB (o que o color
-    // picker mostra); ver Renderer::SetEnvironmentColors.
-    // Fundo visivel da cena (ver Renderer::DrawSky):
-    //   Solid     - uma cor chapada (o comportamento de sempre).
-    //   Gradient  - o mesmo gradiente ceu/horizonte/chao do ambiente (EnvZenith/
-    //               EnvHorizon/EnvGround), visivel ao fundo.
-    //   Panorama  - imagem equirretangular (.hdr, .png, .jpg...) do projeto.
-    // O fundo NAO ilumina a cena: a luz de ambiente continua vindo do gradiente
-    // (EnvZenith/EnvHorizon/EnvGround), qualquer que seja o modo.
-    enum class SkyMode : int {
-        Solid = 0,
-        Gradient = 1,
-        Panorama = 2
-    };
-
-    struct RenderSettings {
-        // Multiplicador de brilho aplicado em espaco linear ANTES do tone
-        // mapping (Renderer::SetExposure). 1.0 = neutro.
-        float Exposure = 1.0f;
-
-        // Brilho MEDIO do ambiente (Renderer::SetAmbient). 0 = so as luzes
-        // iluminam.
-        float Ambient = 0.10f;
-
-        // Gradiente de ambiente: ceu (+Y), horizonte e chao (-Y).
-        float EnvZenith[3]  = { 0.36f, 0.55f, 0.95f };
-        float EnvHorizon[3] = { 0.80f, 0.85f, 0.90f };
-        float EnvGround[3]  = { 0.22f, 0.20f, 0.18f };
-
-        // Fundo (skybox). Padrao = cor chapada escura, igual ao fundo antigo.
-        SkyMode Sky = SkyMode::Solid;
-        float SkyColor[3] = { 0.05f, 0.05f, 0.07f }; // sRGB (como o picker), modo Solid
-        std::string SkyTexture;                      // relativo a pasta do projeto, modo Panorama
-        float SkyRotation = 0.0f;                    // graus em torno de Y (-180..180)
-        float SkyIntensity = 1.0f;                   // multiplicador de brilho do panorama
-
-        // Limites aceitos ao LER um .prismproj (um arquivo editado a mao ou
-        // corrompido nao pode deixar a cena preta ou estourada). Exposicao
-        // <= 0 zeraria a imagem inteira.
-        static constexpr float kExposureMin = 0.05f;
-        static constexpr float kExposureMax = 16.0f;
-        static constexpr float kAmbientMax  = 2.0f;
-        static constexpr float kSkyIntensityMax = 16.0f;
-    };
-
     // Estrutura de pastas criada para todo novo projeto. Mantida em um so
     // lugar para que o ProjectManager e testes usem exatamente a mesma lista.
     inline const std::vector<std::string>& GetDefaultProjectFolders() {
@@ -148,13 +96,6 @@ namespace Prism {
         // guarda os .prismmat que agrupam esses caminhos num asset
         // reutilizavel).
         std::filesystem::path GetMaterialDirectory() const { return GetAssetDirectory() / "Materials"; }
-
-        // Ajustes de renderizacao deste projeto (exposicao, ambiente). A
-        // versao nao-const e o que o editor edita; depois de mudar, chame
-        // Renderer::ApplyRenderSettings para aplicar e Project::SaveActive
-        // para persistir.
-        RenderSettings& GetRenderSettings() { return m_RenderSettings; }
-        const RenderSettings& GetRenderSettings() const { return m_RenderSettings; }
 
         // Indice de identidade dos assets deste projeto (AssetID <-> caminho,
         // ver Assets/AssetRegistry.h). Pertence ao Project: e recriado junto
@@ -214,17 +155,11 @@ namespace Prism {
         std::filesystem::path m_ProjectFilePath;
 
         // ATENCAO: fica NO FIM da classe DE PROPOSITO - nao mova para o
-        // meio. Project.h e incluido por muitos .cpp (via Prism.h e
-        // Renderer.h); um membro novo no meio deslocaria m_ProjectDirectory
-        // e m_ProjectFilePath, e qualquer .obj ainda compilado com o layout
-        // antigo (build incremental) leria/escreveria no lugar errado -
-        // corrupcao de heap, o mesmo bug que ja ocorreu no EditorLayer.h.
-        // No fim, o layout de tudo que ja existia continua identico.
-        RenderSettings m_RenderSettings;
-
-        // Tambem NO FIM, pelo mesmo motivo do m_RenderSettings acima - e
-        // DEPOIS dele, para que o layout de tudo que ja existia continue
-        // identico.
+        // meio. Project.h e incluido por muitos .cpp; um membro no meio
+        // deslocaria m_ProjectDirectory e m_ProjectFilePath em qualquer .obj
+        // ainda compilado com o layout antigo (build incremental).
+        // (O antigo RenderSettings foi removido: o visual agora vive no
+        // EnvironmentComponent da cena e no CameraComponent.)
         AssetRegistry m_AssetRegistry;
 
         inline static Ref<Project> s_ActiveProject;

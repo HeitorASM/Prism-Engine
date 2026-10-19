@@ -165,6 +165,12 @@ namespace Prism {
         MaterialComponent(const MaterialComponent&) = default;
     };
 
+    // O que uma camera desenha ao fundo (ver CameraComponent::ClearMode).
+    enum class CameraClearMode : int {
+        Skybox = 0,      // o fundo do EnvironmentComponent da cena (cor, gradiente ou panorama)
+        SolidColor = 1   // CameraComponent::ClearColor, sem skybox
+    };
+
     // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS);
     // Orthographic serve para uma camera 2D/isometrica ou vista "top-down"
     // - ja suportado no dado e no calculo de projecao (ver
@@ -195,6 +201,24 @@ namespace Prism {
         // valida isso, pois nao tem acesso a Scene/outras entidades.
         bool Primary = true;
 
+        // --- Opcoes de render DESTA camera (v20) ---------------------------
+        // O visual de uma camera (o que ela mostra ao fundo, o brilho da
+        // lente, o AO) pertence a ela, nao ao projeto: duas cameras da mesma
+        // cena podem ter visuais diferentes. O AMBIENTE (luz ambiente e
+        // skybox) e da cena - ver EnvironmentComponent. A viewport livre do
+        // editor usa os valores padrao abaixo.
+
+        // O que e desenhado ao fundo: o skybox do ambiente da cena ou uma cor chapada.
+        CameraClearMode ClearMode = CameraClearMode::Skybox;
+        glm::vec3 ClearColor = { 0.05f, 0.05f, 0.07f }; // sRGB (como o color picker); so ClearMode == SolidColor
+
+        // Multiplicador de brilho em espaco linear ANTES do tone mapping (1 = neutro).
+        float Exposure = 1.0f;
+
+        // Oclusao de ambiente em espaco de tela (ver SSAO.h). Desligar poupa
+        // dois passes de tela cheia.
+        bool SSAO = true;
+
         CameraComponent() = default;
         CameraComponent(const CameraComponent&) = default;
 
@@ -211,6 +235,47 @@ namespace Prism {
             }
             return glm::perspective(glm::radians(FOV), aspectRatio, NearClip, FarClip);
         }
+    };
+
+    // Fundo visivel da cena (ver Renderer::DrawSky e EnvironmentComponent):
+    //   Solid     - uma cor chapada (EnvironmentComponent::SkyColor).
+    //   Gradient  - o mesmo gradiente ceu/horizonte/chao da luz de ambiente.
+    //   Panorama  - imagem equirretangular (.hdr, .png, .jpg...) do projeto.
+    // O fundo NAO ilumina a cena: a luz de ambiente vem sempre do gradiente
+    // (Zenith/Horizon/Ground), qualquer que seja o modo.
+    enum class SkyMode : int {
+        Solid = 0,
+        Gradient = 1,
+        Panorama = 2
+    };
+
+    // Ambiente da CENA: luz ambiente (gradiente analitico de 3 cores) e
+    // skybox. Fica numa entidade qualquer (convencionalmente "Ambiente") e e
+    // gravado no .prismmap junto com o resto da cena. Vale a primeira
+    // entidade com este component; sem nenhuma, o Renderer usa os padroes
+    // abaixo. Pode ser alterado em runtime por script (ciclo dia/noite).
+    //
+    // Todas as cores sao sRGB (o que o color picker mostra). Os limites
+    // aceitos (aplicados pelo Renderer, que nunca confia no dado) sao:
+    // Ambient 0..2, cores 0..1, SkyIntensity 0..16.
+    struct EnvironmentComponent {
+        // Brilho MEDIO da luz ambiente. 0 = so as luzes iluminam.
+        float Ambient = 0.10f;
+
+        // Gradiente de ambiente: ceu (+Y), horizonte e chao (-Y).
+        glm::vec3 Zenith  = { 0.36f, 0.55f, 0.95f };
+        glm::vec3 Horizon = { 0.80f, 0.85f, 0.90f };
+        glm::vec3 Ground  = { 0.22f, 0.20f, 0.18f };
+
+        // Fundo visivel (so aparece em cameras com ClearMode == Skybox).
+        SkyMode Sky = SkyMode::Gradient;
+        glm::vec3 SkyColor = { 0.05f, 0.05f, 0.07f }; // modo Solid
+        AssetID SkyTexture;                           // modo Panorama; invalido = cai para cor chapada
+        float SkyRotation = 0.0f;                     // graus em torno de Y (-180..180)
+        float SkyIntensity = 1.0f;                    // multiplicador de brilho do panorama
+
+        EnvironmentComponent() = default;
+        EnvironmentComponent(const EnvironmentComponent&) = default;
     };
 
     // Tipos de luz suportados.

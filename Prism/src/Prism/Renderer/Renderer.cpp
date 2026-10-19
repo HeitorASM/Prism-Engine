@@ -23,11 +23,11 @@ namespace Prism {
     Ref<Shader> Renderer::s_LineShader = nullptr;
     Ref<Shader> Renderer::s_ParticleShader = nullptr;
     Ref<Shader> Renderer::s_SkyShader = nullptr;
-    SkyMode Renderer::s_SkyMode = RenderSettings{}.Sky;
-    float Renderer::s_SkyColor[3] = { RenderSettings{}.SkyColor[0], RenderSettings{}.SkyColor[1], RenderSettings{}.SkyColor[2] };
+    SkyMode Renderer::s_SkyMode = EnvironmentComponent{}.Sky;
+    float Renderer::s_SkyColor[3] = { EnvironmentComponent{}.SkyColor.x, EnvironmentComponent{}.SkyColor.y, EnvironmentComponent{}.SkyColor.z };
     std::string Renderer::s_SkyTexturePath;
-    float Renderer::s_SkyRotation = RenderSettings{}.SkyRotation;
-    float Renderer::s_SkyIntensity = RenderSettings{}.SkyIntensity;
+    float Renderer::s_SkyRotation = EnvironmentComponent{}.SkyRotation;
+    float Renderer::s_SkyIntensity = EnvironmentComponent{}.SkyIntensity;
     Scope<SkyTexture> Renderer::s_SkyTexture = nullptr;
     std::string Renderer::s_SkyLoadedPath;
     uint32_t Renderer::s_ParticleSSBO = 0;
@@ -47,14 +47,14 @@ namespace Prism {
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
     float Renderer::s_CameraWorldPos[3] = { 0.0f, 0.0f, 0.0f };
-    // Valores padrao: vem de RenderSettings (Project.h), a fonte UNICA da
-    // verdade - o "Restaurar padrao" do editor e este arranque usam os mesmos
-    // numeros, entao nunca divergem. As cores sao sRGB (como o color picker).
-    float Renderer::s_Exposure = RenderSettings{}.Exposure;
-    float Renderer::s_Ambient = RenderSettings{}.Ambient;
-    float Renderer::s_EnvZenith[3]  = { RenderSettings{}.EnvZenith[0],  RenderSettings{}.EnvZenith[1],  RenderSettings{}.EnvZenith[2] };
-    float Renderer::s_EnvHorizon[3] = { RenderSettings{}.EnvHorizon[0], RenderSettings{}.EnvHorizon[1], RenderSettings{}.EnvHorizon[2] };
-    float Renderer::s_EnvGround[3]  = { RenderSettings{}.EnvGround[0],  RenderSettings{}.EnvGround[1],  RenderSettings{}.EnvGround[2] };
+    // Estado por quadro (reescrito em DrawScene/ApplyFrameState). Os valores
+    // iniciais sao os padroes do EnvironmentComponent/CameraComponent, para
+    // um DrawMesh avulso antes do primeiro DrawScene ja sair coerente.
+    float Renderer::s_Exposure = CameraComponent{}.Exposure;
+    float Renderer::s_Ambient = EnvironmentComponent{}.Ambient;
+    float Renderer::s_EnvZenith[3]  = { EnvironmentComponent{}.Zenith.x,  EnvironmentComponent{}.Zenith.y,  EnvironmentComponent{}.Zenith.z };
+    float Renderer::s_EnvHorizon[3] = { EnvironmentComponent{}.Horizon.x, EnvironmentComponent{}.Horizon.y, EnvironmentComponent{}.Horizon.z };
+    float Renderer::s_EnvGround[3]  = { EnvironmentComponent{}.Ground.x,  EnvironmentComponent{}.Ground.y,  EnvironmentComponent{}.Ground.z };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
     std::unordered_map<AssetID, Renderer::ModelCacheEntry> Renderer::s_ModelMeshCache;
 
@@ -589,65 +589,54 @@ namespace Prism {
         s_CameraWorldPos[2] = worldPos[2];
     }
 
-    void Renderer::SetExposure(float exposure) {
-        // Ignora 0/negativo em vez de aceitar: exposicao <= 0 zera (ou
-        // inverte) toda a cor antes do tone mapping - cena preta sem
-        // nenhuma pista de por que. Manter o valor anterior e mais seguro.
-        // isfinite: +inf passaria em 'exposure > 0' e faria o tone mapping
-        // devolver NaN (tela toda preta ou piscando).
-        if (std::isfinite(exposure) && exposure > 0.0f)
-            s_Exposure = exposure;
-    }
+    // Reescreve o estado por quadro (exposicao, ambiente, fundo) a partir da
+    // cena e da camera. Tudo e SANEADO aqui: o dado pode vir de um arquivo
+    // editado a mao ou de um script, e NaN/inf/0 deixariam a cena preta ou
+    // piscando sem nenhuma pista do motivo.
+    void Renderer::ApplyFrameState(Scene& scene, const CameraRenderSettings& camera) {
+        auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        auto clamp01 = [&](float v, float fallback) { return std::min(std::max(finiteOr(v, fallback), 0.0f), 1.0f); };
 
-    float Renderer::GetExposure() {
-        return s_Exposure;
-    }
+        // Exposicao <= 0 zeraria a imagem inteira: cai para o neutro.
+        float exposure = finiteOr(camera.Exposure, 1.0f);
+        s_Exposure = std::min(std::max(exposure, 0.05f), 16.0f);
 
-    void Renderer::SetAmbient(float ambient) {
-        // Diferente de SetExposure, 0 e valido (cena so com luzes). So
-        // negativo e rejeitado: ambiente negativo subtrairia luz.
-        // isfinite pelo mesmo motivo de SetExposure (+inf passaria em >= 0).
-        if (std::isfinite(ambient) && ambient >= 0.0f)
-            s_Ambient = ambient;
-    }
+        // Primeira entidade com EnvironmentComponent; sem nenhuma, padroes.
+        EnvironmentComponent env;
+        {
+            auto envView = scene.GetRegistry().view<EnvironmentComponent>();
+            auto it = envView.begin();
+            if (it != envView.end())
+                env = envView.get<EnvironmentComponent>(*it);
+        }
 
-    float Renderer::GetAmbient() {
-        return s_Ambient;
-    }
+        s_Ambient = std::min(std::max(finiteOr(env.Ambient, 0.10f), 0.0f), 2.0f);
+        const glm::vec3 defaults[3] = { EnvironmentComponent{}.Zenith, EnvironmentComponent{}.Horizon, EnvironmentComponent{}.Ground };
+        const glm::vec3* sources[3] = { &env.Zenith, &env.Horizon, &env.Ground };
+        float* targets[3] = { s_EnvZenith, s_EnvHorizon, s_EnvGround };
+        for (int c = 0; c < 3; c++)
+            for (int i = 0; i < 3; i++)
+                targets[c][i] = clamp01((*sources[c])[i], defaults[c][i]);
 
-    void Renderer::SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground) {
-        // nullptr = mantem a cor atual (permite trocar so o ceu, por exemplo).
-        // Limita a [0,1]: o picker so produz esse intervalo, e um valor
-        // fora dele (NaN incluido) viraria luz negativa/infinita no shader.
-        auto assign = [](float* dst, const float* src) {
-            if (!src) return;
-            for (int i = 0; i < 3; i++) {
-                float v = src[i];
-                dst[i] = std::isfinite(v) ? std::min(std::max(v, 0.0f), 1.0f) : dst[i];
+        // Fundo. Camera com cor chapada ignora o skybox da cena.
+        if (camera.ClearMode == CameraClearMode::SolidColor) {
+            s_SkyMode = SkyMode::Solid;
+            for (int i = 0; i < 3; i++)
+                s_SkyColor[i] = clamp01(camera.ClearColor[i], 0.0f);
+            s_SkyTexturePath.clear();
+        } else {
+            int mode = (int)env.Sky;
+            s_SkyMode = (mode >= 0 && mode <= (int)SkyMode::Panorama) ? env.Sky : SkyMode::Solid;
+            for (int i = 0; i < 3; i++)
+                s_SkyColor[i] = clamp01(env.SkyColor[i], 0.0f);
+            s_SkyTexturePath.clear();
+            if (s_SkyMode == SkyMode::Panorama && env.SkyTexture.IsValid()) {
+                if (auto project = Project::GetActive())
+                    s_SkyTexturePath = project->GetAssetRegistry().AbsolutePath(env.SkyTexture).string();
             }
-        };
-        assign(s_EnvZenith, zenith);
-        assign(s_EnvHorizon, horizon);
-        assign(s_EnvGround, ground);
-    }
-
-    void Renderer::GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround) {
-        if (outZenith)  for (int i = 0; i < 3; i++) outZenith[i]  = s_EnvZenith[i];
-        if (outHorizon) for (int i = 0; i < 3; i++) outHorizon[i] = s_EnvHorizon[i];
-        if (outGround)  for (int i = 0; i < 3; i++) outGround[i]  = s_EnvGround[i];
-    }
-
-    void Renderer::ApplyRenderSettings(const RenderSettings& settings) {
-        SetExposure(settings.Exposure);
-        SetAmbient(settings.Ambient);
-        SetEnvironmentColors(settings.EnvZenith, settings.EnvHorizon, settings.EnvGround);
-
-        s_SkyMode = settings.Sky;
-        for (int i = 0; i < 3; i++)
-            s_SkyColor[i] = std::isfinite(settings.SkyColor[i]) ? std::min(std::max(settings.SkyColor[i], 0.0f), 1.0f) : s_SkyColor[i];
-        s_SkyTexturePath = settings.SkyTexture;
-        s_SkyRotation = std::isfinite(settings.SkyRotation) ? settings.SkyRotation : 0.0f;
-        s_SkyIntensity = std::isfinite(settings.SkyIntensity) ? std::max(settings.SkyIntensity, 0.0f) : 1.0f;
+        }
+        s_SkyRotation = std::min(std::max(finiteOr(env.SkyRotation, 0.0f), -180.0f), 180.0f);
+        s_SkyIntensity = std::min(std::max(finiteOr(env.SkyIntensity, 1.0f), 0.0f), 16.0f);
     }
 
     // Fundo da cena: um triangulo de tela cheia no plano distante, desenhado ANTES
@@ -663,12 +652,8 @@ namespace Prism {
             if (s_SkyLoadedPath != s_SkyTexturePath) {
                 s_SkyLoadedPath = s_SkyTexturePath; // tenta UMA vez por caminho (falha nao repete o erro todo frame)
                 s_SkyTexture.reset();
-                if (!s_SkyTexturePath.empty()) {
-                    std::filesystem::path resolved = s_SkyTexturePath;
-                    if (auto project = Project::GetActive())
-                        resolved = project->GetProjectDirectory() / s_SkyTexturePath;
-                    s_SkyTexture = CreateScope<SkyTexture>(resolved.string());
-                }
+                if (!s_SkyTexturePath.empty())
+                    s_SkyTexture = CreateScope<SkyTexture>(s_SkyTexturePath);
             }
             if (s_SkyTexture && s_SkyTexture->IsValid())
                 panorama = s_SkyTexture.get();
@@ -1106,8 +1091,9 @@ namespace Prism {
         glEnable(GL_BLEND);
     }
 
-    void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos) {
+    void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera) {
         SetCameraPosition(cameraWorldPos);
+        ApplyFrameState(scene, camera);
 
         glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
 
@@ -1156,13 +1142,10 @@ namespace Prism {
         // blur - ver comentario grande em SSAO.h. So roda quando a
         // viewport tem tamanho valido (largura/altura > 0) - pode ser 0
         // por um frame quando o painel esta sendo redimensionado/oculto.
-        //
-        // TODO: SSAO esta SEMPRE ativo (sem opcao de liga/desliga no
-        // editor, ao contrario de CastShadows por luz); poderia virar uma
-        // configuracao de qualidade grafica (ex: "Render Settings" por
-        // cena/projeto).
+        // Desligavel por camera (CameraComponent::SSAO): sem AO, ssao fica
+        // nullptr e o DrawMesh usa oclusao neutra (ver u_HasSSAO).
         SSAO* ssao = nullptr;
-        if (viewportWidth > 0 && viewportHeight > 0) {
+        if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0) {
             GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight);
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);

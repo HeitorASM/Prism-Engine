@@ -118,7 +118,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | `Panels/EditorGizmos` | Gizmos de linha: câmera, collider, luz, raycast |
 | `Panels/HierarchyPanel` | Árvore de entidades, menu de contexto, popup "Criar Prefab" |
 | `Panels/PropertiesPanel` (+ `_Prefab.cpp` e um `_<Component>.cpp` por component) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
-| `Panels/RenderSettingsPanel` | Menu Renderização e gravação no `.prismproj` |
+| `Panels/PropertiesPanel_Environment` | UI do `EnvironmentComponent` (ambiente e skybox da cena) |
 | `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
 | `Panels/BuildOutputPanel` | Aba "Saída de Build": saída da compilação dos scripts C++, com erros clicáveis |
 | `Core/FileDialog` | Diálogos nativos (escolher pasta/arquivo, via nativefiledialog-extended) e conversão UTF-8 ↔ `path` |

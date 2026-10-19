@@ -1,4 +1,6 @@
-# Roadmap de melhorias atuais
+# Roadmap de melhorias
+
+Plano de trabalho por fases. Cada fase termina com a engine funcionando e a documentação atualizada.
 
 ## Fase 1 — Modelos e texturas (feito)
 
@@ -38,7 +40,7 @@
 
 
 - Animação esquelética (skinning) e importação de animações.
-- [x] Skybox (5B): cor, gradiente ou panorama equirretangular (.hdr/.png/.jpg) por projeto.
+- [x] Skybox (5B): cor, gradiente ou panorama equirretangular (.hdr/.png/.jpg) por cena (`EnvironmentComponent`).
 - [x] UI in-game (5C): `UIElementComponent` (Panel/Texto/Imagem/Botão), âncoras, hierarquia, `OnClick` em Lua/C++, fonte embutida (ver [docs/ui.md](ui.md)).
 
 - Pendente: IBL a partir do panorama (irradiância/reflexo), pós-processamento (bloom).

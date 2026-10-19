@@ -40,7 +40,9 @@ O ambiente é um **gradiente vertical analítico** de 3 cores (zênite, horizont
 - **Especular**: `F * mix(env(R), irradiância(R.y), roughness^1.25)`. É o que impede o metal preto: sem luz direta, um metal reflete o ambiente.
 - **Termo BRDF** `(A, B)`: aproximação de Karis (Unreal 4) mais uma correção polinomial própria, restrita fisicamente (`A` em [0,1], `A+B <= 1`).
 
-API: `Renderer::SetEnvironmentColors(zenith, horizon, ground)` (sRGB, o que o color picker mostra; o shader converte para linear) e `Renderer::SetAmbient` (a **intensidade**). O editor edita tudo isso no menu **Renderização** e guarda no `.prismproj` (`RenderSettings` em `Project.h`); `Renderer::ApplyRenderSettings` aplica o conjunto de uma vez, e um modo Runtime deve chamá-la ao carregar o projeto para o jogo ter o mesmo visual do editor. O padrão é 0.10, e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`).
+Os valores vêm do **`EnvironmentComponent` da cena** (o primeiro encontrado; sem nenhum valem os padrões do component). Cores em sRGB, o que o color picker mostra; o shader converte para linear. `Ambient` é a **intensidade** (padrão 0.10) e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`). O Renderer não guarda configuração do usuário: `Renderer::DrawScene` reescreve o estado do quadro (`ApplyFrameState`) a cada chamada e limita tudo (exposição 0.05–16, `Ambient` 0–2, cores 0–1, NaN/inf viram o padrão).
+
+As opções da **câmera** chegam por `CameraRenderSettings::From(camera)`: `ClearMode` (skybox da cena ou cor chapada), `ClearColor`, `Exposure` e `SSAO` (desligar poupa dois passes de tela cheia). A viewport livre do editor usa os padrões.
 
 **Precisão medida** (contra integração numérica): irradiância, erro máximo 0.009 (0.008 com uma paleta de pôr do sol, sem reajuste); especular, erro médio 1.5 níveis de 255; termo BRDF, `A` com erro médio 0.018.
 
@@ -78,17 +80,17 @@ A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, 
 
 ## Skybox
 
-`RenderSettings::Sky` (menu **Renderização → Fundo**, salvo no `.prismproj`) escolhe o fundo visível:
+`EnvironmentComponent::Sky` (gravado no mapa, editado no component **Environment**) escolhe o fundo visível; uma câmera com `ClearMode = SolidColor` ignora o skybox e usa a própria cor:
 
 | Modo | Resultado |
 |---|---|
-| Cor chapada | `SkyColor` (sRGB, escrita direto; o padrão é o mesmo fundo escuro de sempre) |
+| Cor chapada | `SkyColor` (sRGB, escrita direto) |
 | Gradiente | O mesmo gradiente Céu/Horizonte/Chão do ambiente, visível ao fundo |
-| Panorama | Imagem equirretangular (2:1) do projeto: `.hdr`, `.png`, `.jpg`, `.tga`, `.bmp` |
+| Panorama | Imagem equirretangular (2:1) escolhida por `SkyTexture` (`AssetID`, arraste do Conteúdo do Projeto): `.hdr`, `.png`, `.jpg`, `.tga`, `.bmp` |
 
 - O desenho é um triângulo de tela cheia no plano distante (`sky.vert`), sem teste nem escrita de profundidade; a direção de cada pixel vem da matriz inversa de view-projection.
 - O panorama é carregado por `SkyTexture` em `GL_RGB16F` linear, sem inverter (a primeira linha da imagem é o céu), com mipmaps e a correção da costura do `atan` no cálculo das derivadas. `.hdr` passa por exposição e ACES; imagens comuns só pela intensidade, para aparecerem como foram pintadas. `SkyRotation` gira em torno de Y.
-- Panorama sem imagem válida (caminho vazio, arquivo ausente) cai para a cor chapada; o erro de carga é logado uma vez por caminho.
+- Panorama sem imagem válida (sem asset, vínculo quebrado, arquivo ausente) cai para a cor chapada; o erro de carga é logado uma vez por caminho.
 - **O fundo não ilumina a cena.** A luz de ambiente e os reflexos continuam vindo do gradiente de 3 cores, qualquer que seja o modo. Iluminação por imagem (IBL) é um passo futuro.
 
 ## Partículas

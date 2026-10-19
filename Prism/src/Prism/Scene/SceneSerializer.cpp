@@ -61,6 +61,9 @@ namespace Prism {
     //   v17 NativeScriptComponent (script em C++): string com o nome da classe.
     //   v18 ParticleEmitterComponent (emissor de particulas).
     //   v19 UIElementComponent (elemento de UI in-game).
+    //   v20 EnvironmentComponent (ambiente/skybox da cena, ultimo registrado)
+    //       e CameraComponent ganha ClearMode, ClearColor, Exposure e SSAO
+    //       no fim do bloco. As opcoes de render saem do .prismproj.
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -73,7 +76,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 19;
+    static constexpr uint32_t kSceneFormatVersion = 20;
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}

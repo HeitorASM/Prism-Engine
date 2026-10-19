@@ -81,6 +81,9 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioListenerComponent>())
             DrawAudioListenerUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::EnvironmentComponent>())
+            DrawEnvironmentUI();
+
         ImGui::Dummy(ImVec2(0, 8));
         RenderAddComponentButton();
 
@@ -195,6 +198,8 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioSourceComponent>>(entity, displayName));
         else if (displayName == "Audio Listener")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioListenerComponent>>(entity, displayName));
+        else if (displayName == "Environment")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::EnvironmentComponent>>(entity, displayName));
         else {
             // Fallback generico SEM Undo - usado so se um Component for
             // registrado em ComponentRegistration.cpp mas esquecido aqui
@@ -242,8 +247,6 @@ namespace PrismEditor {
         }
 
         m_CameraPreviewFramebuffer->Bind();
-        Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
-
         float aspect = h > 0 ? (float)w / (float)h : 1.0f;
         auto& camera = cameraEntity.GetComponent<Prism::CameraComponent>();
         glm::mat4 worldTransform = m_Ctx.ActiveScene->GetWorldTransform(cameraEntity);
@@ -251,7 +254,7 @@ namespace PrismEditor {
         glm::mat4 projection = camera.GetProjection(aspect);
         glm::vec3 worldPos = glm::vec3(worldTransform[3]);
 
-        Prism::Renderer::DrawScene(*m_Ctx.ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos));
+        Prism::Renderer::DrawScene(*m_Ctx.ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos), Prism::CameraRenderSettings::From(camera));
 
         m_CameraPreviewFramebuffer->Unbind();
         return m_CameraPreviewFramebuffer->GetColorAttachmentID();

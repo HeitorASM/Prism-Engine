@@ -21,28 +21,13 @@ ScriptDirectory=Scripts
 MapDirectory=Maps
 StartMap=Cena.prismmap
 EngineVersion=0.1.0
-Exposure=1
-Ambient=0.1
-EnvZenith=0.36,0.55,0.95
-EnvHorizon=0.8,0.85,0.9
-EnvGround=0.22,0.2,0.18
-Sky=0
-SkyColor=0.05,0.05,0.07
-SkyTexture=
-SkyRotation=0
-SkyIntensity=1
 ```
 
 `StartMap` é o mapa aberto automaticamente ao carregar o projeto.
 
 `EngineVersion` é a versão da engine (`Version.py`) que criou o projeto. Só serve para o editor avisar quando difere da atual; projetos sem a chave abrem normalmente. O arquivo é gravado de forma atômica (arquivo temporário + rename), então um crash no meio do save não o corrompe. Um projeto novo também recebe um `.gitignore` com `Cache/` e `Binaries/`.
 
-`Exposure`, `Ambient`, `EnvZenith`, `EnvHorizon` e `EnvGround` são os ajustes de renderização do projeto (menu **Renderização** do editor; ver [Renderização](renderizacao.md)). As cores são `r,g,b` em sRGB, de 0 a 1. O fundo (skybox) usa `Sky` (0 = cor chapada, 1 = gradiente do ambiente, 2 = panorama), `SkyColor`, `SkyTexture` (caminho relativo ao projeto), `SkyRotation` (graus, -180 a 180) e `SkyIntensity` (0 a 16).
-
-- Sempre escritos com **ponto decimal**, independente do idioma do sistema (um Windows em português não muda o formato do arquivo).
-- Chaves ausentes usam o valor padrão, então projetos criados antes destas chaves existirem abrem com o visual de sempre.
-- Valor inválido (texto, número de componentes errado, `nan`) é ignorado com um aviso no log e a chave volta ao padrão, sem afetar as outras.
-- Valores fora da faixa são limitados: `Exposure` a 0.05–16 (zero deixaria a cena preta), `Ambient` a 0–2 e cada canal de cor a 0–1.
+> As opções de render **não ficam mais no projeto**: o ambiente e o skybox são do `EnvironmentComponent` da cena (gravado no `.prismmap`) e exposição, fundo e SSAO são do `CameraComponent`. Chaves antigas (`Exposure`, `Ambient`, `Env*`, `Sky*`) em um `.prismproj` existente são ignoradas ao ler e desaparecem no próximo save.
 
 ## `.prismmap`
 
@@ -71,6 +56,7 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v17 | `NativeScript` (nome da classe do script C++) |
 | v18 | `ParticleEmitter` (emissor de partículas) |
 | v19 | `UIElement` (elemento de UI in-game) |
+| v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
 

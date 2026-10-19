@@ -58,6 +58,7 @@ Rotação sempre em **graus**.
 | Material | `entity:GetMaterial()` | — (campos do material via component) |
 | Luz | `entity:GetLight()` | `GetComponent<LightComponent>()` |
 | Câmera | `entity:GetCamera()` | `GetComponent<CameraComponent>()` |
+| Ambiente da cena | `entity:GetEnvironment()` | `GetComponent<EnvironmentComponent>()` |
 | Fonte de áudio | `entity:GetAudioSource()` | `GetComponent<AudioSourceComponent>()` (`Volume`, `Pitch`) |
 | Emissor de partículas | `entity:GetParticleEmitter()` | `GetComponent<ParticleEmitterComponent>()` |
 | UI | `entity:GetUI()` | `GetComponent<UIElementComponent>()` (`Text`, `Color`...) |
