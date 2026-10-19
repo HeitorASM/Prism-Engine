@@ -120,6 +120,9 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | `Panels/PropertiesPanel` (+ `_Prefab.cpp` e um `_<Component>.cpp` por component) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
 | `Panels/RenderSettingsPanel` | Menu Renderização e gravação no `.prismproj` |
 | `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
+| `Panels/BuildOutputPanel` | Aba "Saída de Build": saída da compilação dos scripts C++, com erros clicáveis |
+| `Core/FileDialog` | Diálogos nativos (escolher pasta/arquivo, via nativefiledialog-extended) e conversão UTF-8 ↔ `path` |
+| `Layers/ProjectManagerLayer` | Tela inicial: projetos recentes e criação de projeto (validação em tempo real). `EditorLayer::CloseProject` volta para ela |
 
 **Regra para código novo:** estado que só um painel usa fica **no painel**; estado que dois ou mais painéis leem ou escrevem entra no `EditorContext`. Um painel novo recebe `EditorContext&` no construtor e **não** inclui `EditorLayer.h`. Para adicionar um painel: crie `Panels/MeuPainel.{h,cpp}` (o CMake pega arquivos novos sozinho), instancie-o como membro do `EditorLayer` (depois de `m_Ctx`) e chame o `OnImGuiRender()` dele em `RenderDockspace()`.
 
@@ -142,6 +145,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | Lua 5.4.7 + sol2 3.3.0 | scripting | FetchContent |
 | Jolt Physics 5.2.0 | física | FetchContent |
 | miniaudio 0.11.22 | áudio | FetchContent (só o header) |
+| nativefiledialog-extended | diálogos nativos de arquivo/pasta no editor | FetchContent |
 | Assimp | importação de modelos (`.obj`/`.fbx`/`.gltf`/`.glb`), via `Assets/ModelLoader` | FetchContent |
 
 As versões são fixadas em `vendor/CMakeLists.txt`.

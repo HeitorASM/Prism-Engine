@@ -332,3 +332,19 @@ endif()
 # substituir o arquivo.
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)
+
+# --- nativefiledialog-extended (dialogos nativos de abrir arquivo / escolher
+#     pasta - usado pela tela de projetos do editor, ver
+#     PrismEditor/Core/FileDialog) ---
+#
+# Mantida ativamente, usa a API nativa de cada plataforma (Windows: IFileDialog).
+# O alvo CMake se chama "nfd". Testes e exemplos desligados.
+set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    nfd
+    GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+    GIT_TAG v1.2.1
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nfd)

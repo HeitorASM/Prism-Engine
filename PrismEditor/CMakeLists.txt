@@ -21,6 +21,7 @@ target_link_libraries(PrismEditor PRIVATE
     Prism
     imguicolortextedit
     imguizmo
+    nfd
 )
 
 target_compile_features(PrismEditor PUBLIC cxx_std_20)

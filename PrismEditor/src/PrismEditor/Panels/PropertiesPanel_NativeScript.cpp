@@ -8,7 +8,7 @@
 
 // PropertiesPanel_NativeScript.cpp
 // UI do NativeScriptComponent (script em C++): combo com as classes do modulo
-// compilado do projeto (menu "Scripts C++").
+// compilado do projeto (botao "Compilar" da barra superior).
 
 namespace PrismEditor {
 
@@ -37,14 +37,14 @@ namespace PrismEditor {
                         ImGui::SetItemDefaultFocus();
                 }
                 if (classNames.empty())
-                    ImGui::TextDisabled("Nenhuma classe. Scripts C++ > Gerar projeto, escreva e Compile.");
+                    ImGui::TextDisabled("Nenhuma classe. Escreva em Source/ e clique em Compilar na barra superior.");
                 ImGui::EndCombo();
             }
 
             if (!script.ClassName.empty() && !Prism::NativeScripting::HasClass(script.ClassName)) {
                 ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.2f, 1.0f),
                     "Classe '%s' nao esta no modulo carregado.", script.ClassName.c_str());
-                ImGui::TextDisabled("Compile em Scripts C++ > Compilar e recarregar.");
+                ImGui::TextDisabled("Clique em Compilar na barra superior.");
             }
             else if (m_Ctx.Play->IsOpen()) {
                 ImGui::TextDisabled("Play em andamento - Pare e aperte Play de novo para aplicar mudancas.");

@@ -6,9 +6,9 @@ Os scripts C++ ficam ao lado dos scripts Lua. O código do projeto vira uma bibl
 
 ## Fluxo
 
-1. Menu **Scripts C++ → Gerar projeto de scripts**. Cria a pasta `Source/` no projeto, com um `CMakeLists.txt`, o arquivo de entrada do módulo e um exemplo.
+1. A pasta `Source/` (com `CMakeLists.txt`, o arquivo de entrada do módulo e um exemplo) já é criada junto com o projeto. Se faltar, o botão **Compilar** a gera.
 2. Escreva suas classes em `Source/*.cpp` (o **Editor de Código** abre esses arquivos).
-3. **Scripts C++ → Compilar e recarregar**. A compilação roda em segundo plano, a saída vai para o Console e, se der certo, o módulo é recarregado sozinho.
+3. Botão **Compilar** na barra superior. A compilação roda em segundo plano e, se der certo, o módulo é recarregado sozinho. A saída fica na aba **Saída de Build**, ao lado do Console; clicar num erro ou aviso abre o arquivo no Editor de Código. Por padrão o editor também compila ao abrir o projeto.
 4. Adicione o component **Native Script** a uma entidade e escolha a classe.
 5. **Play.**
 

@@ -1,4 +1,6 @@
 #include "EditorLayer.h"
+#include "ProjectManagerLayer.h"
+#include <PrismVersion.h>
 #include "../Core/EntityOps.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
@@ -14,8 +16,9 @@
 
 namespace PrismEditor {
 
-    EditorLayer::EditorLayer()
-        : Layer("EditorLayer"), m_Document(m_Ctx), m_Viewport(m_Ctx), m_Hierarchy(m_Ctx), m_Properties(m_Ctx) {}
+    EditorLayer::EditorLayer(bool buildNativeOnOpen)
+        : Layer("EditorLayer"), m_Document(m_Ctx), m_Viewport(m_Ctx), m_Hierarchy(m_Ctx), m_Properties(m_Ctx),
+          m_BuildNativeOnOpen(buildNativeOnOpen) {}
 
     void EditorLayer::OnAttach() {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
@@ -58,7 +61,23 @@ namespace PrismEditor {
         // Scripts C++ ja compilados em uma sessao anterior (Binaries/NativeScripts.*).
         Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
 
+        // Clicar num erro/aviso da Saida de Build abre o arquivo no Editor de Codigo.
+        m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*Prism::Project::GetActive()));
+        m_BuildOutput.SetOnOpenFile([this](const std::filesystem::path& filePath) {
+            if (m_ScriptEditor.Open(filePath))
+                ImGui::SetWindowFocus("###ScriptEditorPanel");
+            });
+
+        // Projeto criado por outra versao da engine: so avisa (nao ha migracao automatica).
+        const std::string& projectVersion = Prism::Project::GetActive()->GetConfig().EngineVersion;
+        if (!projectVersion.empty() && projectVersion != Prism::Version::Number)
+            PRISM_WARN("Este projeto foi criado com a Prism ", projectVersion, " e a engine atual e a ", Prism::Version::Number,
+                ". Mapas e prefabs de outra versao podem nao abrir (ver docs/formatos-de-arquivo.md).");
+
         m_Document.LoadOrCreateScene();
+
+        if (m_BuildNativeOnOpen)
+            StartNativeBuild();
     }
 
     void EditorLayer::OnDetach() {
@@ -252,6 +271,7 @@ namespace PrismEditor {
         m_Hierarchy.OnImGuiRender();
         m_Properties.OnImGuiRender();
         RenderConsolePanel();
+        m_BuildOutput.OnImGuiRender();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
         m_Docs.OnImGuiRender();
@@ -276,6 +296,7 @@ namespace PrismEditor {
         ImGui::DockBuilderDockWindow("###DocsPanel", center);         // painel de documentacao (aparece como aba quando aberto)
         ImGui::DockBuilderDockWindow("Conteudo do Projeto", bottom);
         ImGui::DockBuilderDockWindow("Console", bottom);
+        ImGui::DockBuilderDockWindow("###BuildOutputPanel", bottom); // saida da compilacao dos scripts C++ (aba ao lado do Console)
         ImGui::DockBuilderFinish(root);
 
         // Viewport em foco (a aba do editor de script fica atras).
@@ -307,6 +328,9 @@ namespace PrismEditor {
         if (ImGui::Button("Refazer"))
             m_Ctx.History.Redo();
         ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        RenderBuildToolbarGroup();
 
         // Play/Parar centralizado.
         const float playButtonWidth = 90.0f;
@@ -371,8 +395,9 @@ namespace PrismEditor {
                     m_Document.SaveActiveSceneAs();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Fechar Projeto")) {
-                    // TODO: voltar ao ProjectManagerLayer em vez de fechar
+                if (ImGui::MenuItem("Fechar Projeto"))
+                    m_Document.RunAfterUnsavedCheck([this]() { CloseProject(); });
+                if (ImGui::MenuItem("Sair do Editor")) {
                     m_Document.RunAfterUnsavedCheck([this]() {
                         m_Document.SetAllowWindowClose(true);
                         Prism::Application::Get().Close();
@@ -496,8 +521,6 @@ namespace PrismEditor {
                     EntityOps::DeleteEntity(m_Ctx, m_Ctx.SelectedEntity);
                 ImGui::EndMenu();
             }
-            RenderNativeScriptsMenu();
-
             if (ImGui::BeginMenu("Janela")) {
                 if (ImGui::MenuItem("Restaurar layout padrao"))
                     m_ResetLayoutRequested = true;
@@ -550,42 +573,66 @@ namespace PrismEditor {
         m_PlayWindow.Open(m_Ctx.ActiveScene, editorWindow);
     }
 
-    void EditorLayer::RenderNativeScriptsMenu() {
-        if (!ImGui::BeginMenu("Scripts C++"))
+    void EditorLayer::StartNativeBuild() {
+        auto project = Prism::Project::GetActive();
+        if (!project)
             return;
 
-        auto project = Prism::Project::GetActive();
-        bool building = m_NativeBuilder.IsRunning();
-        bool playing = m_PlayWindow.IsOpen();
-
-        if (ImGui::MenuItem("Gerar projeto de scripts", nullptr, false, project && !building)) {
+        // Projeto sem Source/ (ex: aberto de uma versao antiga): gera so se faltar.
+        // Nao regrava um CMakeLists.txt existente, para nunca apagar edicoes do usuario.
+        std::error_code ec;
+        if (!std::filesystem::exists(Prism::NativeScripting::GetSourceDirectory(*project) / "CMakeLists.txt", ec)) {
             std::string message;
             if (Prism::NativeScripting::GenerateProjectFiles(*project, message))
                 PRISM_INFO(message);
-            else
+            else {
                 PRISM_ERROR(message);
+                return;
+            }
         }
-        if (ImGui::MenuItem("Compilar e recarregar", nullptr, false, project && !building && !playing)) {
-            std::string error;
-            if (m_NativeBuilder.Start(*project, error))
-                PRISM_INFO("Compilando scripts C++...");
-            else
-                PRISM_ERROR(error);
+
+        m_BuildOutput.BeginBuild();
+        std::string error;
+        if (m_NativeBuilder.Start(*project, error)) {
+            m_LastNativeBuildFailed = false;
+            PRISM_INFO("Compilando scripts C++...");
         }
-        if (ImGui::MenuItem("Recarregar modulo", nullptr, false, project && !building && !playing))
-            Prism::NativeScripting::LoadProjectModule(*project);
+        else {
+            m_BuildOutput.AddLine(error);
+            m_BuildOutput.EndBuild(false);
+            m_LastNativeBuildFailed = true;
+            PRISM_ERROR(error);
+        }
+    }
 
-        ImGui::Separator();
-        if (building)
-            ImGui::TextDisabled("Compilando...");
-        else if (Prism::NativeScripting::IsModuleLoaded())
-            ImGui::TextDisabled("Modulo carregado: %d classe(s)", (int)Prism::NativeScripting::GetClassNames().size());
-        else
-            ImGui::TextDisabled("Nenhum modulo carregado.");
-        if (playing)
-            ImGui::TextDisabled("Pare o Play para recompilar/recarregar.");
+    // Botao "Compilar" + estado dos scripts C++, na barra de ferramentas.
+    void EditorLayer::RenderBuildToolbarGroup() {
+        const bool building = m_NativeBuilder.IsRunning();
+        const bool playing = m_PlayWindow.IsOpen();
+        const bool hasProject = Prism::Project::GetActive() != nullptr;
 
-        ImGui::EndMenu();
+        ImGui::BeginDisabled(!hasProject || building || playing);
+        if (ImGui::Button(building ? "Compilando..." : "Compilar"))
+            StartNativeBuild();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", playing ? "Pare o Play para compilar os scripts."
+                : "Compila os scripts C++ (pasta Source/) e recarrega o modulo.");
+
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        if (building) {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Compilando scripts C++...");
+        }
+        else if (m_LastNativeBuildFailed) {
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Erro de build (ver Saida de Build)");
+        }
+        else if (Prism::NativeScripting::IsModuleLoaded()) {
+            ImGui::TextDisabled("Scripts C++: %d classe(s)", (int)Prism::NativeScripting::GetClassNames().size());
+        }
+        else {
+            ImGui::TextDisabled("Scripts C++: nao compilados");
+        }
     }
 
     void EditorLayer::PollNativeBuild() {
@@ -594,20 +641,20 @@ namespace PrismEditor {
         bool success = false;
         m_NativeBuilder.Poll(lines, justFinished, success);
 
-        for (const auto& line : lines) {
-            if (line.IsError)
-                PRISM_ERROR(line.Text);
-            else
-                PRISM_INFO(line.Text);
-        }
+        // A saida detalhada vai para a aba "Saida de Build"; o Console recebe so o resumo.
+        for (const auto& line : lines)
+            m_BuildOutput.AddLine(line.Text);
 
         if (justFinished) {
+            m_BuildOutput.EndBuild(success);
             if (success) {
+                m_LastNativeBuildFailed = false;
                 PRISM_INFO("Scripts C++ compilados com sucesso.");
                 m_NativeReloadPending = true;
             }
             else {
-                PRISM_ERROR("Falha ao compilar os scripts C++ (veja as mensagens acima).");
+                m_LastNativeBuildFailed = true;
+                PRISM_ERROR("Falha ao compilar os scripts C++ (veja a aba Saida de Build).");
             }
         }
 
@@ -617,6 +664,24 @@ namespace PrismEditor {
             if (auto project = Prism::Project::GetActive())
                 Prism::NativeScripting::LoadProjectModule(*project);
         }
+    }
+
+    void EditorLayer::CloseProject() {
+        if (m_PlayWindow.IsOpen())
+            m_PlayWindow.Close();
+
+        // O modulo C++ e as instancias de script pertencem a este projeto.
+        Prism::NativeScripting::UnloadModule();
+
+        // O gancho de fechar janela captura 'this' (ver OnAttach): precisa
+        // sumir antes desta Layer ser destruida. NAO fazer isso no OnDetach -
+        // la Application::Get() pode ja ser nulo (shutdown do app).
+        Prism::Application& app = Prism::Application::Get();
+        app.SetCloseRequestHandler(nullptr);
+
+        // Troca de tela: ver o comentario em ProjectManagerLayer::EnterEditor.
+        app.PushLayer(new ProjectManagerLayer());
+        app.PopLayer(this);
     }
 
     void EditorLayer::OnStopButtonClicked() {

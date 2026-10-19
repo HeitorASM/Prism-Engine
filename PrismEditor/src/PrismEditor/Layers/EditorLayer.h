@@ -39,13 +39,17 @@
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
 #include "../Panels/DocsPanel.h"
+#include "../Panels/BuildOutputPanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
 
     class EditorLayer : public Prism::Layer {
     public:
-        EditorLayer();
+        // buildNativeOnOpen: compila os scripts C++ do projeto assim que o editor
+        // abre (preferencia da tela de projetos). Nao muda nada se o projeto nao
+        // tiver Source/.
+        explicit EditorLayer(bool buildNativeOnOpen = false);
 
         void OnAttach() override;
         void OnDetach() override;
@@ -66,9 +70,13 @@ namespace PrismEditor {
         void BuildDefaultLayout(unsigned int dockspaceId, float width, float height);
         bool m_ResetLayoutRequested = false;
 
-        // Scripts C++ (menu "Scripts C++"): gerar projeto, compilar, recarregar o modulo.
-        void RenderNativeScriptsMenu();
+        // Scripts C++: botao "Compilar" da barra superior (gera Source/ se faltar, compila e recarrega o modulo).
+        void RenderBuildToolbarGroup();
+        void StartNativeBuild();
         void PollNativeBuild();
+
+        // Arquivo > Fechar Projeto: volta para a tela de projetos (ProjectManagerLayer).
+        void CloseProject();
 
         // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
         // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
@@ -135,6 +143,12 @@ namespace PrismEditor {
         // recarregado quando o Play fechar (as instancias usam o codigo antigo).
         NativeBuilder m_NativeBuilder;
         bool m_NativeReloadPending = false;
+
+        // ATENCAO: membros novos ficam NO FIM da classe de proposito (ver o
+        // comentario sobre layout em Project.h).
+        BuildOutputPanel m_BuildOutput;     // aba "Saida de Build"
+        bool m_BuildNativeOnOpen = false;
+        bool m_LastNativeBuildFailed = false;
     };
 
 }

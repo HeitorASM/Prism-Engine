@@ -26,7 +26,7 @@ namespace PrismEditor {
 
         std::filesystem::path sourceDirectory = Prism::NativeScripting::GetSourceDirectory(project);
         if (!std::filesystem::exists(sourceDirectory / "CMakeLists.txt")) {
-            error = "Source/CMakeLists.txt nao existe. Use Scripts C++ > Gerar projeto primeiro.";
+            error = "Source/CMakeLists.txt nao existe. Gere o projeto de scripts C++ primeiro.";
             return false;
         }
 

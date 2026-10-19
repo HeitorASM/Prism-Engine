@@ -2,6 +2,7 @@
 #include "../Core/Log.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <locale>
 #include <sstream>
@@ -77,24 +78,53 @@ namespace Prism {
                 color[i] = std::min(std::max(color[i], 0.0f), 1.0f);
     }
 
+    // Grava 'text' em 'filepath' de forma atomica: escreve num arquivo
+    // temporario ao lado e so depois troca pelo definitivo. Um crash ou
+    // falta de disco no meio do save nunca deixa o .prismproj pela metade
+    // (o projeto e regravado a cada ajuste de renderizacao). Mesmo padrao do
+    // .meta (ver Assets/AssetMeta.cpp).
+    static bool WriteFileAtomic(const std::filesystem::path& filepath, const std::string& text) {
+        std::filesystem::path temp = filepath;
+        temp += ".tmp";
+        {
+            std::ofstream out(temp);
+            if (!out.is_open())
+                return false;
+            out << text;
+            out.flush();
+            if (!out) {
+                out.close();
+                std::error_code ignored;
+                std::filesystem::remove(temp, ignored);
+                return false;
+            }
+        }
+        std::error_code ec;
+        std::filesystem::rename(temp, filepath, ec);
+        if (ec) {
+            // Alguns sistemas de arquivos recusam rename sobre arquivo existente.
+            std::filesystem::copy_file(temp, filepath, std::filesystem::copy_options::overwrite_existing, ec);
+            std::error_code ignored;
+            std::filesystem::remove(temp, ignored);
+            return !ec;
+        }
+        return true;
+    }
+
     ProjectSerializer::ProjectSerializer(Ref<Project> project)
         : m_Project(project) {}
 
     bool ProjectSerializer::Serialize(const std::filesystem::path& filepath) {
         const auto& config = m_Project->GetConfig();
 
-        std::ofstream out(filepath);
-        if (!out.is_open()) {
-            PRISM_CORE_ERROR("Nao foi possivel criar o arquivo de projeto: ", filepath.string());
-            return false;
-        }
-
+        std::ostringstream out;
         out << "# Prism Project File - nao edite manualmente a menos que saiba o que esta fazendo\n";
         out << "Name=" << config.Name << "\n";
         out << "AssetDirectory=" << config.AssetDirectory.generic_string() << "\n";
         out << "ScriptDirectory=" << config.ScriptDirectory.generic_string() << "\n";
         out << "MapDirectory=" << config.MapDirectory.generic_string() << "\n";
         out << "StartMap=" << config.StartMap.generic_string() << "\n";
+        out << "EngineVersion=" << config.EngineVersion << "\n";
 
         // Ajustes de renderizacao (ver RenderSettings em Project.h). Sempre
         // gravados, mesmo com o valor padrao: o arquivo fica autoexplicativo.
@@ -110,6 +140,10 @@ namespace Prism {
         out << "SkyRotation=" << FormatFloat(render.SkyRotation) << "\n";
         out << "SkyIntensity=" << FormatFloat(render.SkyIntensity) << "\n";
 
+        if (!WriteFileAtomic(filepath, out.str())) {
+            PRISM_CORE_ERROR("Nao foi possivel gravar o arquivo de projeto: ", filepath.string());
+            return false;
+        }
         return true;
     }
 
@@ -126,6 +160,8 @@ namespace Prism {
         RenderSettings render;
         std::string line;
         while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back(); // arquivo editado com fim de linha do Windows num sistema POSIX
             if (line.empty() || line[0] == '#')
                 continue;
 
@@ -141,6 +177,7 @@ namespace Prism {
             else if (key == "ScriptDirectory") config.ScriptDirectory = value;
             else if (key == "MapDirectory") config.MapDirectory = value;
             else if (key == "StartMap") config.StartMap = value;
+            else if (key == "EngineVersion") config.EngineVersion = value;
             else if (key == "SkyTexture") render.SkyTexture = value;
             else if (key == "Sky") {
                 float mode = 0.0f;

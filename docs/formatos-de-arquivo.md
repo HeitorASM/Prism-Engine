@@ -20,6 +20,7 @@ AssetDirectory=Assets
 ScriptDirectory=Scripts
 MapDirectory=Maps
 StartMap=Cena.prismmap
+EngineVersion=0.1.0
 Exposure=1
 Ambient=0.1
 EnvZenith=0.36,0.55,0.95
@@ -33,6 +34,8 @@ SkyIntensity=1
 ```
 
 `StartMap` é o mapa aberto automaticamente ao carregar o projeto.
+
+`EngineVersion` é a versão da engine (`Version.py`) que criou o projeto. Só serve para o editor avisar quando difere da atual; projetos sem a chave abrem normalmente. O arquivo é gravado de forma atômica (arquivo temporário + rename), então um crash no meio do save não o corrompe. Um projeto novo também recebe um `.gitignore` com `Cache/` e `Binaries/`.
 
 `Exposure`, `Ambient`, `EnvZenith`, `EnvHorizon` e `EnvGround` são os ajustes de renderização do projeto (menu **Renderização** do editor; ver [Renderização](renderizacao.md)). As cores são `r,g,b` em sRGB, de 0 a 1. O fundo (skybox) usa `Sky` (0 = cor chapada, 1 = gradiente do ambiente, 2 = panorama), `SkyColor`, `SkyTexture` (caminho relativo ao projeto), `SkyRotation` (graus, -180 a 180) e `SkyIntensity` (0 a 16).
 

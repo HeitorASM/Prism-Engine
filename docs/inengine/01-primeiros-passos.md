@@ -4,8 +4,10 @@
 
 Ao abrir o editor aparece a tela inicial:
 
-1. Em **Criar novo projeto**, digite o **nome** e a **pasta** onde ele será criado, e clique em **Criar Projeto**.
-2. Para continuar um projeto existente, informe o caminho do arquivo `.prismproj` em **Abrir projeto existente** e clique em **Abrir**.
+1. Em **Novo projeto** (lado direito), digite o **nome** e escolha o **local** (o botão **Procurar...** abre o seletor de pastas do sistema). O editor mostra onde o projeto será criado e avisa na hora se o nome é inválido ou se a pasta de destino já existe e não está vazia. Depois clique em **Criar projeto**.
+2. Para continuar um projeto, clique nele em **Projetos recentes** (lado esquerdo; clique direito remove da lista) ou use **Abrir projeto...** para escolher um arquivo `.prismproj`.
+
+Todo projeto é C++ primeiro: a pasta `Source/` (CMake e um script de exemplo) já é criada junto, e a opção **Compilar os scripts C++ ao abrir o projeto** (ligada por padrão) compila o módulo assim que o editor abre. Projetos antigos, sem `Source/`, ganham a pasta ao serem abertos. Scripts Lua continuam disponíveis em `Scripts/`.
 
 O projeto é uma pasta assim:
 
@@ -14,9 +16,12 @@ MeuProjeto/
   MeuProjeto.prismproj
   Assets/
     Models/  Textures/  Audio/  Materials/  Prefabs/
-  Scripts/
+  Scripts/      scripts Lua
+  Source/       scripts C++ (CMakeLists.txt, exemplo Spinner)
   Maps/
-  Cache/        dados derivados (não precisa entrar no controle de versão)
+  Binaries/     módulo C++ compilado (fora do controle de versão)
+  Cache/        dados derivados (fora do controle de versão)
+  .gitignore    já ignora Cache/ e Binaries/
 ```
 
 O último mapa salvo é reaberto automaticamente na próxima vez.

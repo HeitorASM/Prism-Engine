@@ -29,6 +29,25 @@ namespace Prism {
         std::filesystem::path ScriptDirectory = "Scripts";
         std::filesystem::path MapDirectory = "Maps";
         std::filesystem::path StartMap; // mapa aberto ao iniciar o jogo, se houver
+
+        // Versao da engine (Version::Number) que criou o projeto. Vazio em
+        // projetos criados antes desta chave existir. O editor so usa isso
+        // para avisar quando a versao difere da atual.
+        std::string EngineVersion;
+    };
+
+    // Opcoes da tela "Novo projeto" do editor (ver Project::New abaixo).
+    struct ProjectCreateOptions {
+        std::string Name;                        // nome do projeto = nome da pasta = nome do .prismproj
+        std::filesystem::path ParentDirectory;   // pasta ONDE a pasta do projeto sera criada
+        std::string EngineVersion;               // gravado em ProjectConfig::EngineVersion
+    };
+
+    // Leitura rapida de um .prismproj sem carrega-lo de verdade (usada na
+    // lista de projetos recentes: nao varre assets nem troca o projeto ativo).
+    struct ProjectSummary {
+        std::string Name;
+        std::string EngineVersion;
     };
 
     // Ajustes de renderizacao guardados POR PROJETO (no .prismproj): cada
@@ -152,6 +171,29 @@ namespace Prism {
         // Cria um novo projeto do zero: cria a pasta, a estrutura de subpastas
         // e escreve o arquivo .prismproj inicial. Retorna nullptr em caso de falha.
         static Ref<Project> New(const std::filesystem::path& directory, const std::string& name);
+
+        // Versao usada pela tela "Novo projeto": valida o nome e o local
+        // (ValidateNewProject), cria a pasta <ParentDirectory>/<Name> com a
+        // estrutura padrao, grava o .prismproj com EngineVersion e um
+        // .gitignore (Cache/ e Binaries/). Em falha devolve nullptr e
+        // preenche 'error' com um texto pronto para mostrar ao usuario.
+        // NAO gera o projeto de scripts C++ (Source/): isso depende do modulo
+        // Scripting e fica a cargo do editor (NativeScripting::GenerateProjectFiles).
+        static Ref<Project> New(const ProjectCreateOptions& options, std::string& error);
+
+        // Regras de nome de projeto: nome de pasta valido no Windows e em
+        // sistemas POSIX (sem \ / : * ? " < > | nem caracteres de controle,
+        // sem espaco/ponto no fim, sem nomes reservados como CON/NUL/COM1,
+        // no maximo 64 caracteres). Em falha preenche 'reason'.
+        static bool IsValidProjectName(const std::string& name, std::string& reason);
+
+        // "" = pode criar. Senao, o motivo (nome invalido, local vazio, pasta
+        // de destino ja existe e nao esta vazia...). Nao cria nada no disco.
+        static std::string ValidateNewProject(const std::filesystem::path& parentDirectory, const std::string& name);
+
+        // Le so Name/EngineVersion de um .prismproj. false se nao abrir ou
+        // nao tiver Name.
+        static bool ReadSummary(const std::filesystem::path& projectFilePath, ProjectSummary& outSummary);
 
         // Carrega um projeto existente a partir do caminho do seu .prismproj.
         static Ref<Project> Load(const std::filesystem::path& projectFilePath);

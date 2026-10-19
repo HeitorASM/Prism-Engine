@@ -6,9 +6,9 @@ Scripts de gameplay em C++ ao lado dos scripts Lua. O código do projeto vira um
 
 ## Fluxo
 
-1. Menu **Scripts C++ → Gerar projeto de scripts**. Cria `<Projeto>/Source/` com `CMakeLists.txt`, `PrismModuleEntry.cpp` e um exemplo (`Spinner.cpp`). Nada que já exista é sobrescrito (exceto o `CMakeLists.txt`, que guarda o caminho do SDK da engine).
+1. `<Projeto>/Source/` (`CMakeLists.txt`, `PrismModuleEntry.cpp` e o exemplo `Spinner.cpp`) é gerado por `NativeScripting::GenerateProjectFiles` na criação do projeto (`ProjectManagerLayer::CreateAndOpenProject`) e, para projetos antigos, ao abri-los (`OpenProject`). O botão **Compilar** também gera se `Source/CMakeLists.txt` não existir. Arquivos que já existem nunca são sobrescritos.
 2. Escreva seus scripts em `Source/*.cpp`.
-3. **Scripts C++ → Compilar e recarregar**. Roda o CMake numa thread de fundo; a saída aparece no Console e, se compilar, o módulo é recarregado sozinho.
+3. Botão **Compilar** da barra superior: roda o CMake numa thread de fundo (`PrismEditor/Core/NativeBuilder`); a saída vai para a aba **Saída de Build** (`Panels/BuildOutputPanel`), com erros/avisos clicáveis, e o Console recebe só o resumo. Se compilar, o módulo é recarregado sozinho. A preferência "compilar ao abrir o projeto" fica em `recent_projects.txt` (`@build=`).
 4. Adicione o component **Native Script** a uma entidade e escolha a classe no combo.
 5. **Play.**
 

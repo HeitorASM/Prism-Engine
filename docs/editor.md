@@ -31,11 +31,11 @@ O painel lê os `.md` da pasta `docs/` (ao lado do código ou, num build, a cóp
 
 Na primeira abertura (sem layout salvo) os painéis já vêm organizados:
 
-- **Barra superior** (fixa): Salvar, Desfazer, Refazer, **Play/Parar** (centro) e **Restaurar layout**.
+- **Barra superior** (fixa): Salvar, Desfazer, Refazer, **Compilar** (scripts C++, com o estado do módulo ao lado), **Play/Parar** (centro) e **Restaurar layout**.
 - **Esquerda**: Hierarquia.
 - **Direita**: Propriedades.
 - **Centro**: Viewport e Editor de Código, em abas (a Documentação também abre aqui).
-- **Embaixo**: Conteúdo do Projeto e Console, em abas.
+- **Embaixo**: Conteúdo do Projeto, Console e **Saída de Build**, em abas.
 
 Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini`). Se ficar bagunçado, use **Janela → Restaurar layout padrão** (ou o botão da barra superior).
 
@@ -44,6 +44,7 @@ Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini
 - **Viewport**: renderização da cena com gizmos.
 - **Hierarquia**: árvore de entidades. Arraste uma entidade sobre outra para torná-la filha, ou para a área vazia para torná-la raiz.
 - **Propriedades**: uma seção por component, com botão "X" para remover e "+ Add Component" para adicionar. A seção Camera inclui uma preview do que a câmera vê.
+- **Saída de Build**: saída da compilação dos scripts C++, com erros em vermelho e avisos em amarelo; erros e avisos com arquivo são clicáveis (abrem no Editor de Código, ainda sem pular para a linha). Filtro "So erros e avisos". Abre em foco quando a compilação começa e quando falha.
 - **Console**: lê o `LogBuffer` (últimas 2000 mensagens), com cor por nível, filtro de texto, toggles de verbosidade e auto-scroll.
 - **Conteúdo do Projeto**: navega pelos arquivos do projeto. Duplo clique numa pasta entra nela; duplo clique num `.prismmap` carrega o mapa.
 - **Editor de Código**: abre `.lua` e `.cpp`/`.h` (com syntax highlight) e qualquer outro arquivo de texto (`.md`, `.txt`…) sem highlight. Dê duplo clique num arquivo no Conteúdo do Projeto, ou use "Editar" no component Script. Vários arquivos podem ficar abertos: a lateral esquerda do painel lista os abertos (clique troca, **x** ou clique do meio fecha, `*` marca alterações não salvas; fechar um arquivo alterado pergunta se salva). **Ctrl+S** salva o arquivo ativo (preservando CRLF/LF) e **Salvar tudo** salva todos. Com o foco no painel, os atalhos da cena (Ctrl+Z, Ctrl+S, Delete) ficam desligados. Arquivos binários ou maiores que 4 MB são recusados.

@@ -8,7 +8,7 @@ Na primeira abertura os painéis já vêm organizados:
 - **Esquerda**: Hierarquia.
 - **Direita**: Propriedades.
 - **Centro**: Viewport, Editor de Código e Documentação, em abas.
-- **Embaixo**: Conteúdo do Projeto e Console, em abas.
+- **Embaixo**: Conteúdo do Projeto, Console e Saída de Build (resultado da compilação dos scripts C++), em abas.
 
 Arraste as abas para reorganizar; o editor lembra a disposição. Se ficar bagunçado, use **Janela → Restaurar layout padrão**.
 
