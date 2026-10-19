@@ -317,8 +317,8 @@ namespace Prism {
         // o ambiente (luz ambiente + skybox) vem do EnvironmentComponent da
         // cena (o primeiro encontrado; sem nenhum, valem os padroes do
         // component). Chamadores sem CameraComponent (viewport livre do
-        // editor) usam o argumento padrao. NAO precisa de Clear() antes: o
-        // fundo (skybox ou cor chapada) cobre a tela inteira.
+        // editor) usam o argumento padrao. NAO precisa de Clear() antes: DrawScene
+        // limpa cor e profundidade do destino e o fundo cobre a tela inteira.
         static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera = CameraRenderSettings{});
 
         // Desenha as particulas de todos os emissores da cena (billboards com

@@ -1159,7 +1159,18 @@ namespace Prism {
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         }
 
-        // Fundo antes da geometria (preenche a tela inteira: sobrescreve o Clear).
+        // Limpa cor E PROFUNDIDADE do destino antes de desenhar. O fundo (sky)
+        // cobre a cor, mas NAO escreve profundidade: sem limpar a profundidade,
+        // o valor do quadro anterior fica no framebuffer e a geometria falha no
+        // teste de profundidade (cena "invisivel" com so o fundo aparecendo).
+        // Chamadores nao precisam mais de Renderer::Clear antes. A mascara de
+        // profundidade precisa estar ligada, senao glClear nao limpa a profundidade.
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Fundo antes da geometria (preenche a tela inteira).
         DrawSky(view, projection, cameraWorldPos);
 
         // Toda entidade com TransformComponent + MeshRendererComponent,
