@@ -49,7 +49,7 @@ Para adicionar um component novo:
 
 1. Declare a struct em `Components.h`.
 2. Registre em `ComponentRegistration.cpp`.
-3. Incremente `kSceneFormatVersion` em `SceneSerializer.cpp`.
+3. Não precisa subir `kSceneFormatVersion`: o component é gravado num bloco com nome e versão. Para **adicionar campos depois**, escreva-os no fim do `Serialize`, suba `ComponentTypeInfo::Version` e leia-os só quando `ComponentRegistry::CurrentBlockVersion()` for suficiente (ver `Camera` em `ComponentRegistration.cpp`). O `DisplayName` é o nome no arquivo: não o renomeie.
 4. Escreva a UI dele em `PrismEditor/Panels/PropertiesPanel_<Nome>.cpp` (função `Draw<Nome>UI()`, declarada em `PropertiesPanel.h` e chamada em `OnImGuiRender()`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
 
 `RelationshipComponent` fica fora do registro: usa índice posicional do pai na serialização e nunca aparece no menu.

@@ -32,11 +32,17 @@ EngineVersion=0.1.0
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **19** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
+- Versão atual: **21** (`kSceneFormatVersion` em `SceneSerializer.cpp`). Mapas **v19 e v20** ainda são lidos (e regravados no formato atual ao salvar); formatos anteriores são recusados.
 
-> Sera resetada futuramente, atualmente so e upada para motivos de desenvolvimento
+Contém o nome da cena e, para cada entidade: tag, transform, os components como **blocos** e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
 
-Contém o nome da cena e, para cada entidade: tag, transform, os components opcionais (na ordem em que foram registrados no `ComponentRegistry`) e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
+Cada component presente é um bloco `[nome][versão][tamanho][bytes]` (`ComponentRegistry::WriteComponentBlocks`). O nome é o `DisplayName` do registro e a versão é a do component (`ComponentTypeInfo::Version`). Como o bloco tem tamanho:
+
+- um component **desconhecido** (de uma engine mais nova) é pulado com um aviso, e o resto do mapa abre;
+- um bloco com dados inválidos descarta **só aquele component** (erro no Console);
+- **campo novo no fim de um component** é só subir a `Version` dele e ler o campo novo quando `ComponentRegistry::CurrentBlockVersion()` for suficiente: **não** precisa subir `kSceneFormatVersion` nem invalida mapas antigos.
+
+A gravação é atômica (arquivo temporário + rename): um crash no meio do save nunca corrompe o mapa existente.
 
 O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` de cada component em `ComponentRegistration.cpp`, e o histórico de versões está nos comentários de `kSceneFormatVersion`. Resumo:
 
@@ -57,8 +63,9 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v18 | `ParticleEmitter` (emissor de partículas) |
 | v19 | `UIElement` (elemento de UI in-game) |
 | v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
+| v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |
 
-> O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
+> O número da versão **vive no código**. Ao subir `kSceneFormatVersion` (só quando a estrutura **fora** dos blocos muda), atualize "Versão atual" acima e esta tabela.
 
 Do `RaycastComponent` só `TargetPosition`, `Enabled` e `IgnoreParentAndSiblings` são gravados; os campos de resultado (`Hit`, `HitPoint` etc.) são de runtime.
 
@@ -76,9 +83,9 @@ Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **po
 ## `.prismprefab`
 
 - Magic: `PPFB`
-- Versão atual: **6** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`)
+- Versão atual: **9** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`). Prefabs v7–v8 ainda são lidos.
 
-Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — a v6 a v18 — `ParticleEmitter` — e a v7 a v19 — `UIElement`), mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
+Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — a v6 a v18 — `ParticleEmitter` — a v7 a v19 — `UIElement` — a v8 a v20 — `Environment`/opções de câmera — e a v9 a v21 — blocos de component), mas sem nome de cena. Gravação atômica, como no mapa. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
 
 ## `.prismmat`
 
@@ -121,4 +128,6 @@ Mover ou renomear um asset **sempre junto com o seu `.meta`** preserva o ID, e p
 
 ## Compatibilidade
 
-**Atualmente** Não há migração automática. Um arquivo de versão diferente da atual é recusado, com uma mensagem indicando a versão encontrada e a esperada. Sempre que o formato de `.prismmap` muda (novo component ou novo campo), `kSceneFormatVersion` sobe e os mapas antigos precisam ser recriados ou resalvos por uma versão compatível do editor.
+- **Mapas e prefabs** (v21 / v9 em diante): component novo, campo novo no fim de um component e component desconhecido **não** quebram arquivos existentes (ver os blocos em `.prismmap`). Os formatos anteriores mais recentes (mapa v19–v20, prefab v7–v8) são lidos e regravados no formato atual ao salvar; formatos mais antigos são recusados com uma mensagem clara. Um arquivo **mais novo** que a engine é recusado.
+- **Mudança que quebra** (reordenar/remover campos, renomear o `DisplayName` de um component): exige subir a versão do component ou escrever uma migração.
+- **`.prismproj` e `.meta`**: texto, chaves desconhecidas são ignoradas.

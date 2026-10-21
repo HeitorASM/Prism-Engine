@@ -159,10 +159,23 @@ namespace Prism {
     void Application::Run() {
         PRISM_CORE_INFO(Version::Full(), " - loop principal iniciado.");
 
+        // Sem isto o PRIMEIRO quadro veria deltaTime = tempo desde o inicio do
+        // processo (segundos de carregamento), nao o de um quadro.
+        m_LastFrameTime = (float)glfwGetTime();
+
         while (m_Running) {
             float time = (float)glfwGetTime();
             float deltaTime = time - m_LastFrameTime;
             m_LastFrameTime = time;
+
+            // Limita o passo de tempo: uma pausa longa (arrastar a janela no
+            // Windows, breakpoint, janela minimizada, carregamento pesado) nao
+            // pode virar UM unico passo gigante para camera do editor, fisica e
+            // scripts. Acima de 0,1 s o jogo apenas "desacelera" por aquele quadro.
+            if (!(deltaTime >= 0.0f))
+                deltaTime = 0.0f; // relogio andou para tras / NaN
+            else if (deltaTime > 0.1f)
+                deltaTime = 0.1f;
 
             // Aplica pushes/pops de Layer pedidos no frame ANTERIOR antes de
             // comecar um novo frame. Isso precisa acontecer aqui, no topo do

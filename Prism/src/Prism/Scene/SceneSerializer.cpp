@@ -3,6 +3,7 @@
 #include "Entity.h"
 #include "ComponentRegistry.h"
 #include "../Core/Log.h"
+#include "../Core/AtomicFile.h"
 
 #include <fstream>
 #include <cstdint>
@@ -12,11 +13,14 @@
 
 namespace Prism {
 
-    // Incrementar sempre que o layout binario mudar de forma incompativel
-    // (novo component, campo novo/removido, mudanca na ordem de
-    // registro no ComponentRegistry). Deserialize() recusa arquivos com
-    // versao diferente desta - ver comentario no .h. Mapas de versao
-    // anterior precisam ser resalvos por uma versao compativel do editor.
+    // Incrementar quando o layout do ARQUIVO (fora dos blocos de component)
+    // mudar de forma incompativel. Desde a v21 os components sao gravados em
+    // blocos com nome, versao e tamanho (ver ComponentRegistry::WriteComponentBlocks),
+    // entao component novo, campo novo no fim de um component ou component
+    // desconhecido NAO exigem mais subir este numero: o que mudar e coberto
+    // pelo ComponentTypeInfo::Version do component. Mapas v19-v20 (formato
+    // antigo "flag + campos") ainda sao LIDOS (kOldestReadableSceneFormat) e
+    // regravados no formato atual ao salvar; o que for anterior e recusado.
     //
     // Historico do formato:
     //   v2  LightComponent, ColliderComponent, RigidBodyComponent e
@@ -64,6 +68,9 @@ namespace Prism {
     //   v20 EnvironmentComponent (ambiente/skybox da cena, ultimo registrado)
     //       e CameraComponent ganha ClearMode, ClearColor, Exposure e SSAO
     //       no fim do bloco. As opcoes de render saem do .prismproj.
+    //   v21 components em BLOCOS [nome][versao][tamanho][bytes] por entidade
+    //       (antes: uma flag + campos por component, na ordem do registro).
+    //       Gravacao atomica (arquivo temporario + rename).
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -76,7 +83,8 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 20;
+    static constexpr uint32_t kSceneFormatVersion = 21;
+    static constexpr uint32_t kOldestReadableSceneFormat = 19; // v19-v20: formato antigo, so leitura
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
     SceneSerializer::SceneSerializer(Ref<Scene> scene) : m_Scene(scene) {}
@@ -121,7 +129,11 @@ namespace Prism {
         // Serialize/Deserialize e barato e seguro.
         ComponentRegistry::RegisterAll();
 
-        std::ofstream out(filepath, std::ios::binary | std::ios::trunc);
+        // Escreve num temporario e so troca pelo mapa depois de terminar com
+        // sucesso (ver Core/AtomicFile.h): um crash no meio do save nunca
+        // corrompe o mapa existente.
+        const std::filesystem::path tempPath = AtomicTempPath(filepath);
+        std::ofstream out(tempPath, std::ios::binary | std::ios::trunc);
         if (!out.is_open()) {
             PRISM_CORE_ERROR("SceneSerializer: nao foi possivel criar o arquivo de cena: ", filepath.string());
             return false;
@@ -168,12 +180,7 @@ namespace Prism {
             // motivo desta mudanca - o FORMATO BINARIO GERADO E IDENTICO
             // ao de antes, byte a byte, so o CODIGO que gera cada bloco
             // mudou de lugar).
-            for (auto& info : ComponentRegistry::GetAll()) {
-                bool has = info.Has(entity);
-                WriteRaw(out, has);
-                if (has)
-                    info.Serialize(out, entity);
-            }
+            ComponentRegistry::WriteComponentBlocks(out, entity);
 
             // RelationshipComponent - adicionado na v4 do formato. So o
             // indice do PAI e gravado (ver comentario de kSceneFormatVersion);
@@ -210,8 +217,18 @@ namespace Prism {
             if (!out) writeFailed = true;
         });
 
+        out.flush();
+        if (!out)
+            writeFailed = true;
+        out.close();
+
         if (writeFailed) {
             PRISM_CORE_ERROR("SceneSerializer: falha ao escrever dados da cena em: ", filepath.string());
+            DiscardAtomicFile(tempPath);
+            return false;
+        }
+        if (!CommitAtomicFile(tempPath, filepath)) {
+            PRISM_CORE_ERROR("SceneSerializer: nao foi possivel substituir o arquivo de cena: ", filepath.string());
             return false;
         }
 
@@ -402,14 +419,22 @@ namespace Prism {
             PRISM_CORE_ERROR("SceneSerializer: falha ao ler versao do arquivo: ", filepath.string());
             return false;
         }
-        if (version != kSceneFormatVersion) {
-            // Sem migracao entre versoes por enquanto (ver comentario no
-            // .h) - melhor recusar claramente do que interpretar bytes com
-            // o layout errado e corromper a cena silenciosamente.
-            PRISM_CORE_ERROR("SceneSerializer: versao de formato incompativel em '", filepath.string(),
-                "' (arquivo=v", version, ", esperado=v", kSceneFormatVersion, ").");
+        // Aceita o formato atual e os dois formatos antigos legiveis (v19-v20,
+        // "flag + campos"). Qualquer outro e recusado claramente em vez de
+        // interpretar bytes com o layout errado e corromper a cena.
+        if (version > kSceneFormatVersion) {
+            PRISM_CORE_ERROR("SceneSerializer: '", filepath.string(), "' foi salvo por uma versao mais nova da engine (arquivo=v", version,
+                ", esta engine le ate v", kSceneFormatVersion, "). Atualize a engine.");
             return false;
         }
+        if (version < kOldestReadableSceneFormat) {
+            PRISM_CORE_ERROR("SceneSerializer: formato antigo demais em '", filepath.string(), "' (arquivo=v", version,
+                ", a engine le de v", kOldestReadableSceneFormat, " em diante).");
+            return false;
+        }
+        const bool legacyComponents = version < 21;
+        if (legacyComponents)
+            PRISM_CORE_WARN("SceneSerializer: '", filepath.string(), "' esta no formato antigo v", version, "; sera regravado no formato v", kSceneFormatVersion, " ao salvar.");
 
         std::string sceneName;
         if (!ReadString(in, sceneName)) {
@@ -478,14 +503,15 @@ namespace Prism {
             // retorna sempre a mesma ordem de registro, ver
             // ComponentRegistration.cpp) - ver comentario grande no bloco
             // correspondente de Serialize() sobre o motivo desta mudanca.
-            for (auto& info : ComponentRegistry::GetAll()) {
-                bool has = false;
-                if (!ReadRaw(in, has)) {
-                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (flag de '", info.DisplayName, "' da entidade ", i, "): ", filepath.string());
-                    return false;
-                }
-                if (has && !info.Deserialize(in, entity, i))
-                    return false; // mensagem de erro especifica ja foi logada dentro do proprio Deserialize (ver ComponentRegistration.cpp)
+            // v21+: blocos com tamanho (component desconhecido e pulado, um bloco
+            // ruim descarta so aquele component). v19-v20: formato antigo, na
+            // ordem do registro (o formato equivalente e o proprio numero da versao).
+            bool componentsOk = legacyComponents
+                ? ComponentRegistry::ReadLegacyComponents(in, entity, i, version)
+                : ComponentRegistry::ReadComponentBlocks(in, entity, i);
+            if (!componentsOk) {
+                PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (components da entidade ", i, "): ", filepath.string());
+                return false;
             }
 
             // RelationshipComponent - so o indice do pai (ver comentario

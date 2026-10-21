@@ -49,14 +49,14 @@ namespace Prism {
         // antigas.
         Register<MeshRendererComponent>(
             "Mesh Renderer",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<MeshRendererComponent>();
                 WriteRaw(out, c.Mesh);
                 WriteRaw(out, c.Color);
                 WriteRaw(out, c.ModelAsset); // AssetID e so um uint64_t (trivialmente copiavel) - mesmo padrao de MaterialComponent::LinkedAsset
                 WriteRaw(out, c.SubmeshIndex); // v14
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MeshRendererComponent>();
                 if (!(ReadRaw(in, c.Mesh) && ReadRaw(in, c.Color))) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (mesh renderer da entidade ", entityIndex, ").");
@@ -100,7 +100,7 @@ namespace Prism {
         // --- MaterialComponent -------------------------------------------------
         Register<MaterialComponent>(
             "Material",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<MaterialComponent>();
                 WriteString(out, c.AlbedoPath);
                 WriteString(out, c.NormalPath);
@@ -110,7 +110,7 @@ namespace Prism {
                 WriteRaw(out, c.MetallicFactor);
                 WriteRaw(out, c.LinkedAsset); // AssetID e so um uint64_t (trivialmente copiavel) - ver Assets/AssetID.h
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
                 bool ok = ReadString(in, c.AlbedoPath) && ReadString(in, c.NormalPath)
                        && ReadString(in, c.RoughnessMetallicPath) && ReadRaw(in, c.AlbedoTint)
@@ -127,7 +127,7 @@ namespace Prism {
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(
             "Light",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<LightComponent>();
                 WriteRaw(out, c.Type);
                 WriteRaw(out, c.Color);
@@ -137,7 +137,7 @@ namespace Prism {
                 WriteRaw(out, c.InnerSpotAngle);
                 WriteRaw(out, c.CastShadows);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<LightComponent>();
                 bool ok = ReadRaw(in, c.Type) && ReadRaw(in, c.Color)
                        && ReadRaw(in, c.Intensity) && ReadRaw(in, c.Range) && ReadRaw(in, c.SpotAngle)
@@ -157,13 +157,13 @@ namespace Prism {
         // --- ColliderComponent -----------------------------------------------
         Register<ColliderComponent>(
             "Collider",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<ColliderComponent>();
                 WriteRaw(out, c.Shape);
                 WriteRaw(out, c.Size);
                 WriteRaw(out, c.IsTrigger);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ColliderComponent>();
                 bool ok = ReadRaw(in, c.Shape) && ReadRaw(in, c.Size) && ReadRaw(in, c.IsTrigger);
                 if (!ok) {
@@ -181,7 +181,7 @@ namespace Prism {
         // --- RigidBodyComponent ------------------------------------------------
         Register<RigidBodyComponent>(
             "Rigid Body",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<RigidBodyComponent>();
                 WriteRaw(out, c.Type);
                 WriteRaw(out, c.Mass);
@@ -193,7 +193,7 @@ namespace Prism {
                 WriteRaw(out, c.LinearDamping);
                 WriteRaw(out, c.AngularDamping);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<RigidBodyComponent>();
                 bool ok = ReadRaw(in, c.Type) && ReadRaw(in, c.Mass)
                        && ReadRaw(in, c.UseGravity) && ReadRaw(in, c.ContinuousCollisionDetection)
@@ -215,7 +215,7 @@ namespace Prism {
         // --- ScriptComponent ---------------------------------------------------
         Register<ScriptComponent>(
             "Script",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<ScriptComponent>();
                 WriteString(out, c.ScriptPath);
                 // v16: overrides das variaveis publicas.
@@ -229,7 +229,7 @@ namespace Prism {
                     WriteString(out, property.String);
                 }
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ScriptComponent>();
                 uint32_t count = 0;
                 if (!(ReadString(in, c.ScriptPath) && ReadRaw(in, count)) || count > 4096) {
@@ -251,10 +251,10 @@ namespace Prism {
         // --- NativeScriptComponent (v17) -------------------------------------------
         Register<NativeScriptComponent>(
             "Native Script",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 WriteString(out, e.GetComponent<NativeScriptComponent>().ClassName);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<NativeScriptComponent>();
                 if (!ReadString(in, c.ClassName)) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script nativo da entidade ", entityIndex, ").");
@@ -267,7 +267,7 @@ namespace Prism {
         // --- ParticleEmitterComponent (v18) ----------------------------------------
         Register<ParticleEmitterComponent>(
             "Particle Emitter",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<ParticleEmitterComponent>();
                 WriteRaw(out, c.Enabled);
                 WriteRaw(out, c.PlayOnStart);
@@ -289,7 +289,7 @@ namespace Prism {
                 WriteRaw(out, c.Additive);
                 WriteString(out, c.TexturePath);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ParticleEmitterComponent>();
                 bool ok = ReadRaw(in, c.Enabled) && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Loop)
                     && ReadRaw(in, c.Duration) && ReadRaw(in, c.MaxParticles) && ReadRaw(in, c.EmissionRate)
@@ -311,7 +311,7 @@ namespace Prism {
         // --- UIElementComponent (v19) -----------------------------------------------
         Register<UIElementComponent>(
             "UI Element",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<UIElementComponent>();
                 WriteRaw(out, c.Type);
                 WriteRaw(out, c.Visible);
@@ -330,7 +330,7 @@ namespace Prism {
                 WriteRaw(out, c.PressedColor);
                 WriteRaw(out, c.BlocksPointer);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<UIElementComponent>();
                 bool ok = ReadRaw(in, c.Type) && ReadRaw(in, c.Visible) && ReadRaw(in, c.Layer)
                     && ReadRaw(in, c.Anchor) && ReadRaw(in, c.Offset) && ReadRaw(in, c.Size)
@@ -352,7 +352,7 @@ namespace Prism {
         // --- CameraComponent -----------------------------------------------------
         Register<CameraComponent>(
             "Camera",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<CameraComponent>();
                 WriteRaw(out, c.ProjectionType);
                 WriteRaw(out, c.FOV);
@@ -366,13 +366,17 @@ namespace Prism {
                 WriteRaw(out, c.Exposure);
                 WriteRaw(out, c.SSAO);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<CameraComponent>();
                 bool ok = ReadRaw(in, c.ProjectionType) && ReadRaw(in, c.FOV)
                        && ReadRaw(in, c.OrthoSize) && ReadRaw(in, c.NearClip)
-                       && ReadRaw(in, c.FarClip) && ReadRaw(in, c.Primary)
-                       && ReadRaw(in, c.ClearMode) && ReadRaw(in, c.ClearColor)
-                       && ReadRaw(in, c.Exposure) && ReadRaw(in, c.SSAO);
+                       && ReadRaw(in, c.FarClip) && ReadRaw(in, c.Primary);
+                // Bloco v2: opcoes de render da camera (blocos v1 nao as tem e
+                // ficam com os padroes do component).
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    ok = ReadRaw(in, c.ClearMode) && ReadRaw(in, c.ClearColor)
+                      && ReadRaw(in, c.Exposure) && ReadRaw(in, c.SSAO);
+                }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", entityIndex, ").");
                     return false;
@@ -413,10 +417,15 @@ namespace Prism {
             }
         );
 
+        // v2 do bloco: ClearMode/ClearColor/Exposure/SSAO no fim. Em arquivos
+        // legados, o layout v2 vale a partir do formato equivalente 20.
+        s_Registry.back().Version = 2;
+        s_Registry.back().LegacyVersion = [](uint32_t sceneFormat) -> uint32_t { return sceneFormat >= 20 ? 2u : 1u; };
+
         // --- RaycastComponent ----------------------------------------------------
         Register<RaycastComponent>(
             "Raycast",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 // So TargetPosition/Enabled/IgnoreParentAndSiblings sao
                 // gravados - os campos de resultado
                 // (Hit/HitEntity/HitPoint/HitNormal/HitDistance) sao
@@ -430,7 +439,7 @@ namespace Prism {
                 WriteRaw(out, c.Enabled);
                 WriteRaw(out, c.IgnoreParentAndSiblings); // v9+ (ver kSceneFormatVersion, SceneSerializer.cpp)
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 // Hit/HitEntity/HitPoint/HitNormal/HitDistance ficam nos
                 // defaults de RaycastComponent (Hit=false etc) - o
                 // primeiro frame do modo Play recalcula tudo de qualquer
@@ -447,7 +456,7 @@ namespace Prism {
         // --- AudioSourceComponent (v15) --------------------------------------
         Register<AudioSourceComponent>(
             "Audio Source",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<AudioSourceComponent>();
                 WriteRaw(out, c.Clip);
                 WriteRaw(out, c.Volume);
@@ -458,7 +467,7 @@ namespace Prism {
                 WriteRaw(out, c.MinDistance);
                 WriteRaw(out, c.MaxDistance);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<AudioSourceComponent>();
                 if (!(ReadRaw(in, c.Clip) && ReadRaw(in, c.Volume) && ReadRaw(in, c.Pitch) && ReadRaw(in, c.Loop)
                     && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Spatial) && ReadRaw(in, c.MinDistance) && ReadRaw(in, c.MaxDistance))) {
@@ -472,10 +481,10 @@ namespace Prism {
         // --- AudioListenerComponent (v15) ------------------------------------
         Register<AudioListenerComponent>(
             "Audio Listener",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 WriteRaw(out, e.GetComponent<AudioListenerComponent>().Active);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<AudioListenerComponent>();
                 if (!ReadRaw(in, c.Active)) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (audio listener da entidade ", entityIndex, ").");
@@ -490,7 +499,7 @@ namespace Prism {
         // um segundo e inutil e o editor avisa (ver PropertiesPanel_Environment.cpp).
         Register<EnvironmentComponent>(
             "Environment",
-            [](std::ofstream& out, Entity e) {
+            [](std::ostream& out, Entity e) {
                 auto& c = e.GetComponent<EnvironmentComponent>();
                 WriteRaw(out, c.Ambient);
                 WriteRaw(out, c.Zenith);
@@ -502,7 +511,7 @@ namespace Prism {
                 WriteRaw(out, c.SkyRotation);
                 WriteRaw(out, c.SkyIntensity);
             },
-            [](std::ifstream& in, Entity e, uint32_t entityIndex) -> bool {
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<EnvironmentComponent>();
                 bool ok = ReadRaw(in, c.Ambient) && ReadRaw(in, c.Zenith) && ReadRaw(in, c.Horizon)
                        && ReadRaw(in, c.Ground) && ReadRaw(in, c.Sky) && ReadRaw(in, c.SkyColor)
@@ -518,6 +527,7 @@ namespace Prism {
                 return true;
             }
         );
+        s_Registry.back().AddedInSceneFormat = 20; // nao existe em mapas v19 / prefabs v7
     }
 
 }
