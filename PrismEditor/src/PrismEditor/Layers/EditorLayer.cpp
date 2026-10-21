@@ -2,6 +2,8 @@
 #include "ProjectManagerLayer.h"
 #include <PrismVersion.h>
 #include "../Core/EntityOps.h"
+#include "../Core/EditorIcons.h"
+#include "../Core/EditorTheme.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
 #include <imgui_internal.h> // DockBuilder (layout padrao dos paineis)
@@ -38,6 +40,27 @@ namespace PrismEditor {
         m_ContentBrowser.SetOnTextFileDoubleClicked([this](const std::filesystem::path& filePath) {
             if (m_ScriptEditor.Open(filePath))
                 ImGui::SetWindowFocus("###ScriptEditorPanel"); // traz a aba do Editor de Codigo para frente
+            });
+        // Arquivo/pasta movido ou excluido pelo Content Browser: o que aponta
+        // para o caminho antigo precisa acompanhar.
+        m_ContentBrowser.SetOnPathMoved([this](const std::filesystem::path& from, const std::filesystem::path& to) {
+            std::error_code ec;
+            auto& current = m_Ctx.CurrentMapPath;
+            if (!current.empty()) {
+                std::filesystem::path rel = current.lexically_normal().lexically_relative(from.lexically_normal());
+                if (!rel.empty() && *rel.begin() != "..")
+                    current = (to / (rel == "." ? std::filesystem::path() : rel)).lexically_normal();
+            }
+            if (from.extension() == ".lua" || from.extension() == ".cpp" || from.extension() == ".h" || std::filesystem::is_directory(to, ec))
+                PRISM_WARN("Scripts movidos/renomeados: Script components que apontam para o caminho antigo ('", from.filename().string(), "') precisam ser reapontados.");
+            });
+        m_ContentBrowser.SetOnPathDeleted([this](const std::filesystem::path& path) {
+            auto& current = m_Ctx.CurrentMapPath;
+            if (!current.empty()) {
+                std::filesystem::path rel = current.lexically_normal().lexically_relative(path.lexically_normal());
+                if (!rel.empty() && *rel.begin() != "..")
+                    current.clear(); // o mapa aberto foi excluido: "Salvar" passa a pedir um novo arquivo
+            }
             });
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             // Copia do path: o Content Browser pode reaproveitar o buffer
@@ -317,16 +340,18 @@ namespace PrismEditor {
         float startY = ImGui::GetCursorPosY();
         ImGui::SetCursorPos(ImVec2(10.0f, startY + 6.0f));
 
-        if (ImGui::Button("Salvar"))
+        const EditorTheme& theme = EditorTheme::Get();
+
+        if (IconButton("##save", ToolIcon::Save, "Salvar mapa (Ctrl+S)"))
             m_Document.SaveActiveScene();
         ImGui::SameLine();
         ImGui::BeginDisabled(!m_Ctx.History.CanUndo());
-        if (ImGui::Button("Desfazer"))
+        if (IconButton("##undo", ToolIcon::Undo, "Desfazer (Ctrl+Z)"))
             m_Ctx.History.Undo();
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!m_Ctx.History.CanRedo());
-        if (ImGui::Button("Refazer"))
+        if (IconButton("##redo", ToolIcon::Redo, "Refazer (Ctrl+Y)"))
             m_Ctx.History.Redo();
         ImGui::EndDisabled();
 
@@ -339,16 +364,28 @@ namespace PrismEditor {
         ImGui::SetCursorPosX((width - playButtonWidth) * 0.5f);
         ImGui::SetCursorPosY(startY + 6.0f);
         if (IsPlaying()) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
-            if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
+            ImGui::PushStyleColor(ImGuiCol_Button, theme.Stop);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.StopHot);
+            if (ImGui::Button("      Parar", ImVec2(playButtonWidth, 0)))
                 OnStopButtonClicked();
-            ImGui::PopStyleColor();
+            ImGui::PopStyleColor(2);
+            {   // icone de parar sobre o botao
+                ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                float h = b.y - a.y;
+                DrawToolIcon(ImGui::GetWindowDrawList(), ToolIcon::Stop, ImVec2(a.x + 10.0f, a.y + h * 0.22f), ImVec2(a.x + 10.0f + h * 0.56f, b.y - h * 0.22f), IM_COL32_WHITE);
+            }
         }
         else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
-            if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
+            ImGui::PushStyleColor(ImGuiCol_Button, theme.Play);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.PlayHot);
+            if (ImGui::Button("      Play", ImVec2(playButtonWidth, 0)))
                 OnPlayButtonClicked();
-            ImGui::PopStyleColor();
+            ImGui::PopStyleColor(2);
+            {   // icone de play sobre o botao
+                ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                float h = b.y - a.y;
+                DrawToolIcon(ImGui::GetWindowDrawList(), ToolIcon::Play, ImVec2(a.x + 10.0f, a.y + h * 0.22f), ImVec2(a.x + 10.0f + h * 0.56f, b.y - h * 0.22f), IM_COL32_WHITE);
+            }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Roda o jogo na aba Game.");
             ImGui::SameLine();

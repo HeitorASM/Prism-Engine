@@ -1,4 +1,5 @@
 #include "ProjectManagerLayer.h"
+#include "../Core/EditorTheme.h"
 #include "EditorLayer.h"
 #include "../Core/FileDialog.h"
 
@@ -79,6 +80,7 @@ namespace PrismEditor {
     }
 
     void ProjectManagerLayer::OnAttach() {
+        EditorTheme::Init(); // fonte + estilo do editor (idempotente) - antes do primeiro NewFrame
         LoadRecentProjects();
 
         if (m_LastProjectsDirectory.empty())

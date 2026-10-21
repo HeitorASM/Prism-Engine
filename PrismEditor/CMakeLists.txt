@@ -77,6 +77,8 @@ add_custom_command(TARGET PrismEditor POST_BUILD
         $<TARGET_FILE_DIR:PrismEditor>/docs
 )
 
+# A fonte da interface do editor (EditorTheme) e a mesma da UI in-game.
+target_compile_definitions(PrismEditor PRIVATE PRISM_EDITOR_FONT_SOURCE_DIR="${PRISM_FONT_DIR}")
 # Copia as fontes (UI in-game) para perto do executavel - mesmo esquema dos shaders.
 add_custom_command(TARGET PrismEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

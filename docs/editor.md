@@ -47,6 +47,11 @@ Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini
 - **Saída de Build**: saída da compilação dos scripts C++, com erros em vermelho e avisos em amarelo; erros e avisos com arquivo são clicáveis (abrem no Editor de Código, ainda sem pular para a linha). Filtro "So erros e avisos". Abre em foco quando a compilação começa e quando falha.
 - **Console**: lê o `LogBuffer` (últimas 2000 mensagens), com cor por nível, filtro de texto, toggles de verbosidade e auto-scroll.
 - **Conteúdo do Projeto**: navega pelos arquivos do projeto. Duplo clique numa pasta entra nela; duplo clique num `.prismmap` carrega o mapa.
+  - Barra: **Voltar**, **Atualizar**, **Nova pasta**, tamanho dos ícones e o caminho clicável (cada trecho navega).
+  - **Renomear** (`F2` ou botão direito), **Excluir** (`Del`, pede confirmação) e **mover** (arraste para uma pasta ou para o botão Voltar). O `.meta` acompanha o arquivo, então o AssetID e as referências feitas por ele continuam valendo; o caminho do mapa aberto é atualizado.
+  - As pastas e arquivos da **raiz do projeto** (`Assets`, `Maps`, `Scripts`, `.prismproj`...) são protegidos.
+  - Limitação: o componente Script guarda o **caminho** do `.lua`; ao renomear/mover um script, reaponte os componentes que o usam (o editor avisa no Console).
+- **Tema e fonte**: a interface usa a fonte DejaVu Sans e uma paleta única definida em `EditorTheme` (`PrismEditor/src/PrismEditor/Core/EditorTheme.h`); os ícones são desenhados por código (`EditorIcons`).
 - **Editor de Código**: abre `.lua` e `.cpp`/`.h` (com syntax highlight) e qualquer outro arquivo de texto (`.md`, `.txt`…) sem highlight. Dê duplo clique num arquivo no Conteúdo do Projeto, ou use "Editar" no component Script. Vários arquivos podem ficar abertos: a lateral esquerda do painel lista os abertos (clique troca, **x** ou clique do meio fecha, `*` marca alterações não salvas; fechar um arquivo alterado pergunta se salva). **Ctrl+S** salva o arquivo ativo (preservando CRLF/LF) e **Salvar tudo** salva todos. Com o foco no painel, os atalhos da cena (Ctrl+Z, Ctrl+S, Delete) ficam desligados. Arquivos binários ou maiores que 4 MB são recusados.
 
 ### Ambiente e câmera (visual)
