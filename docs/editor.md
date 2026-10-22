@@ -59,7 +59,7 @@ Arraste as abas para reorganizar; o editor lembra a sua disposição (`imgui.ini
 O visual **não é mais um menu do editor**: pertence à cena e à câmera.
 
 - **Environment** (component da entidade "Ambiente", criada com cada mapa novo; ou **Entidade → Criar Ambiente**): intensidade, cores Céu/Horizonte/Chão e o fundo (cor, gradiente ou panorama). É gravado no mapa, então cada mapa tem o seu visual, e as edições entram no desfazer.
-- **Camera**, seção **Render**: fundo (skybox da cena ou cor chapada), exposição e SSAO, por câmera.
+- **Camera**, seção **Render**: fundo (skybox da cena ou cor chapada), exposição e SSAO, mais **Pós-processamento** (bloom, FXAA, saturação e contraste), por câmera.
 
 A viewport livre do editor usa o ambiente da cena e as opções padrão de câmera. Detalhes em [Renderização](renderizacao.md).
 

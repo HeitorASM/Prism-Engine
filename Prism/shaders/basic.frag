@@ -347,6 +347,11 @@ uniform vec2 u_ScreenSize;
 // neutro). Ainda nao exposto no editor - ver Renderer::SetExposure.
 uniform float u_Exposure;
 
+// 0 = saida final (exposicao + ACES + sRGB, como sempre); 1 = HDR LINEAR, sem
+// exposicao/tone mapping/gamma: o passe de pos-processamento (PostProcess)
+// termina o trabalho. So o Renderer::DrawScene liga o modo 1.
+uniform int u_OutputMode;
+
 vec3 SrgbToLinear(vec3 c) {
     // Curva sRGB exata (nao o atalho pow(c, 2.2)): trecho linear
     // perto do preto + trecho de potencia 2.4 no resto.
@@ -575,7 +580,12 @@ void main() {
     // Cor final em linear -> exposicao -> tone mapping -> sRGB.
     // 'lightAccum' ja e radiancia refletida (BRDF aplicado por luz);
     // so o ambiente (ja multiplicado por albedo acima) soma por fora.
-    vec3 color = (ambient + lightAccum) * u_Exposure;
+    vec3 color = (ambient + lightAccum);
+    if (u_OutputMode != 0) {
+        o_Color = vec4(color, 1.0);
+        return;
+    }
+    color *= u_Exposure;
     color = ToneMapACES(color);
     color = LinearToSrgb(color);
     o_Color = vec4(color, 1.0);

@@ -51,6 +51,8 @@ namespace Prism {
     // iniciais sao os padroes do EnvironmentComponent/CameraComponent, para
     // um DrawMesh avulso antes do primeiro DrawScene ja sair coerente.
     float Renderer::s_Exposure = CameraComponent{}.Exposure;
+    bool Renderer::s_OutputHDR = false;
+    bool Renderer::s_SkyNeedsToneMap = false;
     float Renderer::s_Ambient = EnvironmentComponent{}.Ambient;
     float Renderer::s_EnvZenith[3]  = { EnvironmentComponent{}.Zenith.x,  EnvironmentComponent{}.Zenith.y,  EnvironmentComponent{}.Zenith.z };
     float Renderer::s_EnvHorizon[3] = { EnvironmentComponent{}.Horizon.x, EnvironmentComponent{}.Horizon.y, EnvironmentComponent{}.Horizon.z };
@@ -147,6 +149,8 @@ namespace Prism {
         s_GeometryPrePassShader = loadShader("GeometryPrePass", "geometry_prepass.vert", "geometry_prepass.frag");
         s_SSAOShader = loadShader("SSAO", "fullscreen_quad.vert", "ssao.frag");
         s_SSAOBlurShader = loadShader("SSAOBlur", "fullscreen_quad.vert", "ssao_blur.frag");
+        if (!PostProcess::Init(shaderDir))
+            PRISM_CORE_ERROR("Renderer: shaders de pos-processamento invalidos - a cena sera desenhada sem bloom/FXAA/ajustes (corrija os shaders post_*.frag; o hot reload os recarrega).");
         // s_GeometryBuffer/s_SSAO NAO sao criados aqui de proposito - mesma
         // alocacao sob demanda de s_ShadowMap (ver comentario em Renderer.h).
         //
@@ -189,6 +193,7 @@ namespace Prism {
             if (*shader)
                 (*shader)->ReloadIfChanged();
         }
+        PostProcess::ReloadChangedShaders();
     }
 
     void Renderer::Shutdown() {
@@ -210,6 +215,7 @@ namespace Prism {
         s_SSAOBlurShader.reset();
         s_GeometryBuffer.reset();
         s_SSAO.reset();
+        PostProcess::Shutdown();
 
         if (s_LineVBO) { glDeleteBuffers(1, &s_LineVBO); s_LineVBO = 0; }
         if (s_LineVAO) { glDeleteVertexArrays(1, &s_LineVAO); s_LineVAO = 0; }
@@ -467,6 +473,7 @@ namespace Prism {
         // Sem este envio, u_Exposure valeria 0.0 (padrao de uniform nao
         // setado em GLSL) e a cena inteira sairia preta - ver shaders/basic.frag.
         s_BasicShader->SetFloat("u_Exposure", s_Exposure);
+        s_BasicShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
         s_BasicShader->SetFloat("u_Ambient", s_Ambient);
         // As tres cores do gradiente de ambiente. Sem estes envios elas
         // valeriam (0,0,0) e o ambiente inteiro (difuso e reflexo dos
@@ -685,6 +692,8 @@ namespace Prism {
         s_SkyShader->SetFloat("u_Intensity", s_SkyIntensity);
         s_SkyShader->SetFloat("u_Exposure", s_Exposure);
         s_SkyShader->SetInt("u_ToneMap", (panorama && panorama->IsHDR()) ? 1 : 0);
+        s_SkyShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
+        s_SkyNeedsToneMap = panorama && panorama->IsHDR();
         s_SkyShader->SetInt("u_Panorama", 0);
         if (panorama)
             panorama->Bind(0);
@@ -1165,6 +1174,20 @@ namespace Prism {
         // teste de profundidade (cena "invisivel" com so o fundo aparecendo).
         // Chamadores nao precisam mais de Renderer::Clear antes. A mascara de
         // profundidade precisa estar ligada, senao glClear nao limpa a profundidade.
+        //
+        // POS-PROCESSAMENTO: com viewport valida a cena vai para o buffer HDR
+        // (linear) e PostProcess::End a converte para o destino original no fim
+        // (bloom, exposicao + ACES, ajustes, FXAA). Se nao der (tamanho
+        // invalido, shaders quebrados) desenha direto, como antes.
+        PostProcess* postProcess = nullptr;
+        if (viewportWidth > 0 && viewportHeight > 0) {
+            PostProcess& candidate = PostProcess::ForCurrentContext();
+            if (candidate.Begin(viewportWidth, viewportHeight))
+                postProcess = &candidate;
+        }
+        s_OutputHDR = (postProcess != nullptr);
+        s_SkyNeedsToneMap = false;
+
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
@@ -1199,6 +1222,23 @@ namespace Prism {
         // Particulas por ultimo: blend + sem escrita de profundidade, testando
         // contra a profundidade da geometria opaca ja desenhada.
         DrawParticles(scene, view, projection);
+
+        if (postProcess) {
+            s_OutputHDR = false;
+
+            auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+            PostProcessSettings post;
+            post.Bloom = camera.Bloom;
+            post.BloomThreshold = std::min(std::max(finiteOr(camera.BloomThreshold, 1.0f), 0.0f), 32.0f);
+            post.BloomIntensity = std::min(std::max(finiteOr(camera.BloomIntensity, 0.15f), 0.0f), 4.0f);
+            post.FXAA = camera.FXAA;
+            post.Exposure = s_Exposure; // ja limitada em ApplyFrameState
+            post.Saturation = std::min(std::max(finiteOr(camera.Saturation, 1.0f), 0.0f), 3.0f);
+            post.Contrast = std::min(std::max(finiteOr(camera.Contrast, 1.0f), 0.1f), 3.0f);
+            post.SkyPassThrough = !s_SkyNeedsToneMap;
+            postProcess->End(post, (uint32_t)previousFramebuffer, previousViewport);
+        }
+        s_OutputHDR = false;
     }
 
     void Renderer::DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
@@ -1271,6 +1311,7 @@ namespace Prism {
                 glDisable(GL_CULL_FACE);
                 glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
                 s_ParticleShader->Bind();
+                s_ParticleShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
                 s_ParticleShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
                 s_ParticleShader->SetFloat3("u_CameraRight", cameraRight.x, cameraRight.y, cameraRight.z);
                 s_ParticleShader->SetFloat3("u_CameraUp", cameraUp.x, cameraUp.y, cameraUp.z);

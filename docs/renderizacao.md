@@ -42,7 +42,7 @@ O ambiente é um **gradiente vertical analítico** de 3 cores (zênite, horizont
 
 Os valores vêm do **`EnvironmentComponent` da cena** (o primeiro encontrado; sem nenhum valem os padrões do component). Cores em sRGB, o que o color picker mostra; o shader converte para linear. `Ambient` é a **intensidade** (padrão 0.10) e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`). O Renderer não guarda configuração do usuário: `Renderer::DrawScene` reescreve o estado do quadro (`ApplyFrameState`) a cada chamada e limita tudo (exposição 0.05–16, `Ambient` 0–2, cores 0–1, NaN/inf viram o padrão).
 
-As opções da **câmera** chegam por `CameraRenderSettings::From(camera)`: `ClearMode` (skybox da cena ou cor chapada), `ClearColor`, `Exposure` e `SSAO` (desligar poupa dois passes de tela cheia). A viewport livre do editor usa os padrões.
+As opções da **câmera** chegam por `CameraRenderSettings::From(camera)`: `ClearMode` (skybox da cena ou cor chapada), `ClearColor`, `Exposure`, `SSAO` (desligar poupa dois passes de tela cheia) e as opções de pós-processamento (veja abaixo). A viewport livre do editor usa os padrões.
 
 **Precisão medida** (contra integração numérica): irradiância, erro máximo 0.009 (0.008 com uma paleta de pôr do sol, sem reajuste); especular, erro médio 1.5 níveis de 255; termo BRDF, `A` com erro médio 0.018.
 
@@ -64,7 +64,18 @@ Se o determinante da matriz é zero (um eixo de escala em 0), a inversa não exi
 
 ## Pipeline de cor
 
-A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Na saída: exposição (`Renderer::SetExposure`, padrão 1.0) → tone mapping ACES → linear para sRGB. A conversão é feita no shader de cena, e não num passe final, porque gizmos de linha e o clear color são desenhados depois no mesmo framebuffer, já em espaço de tela.
+A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Os shaders de cena (`basic`, `sky`, `particle`) escrevem **HDR linear** (`u_OutputMode = 1`) num buffer `RGBA16F`, e o passe final (`PostProcess`) converte para a tela. `Renderer::DrawMesh` fora do `DrawScene` continua escrevendo a imagem final (modo 0).
+
+### Pós-processamento (`PostProcess`)
+
+`Renderer::DrawScene` desenha a cena num FBO HDR (um por contexto GLFW, porque FBOs não são compartilhados entre o editor e a janela de Play) e, no fim, `PostProcess::End` faz:
+
+1. **Bloom** (opcional): descida em até 6 níveis (filtro de 13 amostras, com limiar de joelho suave no primeiro) e subida aditiva (filtro tenda de 9 amostras). `BloomThreshold` é o brilho linear mínimo (1 = branco) e `BloomIntensity` quanto entra na imagem.
+2. **Composição**: soma o bloom, aplica **exposição → ACES → sRGB** (o mesmo de antes), depois `Saturation` e `Contrast`. Pixels de **fundo** (profundidade 1.0) com céu LDR (cor chapada, gradiente, panorama comum) pulam exposição e ACES, então a cor do céu sai exatamente como foi escolhida; o panorama **HDR** passa pelo tone mapping.
+3. **FXAA** (opcional): suaviza bordas sobre a imagem já em sRGB.
+4. **Profundidade**: é copiada para o destino original, então gizmos e linhas desenhados depois continuam ocluídos.
+
+As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast`; chegam por `CameraRenderSettings::From`) e limitadas no Renderer. Com bloom, saturação e contraste neutros e FXAA desligado, a imagem é a de antes, exceto partículas sobre geometria, que agora são misturadas em espaço linear. Se os shaders `post_*.frag` não compilarem ou o FBO falhar, a cena é desenhada direto, sem pós-processamento.
 
 ## Sombras
 

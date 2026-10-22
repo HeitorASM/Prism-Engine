@@ -22,6 +22,9 @@ uniform float u_Rotation;   // radianos, em torno de Y
 uniform float u_Intensity;
 uniform float u_Exposure;
 uniform int u_ToneMap;
+// 0 = saida final em sRGB (como sempre); 1 = HDR linear para o pos-processamento
+// (que aplica exposicao/ACES so no panorama HDR e deixa o resto exato).
+uniform int u_OutputMode;
 
 const float kPi = 3.14159265358979;
 
@@ -60,11 +63,12 @@ void main() {
     vec3 dir = normalize(v_Direction);
 
     if (u_Mode == 0) {
-        o_Color = vec4(u_SolidColor, 1.0);
+        o_Color = vec4(u_OutputMode != 0 ? SrgbToLinear(u_SolidColor) : u_SolidColor, 1.0);
         return;
     }
     if (u_Mode == 1) {
-        o_Color = vec4(LinearToSrgb(GradientColor(dir.y)), 1.0);
+        vec3 gradient = GradientColor(dir.y);
+        o_Color = vec4(u_OutputMode != 0 ? gradient : LinearToSrgb(gradient), 1.0);
         return;
     }
 
@@ -83,6 +87,10 @@ void main() {
     if (abs(dy.x) > 0.5) dy.x -= sign(dy.x);
 
     vec3 color = textureGrad(u_Panorama, uv, dx, dy).rgb * u_Intensity;
+    if (u_OutputMode != 0) {
+        o_Color = vec4(color, 1.0);
+        return;
+    }
     if (u_ToneMap != 0)
         color = ToneMapACES(color * u_Exposure);
     o_Color = vec4(LinearToSrgb(color), 1.0);

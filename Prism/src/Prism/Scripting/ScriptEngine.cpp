@@ -152,7 +152,14 @@ namespace Prism {
                 [](CameraComponent& c, int v) { c.ClearMode = (v == 1) ? CameraClearMode::SolidColor : CameraClearMode::Skybox; }),
             "ClearColor", &CameraComponent::ClearColor,
             "Exposure", &CameraComponent::Exposure,
-            "SSAO", &CameraComponent::SSAO
+            "SSAO", &CameraComponent::SSAO,
+            // Pos-processamento (o Renderer limita os valores).
+            "Bloom", &CameraComponent::Bloom,
+            "BloomThreshold", &CameraComponent::BloomThreshold,
+            "BloomIntensity", &CameraComponent::BloomIntensity,
+            "FXAA", &CameraComponent::FXAA,
+            "Saturation", &CameraComponent::Saturation,
+            "Contrast", &CameraComponent::Contrast
         );
         // Ambiente da cena (ciclo dia/noite etc). Sky: 0 = cor, 1 = gradiente, 2 = panorama.
         // O Renderer limita os valores, entao um script nao deixa a cena preta/NaN.

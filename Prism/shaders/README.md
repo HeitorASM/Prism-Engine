@@ -15,6 +15,10 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |
 | `SSAO` | `fullscreen_quad.vert` | `ssao.frag` | SSAO, etapa 2: oclusão bruta |
 | `SSAOBlur` | `fullscreen_quad.vert` | `ssao_blur.frag` | SSAO, etapa 3: blur |
+| `BloomDown` | `fullscreen_quad.vert` | `post_bloom_down.frag` | Pós-processamento: bloom, descida (limiar + 13 amostras) |
+| `BloomUp` | `fullscreen_quad.vert` | `post_bloom_up.frag` | Pós-processamento: bloom, subida aditiva |
+| `PostComposite` | `fullscreen_quad.vert` | `post_composite.frag` | Pós-processamento: HDR → tela (bloom, exposição, ACES, sRGB, saturação, contraste) |
+| `PostFXAA` | `fullscreen_quad.vert` | `post_fxaa.frag` | Pós-processamento: FXAA |
 
 Pipeline do SSAO completo (geometria → SSAO bruto → blur → passe de cor final): ver `Renderer/SSAO.h`. O comentário de design de cada shader está no topo do próprio arquivo.
 

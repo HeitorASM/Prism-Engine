@@ -219,6 +219,16 @@ namespace Prism {
         // dois passes de tela cheia.
         bool SSAO = true;
 
+        // Pos-processamento (ver Renderer/PostProcess.h). A cena e desenhada em
+        // HDR linear; exposicao + ACES ja eram aplicados antes, entao com tudo
+        // desligado a imagem e a mesma.
+        bool Bloom = false;
+        float BloomThreshold = 1.0f;  // brilho linear a partir do qual brilha (HDR: 1 = branco)
+        float BloomIntensity = 0.15f; // quanto do bloom entra na imagem
+        bool FXAA = true;             // suaviza serrilhado de bordas
+        float Saturation = 1.0f;      // 0 = preto e branco, 1 = neutro
+        float Contrast = 1.0f;        // 1 = neutro
+
         CameraComponent() = default;
         CameraComponent(const CameraComponent&) = default;
 

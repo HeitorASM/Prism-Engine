@@ -63,6 +63,7 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v18 | `ParticleEmitter` (emissor de partículas) |
 | v19 | `UIElement` (elemento de UI in-game) |
 | v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
+| (bloco Camera v3) | `Camera` ganha `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast` no fim do bloco; **sem** subir a versão do mapa |
 | v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion` (só quando a estrutura **fora** dos blocos muda), atualize "Versão atual" acima e esta tabela.

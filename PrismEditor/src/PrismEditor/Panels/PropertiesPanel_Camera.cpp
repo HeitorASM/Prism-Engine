@@ -85,6 +85,28 @@ namespace PrismEditor {
                 CommitComponentEdit(m_Ctx, before, camera, "Camera");
             }
 
+            ImGui::SeparatorText("Pos-processamento");
+            bool bloom = camera.Bloom;
+            if (ImGui::Checkbox("Bloom##Cam", &bloom)) {
+                camera.Bloom = bloom;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            if (camera.Bloom) {
+                ImGui::DragFloat("Limiar do bloom##Cam", &camera.BloomThreshold, 0.01f, 0.0f, 32.0f);
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+                ImGui::DragFloat("Intensidade do bloom##Cam", &camera.BloomIntensity, 0.005f, 0.0f, 4.0f);
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
+            bool fxaa = camera.FXAA;
+            if (ImGui::Checkbox("FXAA (suavizar bordas)##Cam", &fxaa)) {
+                camera.FXAA = fxaa;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            ImGui::DragFloat("Saturacao##Cam", &camera.Saturation, 0.01f, 0.0f, 3.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            ImGui::DragFloat("Contraste##Cam", &camera.Contrast, 0.01f, 0.1f, 3.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+
             // --- Pre-visualizacao da camera (integrada) ---
             ImGui::Separator();
             ImGui::TextDisabled("Pre-visualizacao");

@@ -365,6 +365,13 @@ namespace Prism {
                 WriteRaw(out, c.ClearColor);
                 WriteRaw(out, c.Exposure);
                 WriteRaw(out, c.SSAO);
+                // v3 do bloco: pos-processamento (sempre NO FIM).
+                WriteRaw(out, c.Bloom);
+                WriteRaw(out, c.BloomThreshold);
+                WriteRaw(out, c.BloomIntensity);
+                WriteRaw(out, c.FXAA);
+                WriteRaw(out, c.Saturation);
+                WriteRaw(out, c.Contrast);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<CameraComponent>();
@@ -376,6 +383,12 @@ namespace Prism {
                 if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
                     ok = ReadRaw(in, c.ClearMode) && ReadRaw(in, c.ClearColor)
                       && ReadRaw(in, c.Exposure) && ReadRaw(in, c.SSAO);
+                }
+                // Bloco v3: pos-processamento (blocos v1/v2 ficam com os padroes).
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 3) {
+                    ok = ReadRaw(in, c.Bloom) && ReadRaw(in, c.BloomThreshold)
+                      && ReadRaw(in, c.BloomIntensity) && ReadRaw(in, c.FXAA)
+                      && ReadRaw(in, c.Saturation) && ReadRaw(in, c.Contrast);
                 }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", entityIndex, ").");
@@ -392,6 +405,10 @@ namespace Prism {
                 // Valores de render fora de faixa nao sao fatais: o Renderer
                 // tambem limita, mas corrigir aqui mantem o inspetor coerente.
                 if (!std::isfinite(c.Exposure) || c.Exposure <= 0.0f) c.Exposure = 1.0f;
+                if (!std::isfinite(c.BloomThreshold) || c.BloomThreshold < 0.0f) c.BloomThreshold = 1.0f;
+                if (!std::isfinite(c.BloomIntensity) || c.BloomIntensity < 0.0f) c.BloomIntensity = 0.15f;
+                if (!std::isfinite(c.Saturation) || c.Saturation < 0.0f) c.Saturation = 1.0f;
+                if (!std::isfinite(c.Contrast) || c.Contrast <= 0.0f) c.Contrast = 1.0f;
                 for (int i = 0; i < 3; i++)
                     if (!std::isfinite(c.ClearColor[i])) c.ClearColor[i] = 0.0f;
                 return true;
@@ -417,9 +434,11 @@ namespace Prism {
             }
         );
 
-        // v2 do bloco: ClearMode/ClearColor/Exposure/SSAO no fim. Em arquivos
-        // legados, o layout v2 vale a partir do formato equivalente 20.
-        s_Registry.back().Version = 2;
+        // v2 do bloco: ClearMode/ClearColor/Exposure/SSAO no fim; v3: pos-
+        // processamento (Bloom.../Contrast). Em arquivos LEGADOS (v19-v20, sem
+        // blocos) o layout v2 vale a partir do formato equivalente 20 e a v3
+        // nunca existiu neles.
+        s_Registry.back().Version = 3;
         s_Registry.back().LegacyVersion = [](uint32_t sceneFormat) -> uint32_t { return sceneFormat >= 20 ? 2u : 1u; };
 
         // --- RaycastComponent ----------------------------------------------------

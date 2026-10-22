@@ -28,6 +28,7 @@
 #include "SSAO.h"
 #include "Texture.h"
 #include "SkyTexture.h"
+#include "PostProcess.h"
 #include "../Project/Project.h"
 #include <glm/glm.hpp>
 #include <cstdint>
@@ -99,6 +100,13 @@ namespace Prism {
         float ClearColor[3] = { 0.05f, 0.05f, 0.07f }; // sRGB, so ClearMode == SolidColor
         float Exposure = 1.0f;
         bool SSAO = true;
+        // Pos-processamento (ver PostProcess.h).
+        bool Bloom = false;
+        float BloomThreshold = 1.0f;
+        float BloomIntensity = 0.15f;
+        bool FXAA = true;
+        float Saturation = 1.0f;
+        float Contrast = 1.0f;
 
         static CameraRenderSettings From(const CameraComponent& camera) {
             CameraRenderSettings r;
@@ -108,6 +116,12 @@ namespace Prism {
             r.ClearColor[2] = camera.ClearColor.z;
             r.Exposure = camera.Exposure;
             r.SSAO = camera.SSAO;
+            r.Bloom = camera.Bloom;
+            r.BloomThreshold = camera.BloomThreshold;
+            r.BloomIntensity = camera.BloomIntensity;
+            r.FXAA = camera.FXAA;
+            r.Saturation = camera.Saturation;
+            r.Contrast = camera.Contrast;
             return r;
         }
     };
@@ -506,6 +520,12 @@ namespace Prism {
 
         static float s_CameraWorldPos[3];
         static float s_Exposure;
+        // true so DENTRO de DrawScene com pos-processamento: os shaders de cena
+        // (basic/sky/particle) escrevem HDR linear (u_OutputMode = 1) em vez da
+        // imagem final. Fora disso (DrawMesh avulso) tudo sai como sempre.
+        static bool s_OutputHDR;
+        // O ceu do quadro precisa de exposicao/ACES (panorama HDR)? Ver DrawSky.
+        static bool s_SkyNeedsToneMap;
         static float s_Ambient;
         static float s_EnvZenith[3];
         static float s_EnvHorizon[3];

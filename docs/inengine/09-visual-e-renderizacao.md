@@ -42,7 +42,7 @@ Há rotação e brilho para o panorama. **Importante:** o fundo **não ilumina**
 
 ## Opções de render da câmera
 
-O component **Camera** tem a seção **Render**: **Fundo** (skybox da cena ou uma cor chapada), **Exposição** (brilho final, 1.0 é neutro) e **SSAO**. Cada câmera pode ter as suas. Por script: `entity:GetCamera().Exposure`, `entity:GetEnvironment().Ambient` etc. (bom para ciclo dia/noite).
+O component **Camera** tem a seção **Render**: **Fundo** (skybox da cena ou uma cor chapada), **Exposição** (brilho final, 1.0 é neutro) e **SSAO**, e a seção **Pós-processamento**: **Bloom** (limiar e intensidade), **FXAA**, **Saturação** e **Contraste**. Cada câmera pode ter as suas. Por script: `entity:GetCamera().Exposure`, `entity:GetEnvironment().Ambient` etc. (bom para ciclo dia/noite).
 
 ## Efeitos que já vêm ligados
 
