@@ -359,16 +359,10 @@ namespace Prism {
         // component em si so guarda o valor.
         float InnerSpotAngle = 30.0f;
 
-        // Se esta luz projeta sombra (shadow mapping) - ver
-        // Renderer::RenderShadowPass (Renderer.cpp) para a implementacao.
-        // So tem efeito visual para luzes Directional hoje: Point/Spot
-        // ainda nao tem shadow mapping implementado (exigiria projecao
-        // perspective ou cubemap, ver comentario grande em
-        // RenderShadowPass) - marcar isto numa luz Point/Spot nao causa
-        // erro, so nao produz sombra nenhuma ainda. Alem disso, so a
-        // PRIMEIRA luz Directional da cena com este campo true realmente
-        // projeta sombra num dado frame (uma unica luz por vez - ver
-        // mesmo comentario).
+        // Se esta luz projeta sombra (ver Renderer/ShadowSystem.h).
+        // Directional: cascaded shadow maps (3 cascatas). Spot: ate 4 luzes.
+        // Point: ate 2 luzes (cubemap). Alem do limite de cada tipo a luz
+        // continua acesa, so sem sombra (aviso unico no log).
         bool CastShadows = false;
 
         // Reservado para o futuro tipo Area (ver comentario em LightType)

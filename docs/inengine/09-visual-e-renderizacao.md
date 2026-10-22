@@ -10,7 +10,7 @@ Adicione o component **Light** (ou use **Entidade → Criar Luz**). Tipos:
 
 Cada luz tem **Color** e **Intensity**. São suportadas até **16 luzes** por frame.
 
-**Sombras**: só a **primeira luz Directional** com `CastShadows` marcado projeta sombra (uma por cena). Point e Spot não projetam sombra ainda.
+**Sombras**: marque `CastShadows` na luz. Directional (a primeira marcada) usa 3 cascatas; até **4 Spot** e **2 Point** projetam sombra por vez. As que passarem do limite continuam acesas, sem sombra.
 
 ## Materiais
 

@@ -80,107 +80,131 @@ struct GPULight {
     float Range;
     float CosOuterAngle;
     float CosInnerAngle;
+    int   ShadowSlot;   // -1 = sem sombra; Directional: 0 (cascatas); Spot/Point: indice no mapa
 };
 
 uniform int u_LightCount;
 uniform GPULight u_Lights[MAX_LIGHTS];
 
-// --- Shadow mapping (directional, uma luz por vez) --------------
-// u_HasShadow=false (o padrao, ver Renderer::DrawMesh) e o
-// comportamento antigo exato: nenhuma amostragem de textura
-// acontece, sem custo extra. Ver comentario grande em
-// Renderer::RenderShadowPass (Renderer.cpp) para o pipeline
-// completo dos 2 passes.
-uniform sampler2D u_ShadowMap;
-uniform mat4 u_LightSpaceMatrix;
-uniform bool u_HasShadow;
-// Raio do frustum ortho da luz (ver comentario em
-// texelWorldSize, CalculateShadow abaixo) - so tem valor
-// significativo quando u_HasShadow=true (RenderShadowPass e
-// quem calcula e propaga isto, ver Renderer.cpp).
-uniform float u_ShadowFrustumRadius;
-// Indice dentro de u_Lights[] da UNICA luz que gerou u_ShadowMap
-// neste frame (-1 = nenhuma, embora u_HasShadow=false ja cubra
-// esse caso) - ver Renderer::RenderShadowPass/UploadLights, que
-// preenchem isso a partir da mesma busca "primeira luz Directional
-// com CastShadows=true" usada para desenhar o shadow map em si,
-// garantindo que os dois nunca discordem sobre qual luz e essa.
-uniform int u_ShadowCasterLightIndex;
+// --- Sombras (ver Renderer/ShadowSystem.h) -----------------------
+//   Directional: cascatas (CASCADE_COUNT camadas de um array 2D)
+//   Spot:        perspectiva (um array 2D, uma camada por luz)
+//   Point:       cubemap de DISTANCIA / alcance (um cube array)
+// CASCADE_COUNT / MAX_SPOT_SHADOWS / MAX_POINT_SHADOWS vem do C++ (defines).
+#ifndef CASCADE_COUNT
+#error "CASCADE_COUNT deve ser injetado pelo Renderer (ver Renderer::Init)."
+#endif
+uniform sampler2DArray u_CascadeShadow;
+uniform sampler2DArray u_SpotShadow;
+uniform samplerCubeArray u_PointShadow;
 
-// Retorna um fator de sombra: 0.0 = totalmente iluminado, 1.0 =
-// totalmente na sombra. 'worldPos' e 'normal' sao do fragmento
-// ATUAL (espaco de mundo); a funcao mesma faz a projecao para o
-// espaco da luz via u_LightSpaceMatrix.
-float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
-    // Normal offset bias: desloca o PONTO DE MUNDO ao longo da
-    // normal (nao so a profundidade comparada, como uma versao
-    // anterior desta funcao fazia) antes de projetar para o
-    // espaco da luz - tecnica mais robusta que um bias de
-    // profundidade simples para superficies CURVAS (esferas,
-    // capsulas, cilindros): num cubo/plano a normal e constante
-    // por face inteira, entao um bias fixo por pixel funciona
-    // bem; numa capsula a normal varia suavemente vertice a
-    // vertice, e o bias de profundidade sozinho deixava um
-    // padrao visivel de faixas/listras na sombra da propria
-    // superficie curva (shadow acne mais pronunciado em
-    // geometria arredondada). Deslocar a AMOSTRA (nao so o
-    // limiar de comparacao) ao longo da normal empurra o ponto
-    // testado para fora da superficie de forma proporcional a
-    // "largura" de um texel do shadow map em unidades de mundo,
-    // o que se adapta melhor a curvatura continua. Ver
-    // "Normal Offset Shadows" (tecnica classica, usada por
-    // engines como Unity) para a referencia desta abordagem.
-    // texelWorldSize: quanto (em unidades de mundo) um texel do
-    // shadow map cobre, usado para escalar o normal offset acima
-    // de forma proporcional - um shadow map de resolucao fixa
-    // (ver ShadowMap::ShadowMap) cobrindo um frustum GRANDE
-    // (cena com objetos espalhados) tem texels fisicamente
-    // maiores que o mesmo shadow map cobrindo uma cena pequena;
-    // sem escalar por u_ShadowFrustumRadius, um offset fixo
-    // ficaria exagerado (sombra "descolada" do objeto, peter-
-    // panning) em cenas pequenas ou insuficiente (acne de volta)
-    // em cenas grandes. u_ShadowFrustumRadius e o mesmo
-    // 'sceneRadius' que RenderShadowPass calculou para
-    // dimensionar o frustum ortho da luz (ver Renderer.cpp).
-    float texelWorldSize = (2.0 * u_ShadowFrustumRadius) / float(textureSize(u_ShadowMap, 0).x);
-    vec3 offsetWorldPos = worldPos + normal * texelWorldSize * 1.5;
+uniform int u_CascadeCount;                 // 0 = sem sombra direcional
+uniform mat4 u_CascadeMatrix[CASCADE_COUNT];
+uniform float u_CascadeSplit[CASCADE_COUNT];   // onde cada cascata termina (distancia ao longo do olhar)
+uniform float u_CascadeTexel[CASCADE_COUNT];   // tamanho de um texel em unidades de mundo
+uniform float u_CascadeRange[CASCADE_COUNT];   // profundidade do ortho (para converter bias de mundo -> profundidade)
+uniform vec3 u_CameraForward;
 
-    vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(offsetWorldPos, 1.0);
+uniform int u_SpotCount;
+uniform mat4 u_SpotMatrix[MAX_SPOT_SHADOWS];
+uniform float u_SpotTexelAt1[MAX_SPOT_SHADOWS];
+uniform float u_SpotNear[MAX_SPOT_SHADOWS];
+uniform float u_SpotFar[MAX_SPOT_SHADOWS];
 
-    // Perspective divide (sem efeito real aqui ja que a projecao
-    // da luz e ORTHO - ver RenderShadowPass - mas mantido pelo
-    // padrao de qualquer implementacao de shadow mapping, caso a
-    // engine ganhe luzes Spot/Point com sombra via projecao
-    // perspective no futuro) + remapeia de [-1,1] (NDC) para
-    // [0,1] (coordenadas de textura/profundidade).
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
+uniform int u_PointCount;
+uniform float u_PointFar[MAX_POINT_SHADOWS];
 
-    // Fora do frustum ortho da luz (ver GL_CLAMP_TO_BORDER +
-    // borda branca em ShadowMap.cpp) - nao deveria acontecer na
-    // pratica (RenderShadowPass calcula o frustum para cobrir a
-    // cena inteira), mas serve de seguranca contra artefatos caso
-    // uma entidade esteja bem fora do bounding box calculado.
-    if (projCoords.z > 1.0)
+// Retorna 0.0 = totalmente iluminado ... 1.0 = totalmente na sombra.
+
+// Luz direcional: escolhe a cascata pela distancia ao longo do olhar da camera,
+// desloca o ponto pela normal (proporcional ao texel) e faz PCF 3x3.
+float CascadeShadow(vec3 worldPos, vec3 normal, float NdotL) {
+    float along = dot(worldPos - u_CameraWorldPos, u_CameraForward);
+    int cascade = -1;
+    for (int i = 0; i < CASCADE_COUNT; i++) {
+        if (i < u_CascadeCount && along <= u_CascadeSplit[i]) {
+            cascade = i;
+            break;
+        }
+    }
+    if (cascade < 0)
+        return 0.0; // alem da distancia de sombra
+
+    float texelWorld = u_CascadeTexel[cascade];
+    vec3 p = worldPos + normal * texelWorld * 1.5;
+    vec4 ls = u_CascadeMatrix[cascade] * vec4(p, 1.0);
+    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0)
         return 0.0;
 
-    // O normal offset acima ja faz a maior parte do trabalho de
-    // evitar acne; este bias residual, pequeno, cobre so o erro de
-    // precisao de ponto flutuante remanescente.
-    float bias = max(0.0006 * (1.0 - dot(normal, lightDir)), 0.00015);
+    // Bias em unidades de mundo (cresce em angulos rasantes), convertido em profundidade do ortho.
+    float bias = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) / u_CascadeRange[cascade];
 
-    // PCF (Percentage-Closer Filtering) 3x3: amostra a vizinhanca
-    // do texel em vez de um unico texel, e faz a MEDIA do
-    // resultado - suaviza a borda serrilhada que uma unica
-    // comparacao de profundidade produziria (sombra com "escada"
-    // visivel pixel a pixel).
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(u_ShadowMap, 0);
+    vec2 texel = 1.0 / vec2(textureSize(u_CascadeShadow, 0).xy);
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
-            float closestDepth = texture(u_ShadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += (projCoords.z - bias) > closestDepth ? 1.0 : 0.0;
+            float closest = texture(u_CascadeShadow, vec3(proj.xy + vec2(x, y) * texel, float(cascade))).r;
+            shadow += (proj.z - bias) > closest ? 1.0 : 0.0;
         }
+    }
+    return shadow / 9.0;
+}
+
+// Profundidade da projecao perspectiva -> distancia linear (view-space).
+float LinearizeDepth(float d, float n, float f) {
+    return (2.0 * n * f) / (f + n - (2.0 * d - 1.0) * (f - n));
+}
+
+// Spot: compara distancias lineares (a profundidade perspectiva nao e linear).
+float SpotShadow(int slot, vec3 worldPos, vec3 normal, float distanceToLight, float NdotL) {
+    float texelWorld = u_SpotTexelAt1[slot] * distanceToLight;
+    vec3 p = worldPos + normal * texelWorld * 1.5;
+    vec4 ls = u_SpotMatrix[slot] * vec4(p, 1.0);
+    if (ls.w <= 0.0)
+        return 0.0;
+    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0)
+        return 0.0;
+
+    float bias = texelWorld * (0.7 + 2.0 * (1.0 - NdotL));
+    float fragDistance = ls.w; // profundidade view-space do fragmento
+    float nearP = u_SpotNear[slot];
+    float farP = u_SpotFar[slot];
+
+    float shadow = 0.0;
+    vec2 texel = 1.0 / vec2(textureSize(u_SpotShadow, 0).xy);
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float stored = texture(u_SpotShadow, vec3(proj.xy + vec2(x, y) * texel, float(slot))).r;
+            shadow += (fragDistance - bias) > LinearizeDepth(stored, nearP, farP) ? 1.0 : 0.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
+// Ponto: o cubemap guarda distancia/alcance; PCF com 9 direcoes (centro + cantos do cubo).
+float PointShadow(int slot, vec3 worldPos, vec3 normal, vec3 lightPos, float NdotL) {
+    float farP = u_PointFar[slot];
+    vec3 toFragment = worldPos - lightPos;
+    float distanceToLight = length(toFragment);
+    if (distanceToLight >= farP)
+        return 0.0;
+
+    float offset = 0.03 + 0.012 * distanceToLight; // normal offset proporcional ao tamanho de um texel
+    vec3 toSample = (worldPos + normal * offset) - lightPos;
+    float sampleDistance = length(toSample);
+    float bias = 0.02 + 0.015 * distanceToLight * (1.0 - NdotL);
+
+    vec3 dir = toSample / max(sampleDistance, 0.0001);
+    float radius = 0.012 + 0.0012 * distanceToLight; // abertura do PCF (angular)
+    float shadow = 0.0;
+    for (int i = 0; i < 9; i++) {
+        vec3 corner = (i == 0) ? vec3(0.0)
+                               : vec3(((i & 1) != 0) ? 1.0 : -1.0, ((i & 2) != 0) ? 1.0 : -1.0, ((i & 4) != 0) ? 1.0 : -1.0);
+        // i = 1..8 usam os 8 cantos; i == 0 e o centro (o laco para em 8 amostras de canto + centro)
+        float stored = texture(u_PointShadow, vec4(normalize(dir + corner * radius), float(slot))).r * farP;
+        shadow += (sampleDistance - bias) > stored ? 1.0 : 0.0;
     }
     return shadow / 9.0;
 }
@@ -201,11 +225,8 @@ float AttenuateByDistance(float distance, float range) {
 // intensidade, atenuacao de distancia/cone e o termo difuso de
 // Lambert) para o fragmento atual. 'normal' e 'viewWorldPos' sao
 // por-fragmento; 'light' e um elemento do array de uniforms.
-// 'applyShadow' e true apenas para a UNICA luz (Directional) que
-// gerou u_ShadowMap neste frame (ver main() - o chamador decide
-// isso comparando o indice do loop com o indice retornado por
-// Renderer::RenderShadowPass/DrawScene). Point/Spot e outras
-// luzes Directional sem CastShadows nunca chamam CalculateShadow.
+// A sombra (se light.ShadowSlot >= 0) e calculada aqui, depois do
+// early-out de NdotL/atenuacao, por tipo de luz.
 // --- BRDF Cook-Torrance (PBR metallic/roughness) ------------------
 // Especular = D * G * F / (4 * N.L * N.V), com:
 //   D: distribuicao de normais GGX/Trowbridge-Reitz (forma do brilho)
@@ -239,7 +260,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0) {
 // 'albedo', 'roughness' e 'metallic' sao por-fragmento (ja resolvidos
 // em main() a partir de textura/fatores); 'viewDir' aponta do
 // fragmento para a camera.
-vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, float roughness, float metallic, vec3 worldPos, bool applyShadow) {
+vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, float roughness, float metallic, vec3 worldPos) {
     vec3 lightDir;
     float attenuation = 1.0;
 
@@ -269,13 +290,22 @@ vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, floa
 
     float NdotL = max(dot(normal, lightDir), 0.0);
 
-    float shadow = 0.0;
-    if (applyShadow && u_HasShadow)
-        shadow = CalculateShadow(worldPos, normal, lightDir);
-
-    // Sem contribuicao (de costas para a luz): evita divisao/calculo inutil.
-    if (NdotL <= 0.0)
+    if (NdotL <= 0.0 || attenuation <= 0.0)
         return vec3(0.0);
+
+    float shadow = 0.0;
+    if (light.ShadowSlot >= 0) {
+        if (light.Type == LIGHT_TYPE_DIRECTIONAL) {
+            if (u_CascadeCount > 0)
+                shadow = CascadeShadow(worldPos, normal, NdotL);
+        } else if (light.Type == LIGHT_TYPE_SPOT) {
+            if (light.ShadowSlot < u_SpotCount)
+                shadow = SpotShadow(light.ShadowSlot, worldPos, normal, length(light.Position - worldPos), NdotL);
+        } else {
+            if (light.ShadowSlot < u_PointCount)
+                shadow = PointShadow(light.ShadowSlot, worldPos, normal, light.Position, NdotL);
+        }
+    }
 
     vec3 halfVec = normalize(viewDir + lightDir);
     float NdotV  = max(dot(normal, viewDir), 0.0001); // nunca 0: aparece no denominador
@@ -567,8 +597,7 @@ void main() {
     vec3 ambient = ambientDiffuse + ambientSpecular;
 
     for (int i = 0; i < u_LightCount; i++) {
-        bool applyShadow = (i == u_ShadowCasterLightIndex);
-        lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos, applyShadow);
+        lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos);
     }
 
     // u_BaseColor ja chega pronto do lado C++ como AlbedoTint

@@ -4,7 +4,7 @@ OpenGL 4.5 Core, com glad como carregador. O `Renderer` é uma API estática enx
 
 ## Pipeline de `DrawScene`
 
-1. **Sombras** (se alguma luz Directional projeta sombra): desenha a cena do ponto de vista da luz num `ShadowMap`.
+1. **Sombras** (`ShadowSystem`, se alguma luz tem `CastShadows`): cascatas da luz Directional, mapas das luzes Spot e cubemaps das luzes Point.
 2. **Pré-passe de geometria**: normais em view-space e profundidade, do ponto de vista da câmera (`GeometryBuffer`).
 3. **SSAO**: calcula a oclusão a partir do pré-passe, seguida de blur.
 4. **Fundo (skybox)** (`Renderer::DrawSky`): preenche a tela antes da geometria. Ver a seção "Skybox".
@@ -79,11 +79,13 @@ As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, 
 
 ## Sombras
 
-- Somente luz **Directional**, e só **uma** por frame: a primeira com `CastShadows` marcado. Uma segunda é ignorada em silêncio.
-- Point e Spot com `CastShadows` marcado não produzem sombra.
-- Um único frustum ortográfico, dimensionado pelo bounding box das posições de todas as entidades com `MeshRenderer` e recalculado a cada frame. Cenas muito grandes podem mostrar sombras com baixa resolução (Cascaded Shadow Maps seria a evolução).
-- Shadow map de 2048×2048, filtragem PCF 3×3.
-- Com sombra ativa, a cena é desenhada duas vezes por frame.
+- **Directional** (1 por cena, a primeira marcada): *Cascaded Shadow Maps* com 3 cascatas de 2048×2048. A divisão mistura escala logarítmica e uniforme (λ = 0,6) até 120 unidades de distância; cada cascata é encaixada numa esfera (não "respira" ao girar a câmera) e alinhada à grade de texels (não treme ao mover). Além de 120 unidades não há sombra direcional.
+- **Spot** (até 4): projeção perspectiva do cone, 1024×1024 cada.
+- **Point** (até 2): cubemap de **distância** (6 faces de 1024×1024 por luz).
+- Luzes além do limite de cada tipo continuam acesas, sem sombra (um aviso no log).
+- Filtragem PCF manual (3×3 em cascata/spot, 9 direções em point), com *normal offset* e bias proporcionais ao tamanho do texel.
+- Cada mapa é desenhado uma vez por frame e reaproveitado por todos os meshes. Texturas de sombra são criadas só quando a primeira luz com sombra aparece.
+- Texture units do `basic.frag`: 1 AO, 2–4 material, 5 cascatas, 6 spot, 7 point.
 
 ## SSAO
 

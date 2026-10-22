@@ -23,7 +23,8 @@
 #include "../Assets/AssetID.h"
 #include "Shader.h"
 #include "Mesh.h"
-#include "ShadowMap.h"
+#include "GPULight.h"
+#include "ShadowSystem.h"
 #include "GeometryBuffer.h"
 #include "SSAO.h"
 #include "Texture.h"
@@ -42,53 +43,6 @@ struct GLFWwindow;
 
 namespace Prism {
 
-    // Representacao de UMA luz PRONTA PARA A GPU - a "traducao" de um
-    // LightComponent (dado de editor, ver Components.h) para o formato
-    // generico que o shader consome via array de uniforms.
-    //
-    // Esta struct existe para que o shader NUNCA precise saber sobre
-    // LightType especificamente: toda luz, seja qual for seu tipo, vira
-    // um GPULight com os mesmos campos - o shader so olha 'Type' (como
-    // int) para decidir COMO usar Position/Direction/Cone. Isso e o que
-    // torna adicionar um tipo novo (ver comentario grande sobre Area/IES
-    // em LightType, Components.h) uma mudanca pequena: 1) um novo case em
-    // CollectGPULights preenchendo estes mesmos campos, 2) o shader
-    // interpretando um novo valor de Type. Nenhuma outra funcao muda de
-    // assinatura.
-    //
-    // Layout pensado para bater 1:1 com o std140 do array de uniforms no
-    // shader (ver shaders/basic.frag em Renderer.cpp) - todo vec3 alinhado a
-    // 16 bytes, sem "buracos" inesperados.
-    struct GPULight {
-        int   Type = 0;          // == (int)LightType - Point=0, Spot=1, Directional=2, ...
-        glm::vec3 Position = { 0.0f, 0.0f, 0.0f };   // world space - ignorado por Directional
-        glm::vec3 Direction = { 0.0f, -1.0f, 0.0f }; // world space, normalizada - so Spot/Directional (e Area no futuro)
-        glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
-        float Intensity = 1.0f;
-        float Range = 10.0f;               // Point/Spot - Directional ignora
-        float CosOuterAngle = -1.0f;       // cos(SpotAngle) pre-calculado - so Spot
-        float CosInnerAngle = -1.0f;       // cos(InnerSpotAngle) pre-calculado - so Spot
-
-        // Identidade da entidade EnTT dona deste LightComponent (ver
-        // Renderer::CollectGPULights) - existe SO para permitir achar de
-        // volta, dentro de 'lights', qual elemento corresponde a qual
-        // entidade (ver Renderer::DrawScene, que usa isto para casar o
-        // resultado de RenderShadowPass - que sabe a entidade shadow
-        // caster, nao so o Type - com o indice certo em u_Lights[]). Sem
-        // isto, uma cena com DUAS luzes Directional (so uma delas com
-        // CastShadows=true) aplicaria a sombra na luz errada se a
-        // primeira Directional da lista nao fosse a shadow caster.
-        uint32_t SourceEntityId = 0;
-    };
-
-    // Numero maximo de luzes simultaneas que uma cena pode enviar ao
-    // shader em um unico frame - array de tamanho fixo no lado GLSL (ver
-    // "uniform GPULight u_Lights[MAX_LIGHTS]" em shaders/basic.frag). O
-    // Renderer::Init injeta este valor no GLSL como '#define MAX_LIGHTS', entao
-    // C++ e shader nunca divergem: se um mapa precisar de mais luzes
-    // simultaneas no mesmo draw call, e so aumentar este numero (nao ha custo
-    // alem do maior array copiado por frame).
-    static constexpr uint32_t MAX_LIGHTS = 16;
 
     // Opcoes de render de UMA camera, passadas a Renderer::DrawScene. O
     // Renderer NAO guarda configuracao do usuario: tudo que muda o visual
@@ -107,6 +61,15 @@ namespace Prism {
         bool FXAA = true;
         float Saturation = 1.0f;
         float Contrast = 1.0f;
+
+        // GUARDA DE LAYOUT (sempre o ULTIMO campo). Esta struct e passada por
+        // referencia entre arquivos .cpp; se algum .cpp ficou compilado com uma
+        // versao ANTIGA do header (build incremental que nao recompilou), o
+        // DrawScene leria lixo da memoria alem do objeto (ex: saturacao 0 =
+        // imagem cinza). Com a guarda, o DrawScene percebe, avisa no log e usa
+        // valores neutros.
+        static constexpr uint32_t kLayoutMagic = 0x50525345u;
+        uint32_t LayoutMagic = kLayoutMagic;
 
         static CameraRenderSettings From(const CameraComponent& camera) {
             CameraRenderSettings r;
@@ -163,17 +126,9 @@ namespace Prism {
         // tem uma lista de GPULight a mao (ex: previews avulsas). Passar
         // as luzes coletadas via CollectGPULights() para iluminacao de
         // verdade - ver DrawScene(), que ja faz isso automaticamente.
-        // 'shadowMap'/'lightSpaceMatrix' sao opcionais (ambos nullptr por
-        // padrao = "sem sombra"): quando fornecidos, o fragment shader amostra
-        // 'shadowMap' para decidir se cada fragmento esta na sombra da luz
-        // Directional que gerou 'lightSpaceMatrix' (ver CalculateShadow em
-        // shaders/basic.frag). DrawScene() preenche os dois
-        // automaticamente a partir de RenderShadowPass(); chamadores
-        // manuais de DrawMesh (ex: previews avulsas) continuam
-        // funcionando sem eles, so sem sombra na preview.
-        // 'shadowCasterLightIndex' identifica, dentro de 'lights', qual
-        // luz corresponde a 'shadowMap' (ver comentario em UploadLights) -
-        // ignorado se 'shadowMap' for nullptr.
+        // 'shadows' e opcional (nullptr = sem sombra): mapas de sombra do quadro
+        // (ver ShadowSystem.h). DrawScene() o preenche; chamadores avulsos
+        // (previews) funcionam sem ele.
         // 'ssao' e opcional (nullptr por padrao = "sem AO"): quando
         // fornecida, o
         // termo de luz ambiente e multiplicado por (1 - oclusao) lida da
@@ -192,7 +147,7 @@ namespace Prism {
         // ANTES caso 'material' seja nullptr (MeshRendererComponent sem
         // MaterialComponent, ex: gizmos/previews) - quando 'material' E
         // fornecido, 'color' e ignorado em favor de material->AlbedoTint.
-        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
 
         // Mesma funcao de DrawMesh acima, mas recebendo o Mesh (GPU) ja
         // resolvido diretamente, em vez de um PrimitiveMesh (enum) a
@@ -206,7 +161,7 @@ namespace Prism {
         // diferente. 'mesh' nulo e um no-op silencioso (mesmo
         // comportamento de "primitiva ainda nao carregada" da outra
         // sobrecarga).
-        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
 
         // Retorna o Mesh (GPU) do modelo IMPORTADO identificado por
         // 'modelAsset' (ver MeshRendererComponent::ModelAsset,
@@ -370,23 +325,6 @@ namespace Prism {
         // traducao/coleta.
         static std::vector<GPULight> CollectGPULights(class Scene& scene);
 
-        // --- Shadow mapping (directional, uma luz por vez) --------------
-        // Ver comentario grande em Renderer.cpp acima de RenderShadowPass
-        // para o pipeline completo. Chamado automaticamente de dentro de
-        // DrawScene() - nenhum chamador (EditorLayer, PlayWindow) precisa
-        // saber que este pass existe ou chama-lo separadamente.
-        //
-        // Publica (nao so uso interno) pelo mesmo motivo de
-        // CollectGPULights: uma ferramenta de editor (ex: um futuro painel
-        // de debug que mostra o shadow map como imagem, tipo o "shadow map
-        // viewer" de engines maiores) pode precisar do resultado sem
-        // duplicar a logica de "qual luz projeta sombra e qual matriz ela
-        // usa".
-        //
-        // Retorna nullptr se nenhuma luz da cena tem
-        // LightComponent::CastShadows == true (sem shadow map, sem sombra).
-        static ShadowMap* RenderShadowPass(class Scene& scene);
-
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
         // Ver comentario grande em SSAO.h para o pipeline completo (3
         // sub-passes: geometria -> SSAO bruto -> blur). Todos chamados
@@ -408,13 +346,7 @@ namespace Prism {
         // u_LightCount + u_Lights[i].*. Uso interno de DrawMesh/DrawScene,
         // mas exposta para o caso raro de um caller externo precisar
         // desenhar com s_BasicShader fora do fluxo normal de DrawMesh.
-        // 'shadowCasterLightIndex' e o indice dentro de 'lights' da UNICA
-        // luz (identificada por entidade, ver GPULight::SourceEntityId e
-        // Renderer::DrawScene) cuja sombra foi desenhada em
-        // RenderShadowPass (-1 = nenhuma, valor padrao) - repassado ao
-        // shader para CalculateLight() saber em qual luz aplicar
-        // CalculateShadow().
-        static void UploadLights(const std::vector<GPULight>& lights, int shadowCasterLightIndex = -1);
+        static void UploadLights(const std::vector<GPULight>& lights);
 
     private:
         static Ref<Shader> s_BasicShader;
@@ -448,32 +380,6 @@ namespace Prism {
         static Scope<SkyTexture> s_SkyTexture;
         static std::string s_SkyLoadedPath;   // caminho de s_SkyTexture ("" = nenhum tentado)
 
-        // Shader "depth-only" usado exclusivamente por RenderShadowPass -
-        // so precisa de posicao (nem normal, nem cor) e nao tem fragment
-        // shader com logica nenhuma (so existe para a GPU ter algo para
-        // linkar - ver shaders/shadow_depth.frag). Programa
-        // SEPARADO de s_BasicShader, nao um "modo" dele, porque os dois
-        // tem conjuntos de uniforms/atributos completamente diferentes.
-        static Ref<Shader> s_ShadowDepthShader;
-
-        // Um unico ShadowMap, reusado a cada frame (recriado so se a
-        // engine ganhar shadow maps por-luz/CSM no futuro - ver comentario
-        // em ShadowMap.h). Alocado sob demanda na primeira vez que
-        // RenderShadowPass encontra uma luz com CastShadows=true (nao em
-        // Init()), para nao gastar os ~16MB de VRAM em cenas que nunca
-        // usam sombra.
-        static Scope<ShadowMap> s_ShadowMap;
-
-        // Identidade EnTT (ver GPULight::SourceEntityId) da entidade cuja
-        // luz foi desenhada em s_ShadowMap neste frame - preenchido por
-        // RenderShadowPass, lido por DrawScene logo em seguida para achar
-        // o indice correto dentro do 'lights' ja coletado (ver comentario
-        // em GPULight::SourceEntityId sobre o bug que isto evita).
-        // s_HasShadowCasterEntity distingue "nenhuma luz encontrada" de
-        // "encontrada, id == 0" sem depender do valor numerico exato de
-        // entt::null (que nao e garantido ser 0 em toda versao do EnTT).
-        static uint32_t s_ShadowCasterEntityId;
-        static bool s_HasShadowCasterEntity;
 
         // --- SSAO: shaders e recursos, mesmo padrao de s_ShadowDepthShader/
         // s_ShadowMap acima -----------------------------------------------

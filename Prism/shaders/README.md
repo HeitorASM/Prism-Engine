@@ -11,7 +11,8 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `Particle` | `particle.vert` | `particle.frag` | Partículas: billboards instanciados lendo um SSBO |
 | `UI` | `ui.vert` | `ui.frag` | UI in-game: quads em pixels lendo um SSBO (cor, textura ou glifo da fonte) |
 | `Sky` | `sky.vert` | `sky.frag` | Skybox: cor, gradiente do ambiente ou panorama equirretangular |
-| `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Passe de profundidade do ponto de vista da luz |
+| `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Profundidade do ponto de vista da luz (cascatas Directional e Spot) |
+| `ShadowPoint` | `shadow_point.vert` | `shadow_point.frag` | Cubemap de distância normalizada das luzes Point |
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |
 | `SSAO` | `fullscreen_quad.vert` | `ssao.frag` | SSAO, etapa 2: oclusão bruta |
 | `SSAOBlur` | `fullscreen_quad.vert` | `ssao_blur.frag` | SSAO, etapa 3: blur |
@@ -43,12 +44,12 @@ Com o editor aberto, edite e salve qualquer arquivo desta pasta: em até ~0,5 s 
 
 ## Defines vindos do C++
 
-O Renderer injeta `#define`s logo depois do `#version`. Hoje: `MAX_LIGHTS` no `basic.frag` (valor de `Prism::MAX_LIGHTS`). Sem ele, o `basic.frag` falha de propósito com um `#error`.
+O Renderer injeta `#define`s logo depois do `#version`. Hoje, no `basic.frag`: `MAX_LIGHTS`, `CASCADE_COUNT`, `MAX_SPOT_SHADOWS` e `MAX_POINT_SHADOWS` (valores das constantes C++ em `GPULight.h`/`ShadowSystem.h`). Sem eles, o `basic.frag` falha de propósito com um `#error`.
 
 ## Validar fora da engine
 
 ```bash
-glslangValidator -l -DMAX_LIGHTS=16 basic.frag
+glslangValidator -l -DMAX_LIGHTS=16 -DCASCADE_COUNT=3 -DMAX_SPOT_SHADOWS=4 -DMAX_POINT_SHADOWS=2 basic.frag
 ```
 
 O teste `PrismShaderTests` (`tests/`) expande todos os shaders desta pasta, então um include quebrado ou arquivo renomeado falha no CI.

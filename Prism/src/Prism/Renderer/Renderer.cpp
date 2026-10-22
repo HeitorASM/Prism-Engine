@@ -33,10 +33,6 @@ namespace Prism {
     uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_UIShader = nullptr;
     uint32_t Renderer::s_UISSBO = 0;
-    Ref<Shader> Renderer::s_ShadowDepthShader = nullptr;
-    Scope<ShadowMap> Renderer::s_ShadowMap = nullptr;
-    uint32_t Renderer::s_ShadowCasterEntityId = 0;
-    bool Renderer::s_HasShadowCasterEntity = false;
     Ref<Shader> Renderer::s_GeometryPrePassShader = nullptr;
     Ref<Shader> Renderer::s_SSAOShader = nullptr;
     Ref<Shader> Renderer::s_SSAOBlurShader = nullptr;
@@ -120,7 +116,11 @@ namespace Prism {
 
         // MAX_LIGHTS e injetado no GLSL a partir da constante C++: os dois
         // lados nunca divergem (basic.frag nao compila sem ele).
-        s_BasicShader = loadShader("BasicLit", "basic.vert", "basic.frag", { { "MAX_LIGHTS", std::to_string(MAX_LIGHTS) } });
+        s_BasicShader = loadShader("BasicLit", "basic.vert", "basic.frag", {
+            { "MAX_LIGHTS", std::to_string(MAX_LIGHTS) },
+            { "CASCADE_COUNT", std::to_string(kShadowCascades) },
+            { "MAX_SPOT_SHADOWS", std::to_string(kMaxSpotShadows) },
+            { "MAX_POINT_SHADOWS", std::to_string(kMaxPointShadows) } });
 
         // Gera a geometria de cada primitiva uma unica vez (CPU, ver
         // PrimitiveMeshFactory) e sobe para a GPU como um Mesh - reusado
@@ -142,9 +142,8 @@ namespace Prism {
         glCreateBuffers(1, &s_ParticleSSBO);
         s_UIShader = loadShader("UI", "ui.vert", "ui.frag");
         glCreateBuffers(1, &s_UISSBO);
-        s_ShadowDepthShader = loadShader("ShadowDepth", "shadow_depth.vert", "shadow_depth.frag");
-        // s_ShadowMap NAO e criado aqui de proposito - ver comentario em
-        // Renderer.h (s_ShadowMap) sobre alocacao sob demanda.
+        if (!ShadowSystem::Init(shaderDir))
+            PRISM_CORE_ERROR("Renderer: shaders de sombra invalidos - a cena sera desenhada sem sombras (corrija shadow_depth/shadow_point; o hot reload os recarrega).");
 
         s_GeometryPrePassShader = loadShader("GeometryPrePass", "geometry_prepass.vert", "geometry_prepass.frag");
         s_SSAOShader = loadShader("SSAO", "fullscreen_quad.vert", "ssao.frag");
@@ -188,12 +187,13 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_SkyShader, &s_ShadowDepthShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_SkyShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
         }
         PostProcess::ReloadChangedShaders();
+        ShadowSystem::ReloadChangedShaders();
     }
 
     void Renderer::Shutdown() {
@@ -208,8 +208,7 @@ namespace Prism {
         s_SkyTexture.reset();
         s_SkyLoadedPath.clear();
         if (s_ParticleSSBO) { glDeleteBuffers(1, &s_ParticleSSBO); s_ParticleSSBO = 0; }
-        s_ShadowDepthShader.reset();
-        s_ShadowMap.reset();
+        ShadowSystem::Shutdown();
         s_GeometryPrePassShader.reset();
         s_SSAOShader.reset();
         s_SSAOBlurShader.reset();
@@ -450,12 +449,12 @@ namespace Prism {
         return ambient / meanLum;
     }
 
-    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
+    void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material) {
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
-        DrawMesh(mesh, viewProjection, model, color, lights, shadowMap, shadowCasterLightIndex, ssao, material);
+        DrawMesh(mesh, viewProjection, model, color, lights, shadows, ssao, material);
     }
 
-    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowMap* shadowMap, int shadowCasterLightIndex, const SSAO* ssao, const MaterialComponent* material) {
+    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material) {
         if (!s_BasicShader) return;
         if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
 
@@ -553,24 +552,16 @@ namespace Prism {
         // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
         // desenha so com o ambiente fixo do shader (u_LightCount = 0).
         if (lights)
-            UploadLights(*lights, shadowMap ? shadowCasterLightIndex : -1);
+            UploadLights(*lights);
         else
             s_BasicShader->SetInt("u_LightCount", 0);
 
-        // 'shadowMap' e opcional (ver comentario em Renderer.h) - sem ele,
-        // u_HasShadow fica false e CalculateShadow nunca e chamada no
-        // shader.
-        // GL_TEXTURE0 e reservado para o shadow map, GL_TEXTURE1 para o
-        // AO map (ver abaixo); as texturas do Material usam os slots 2-4.
-        if (shadowMap) {
-            shadowMap->BindForReading(0);
-            s_BasicShader->SetInt("u_ShadowMap", 0);
-            s_BasicShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(shadowMap->GetLightSpaceMatrix()));
-            s_BasicShader->SetFloat("u_ShadowFrustumRadius", shadowMap->GetFrustumRadius());
-            s_BasicShader->SetInt("u_HasShadow", 1);
-        } else {
-            s_BasicShader->SetInt("u_HasShadow", 0);
-        }
+        // 'shadows' e opcional (nullptr = sem sombra). Texture units 5-7 (ver
+        // ShadowSystem.h); 0-1 sao AO e 2-4 o Material.
+        if (shadows && shadows->Any())
+            ShadowSystem::Upload(*shadows, *s_BasicShader);
+        else
+            ShadowSystem::UploadNone(*s_BasicShader);
 
         // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
         // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao).
@@ -759,6 +750,7 @@ namespace Prism {
             gpuLight.Color = light.Color;
             gpuLight.Intensity = light.Intensity;
             gpuLight.Range = light.Range;
+            gpuLight.CastShadows = light.CastShadows;
 
             // Posicao de mundo = coluna de translacao da matriz de
             // transform combinada (ultima coluna, xyz).
@@ -804,12 +796,11 @@ namespace Prism {
         return result;
     }
 
-    void Renderer::UploadLights(const std::vector<GPULight>& lights, int shadowCasterLightIndex) {
+    void Renderer::UploadLights(const std::vector<GPULight>& lights) {
         if (!s_BasicShader) return;
 
         int count = (int)std::min<size_t>(lights.size(), MAX_LIGHTS);
         s_BasicShader->SetInt("u_LightCount", count);
-        s_BasicShader->SetInt("u_ShadowCasterLightIndex", shadowCasterLightIndex);
 
         for (int i = 0; i < count; i++) {
             const GPULight& light = lights[i];
@@ -823,162 +814,10 @@ namespace Prism {
             s_BasicShader->SetFloat(prefix + "Range", light.Range);
             s_BasicShader->SetFloat(prefix + "CosOuterAngle", light.CosOuterAngle);
             s_BasicShader->SetFloat(prefix + "CosInnerAngle", light.CosInnerAngle);
+            s_BasicShader->SetInt(prefix + "ShadowSlot", light.CastShadows ? light.ShadowSlot : -1);
         }
     }
 
-    // ========================================================================
-    // Shadow mapping - RenderShadowPass
-    //
-    // PIPELINE (2 passes, ambos escondidos dentro de DrawScene - nenhum
-    // chamador de fora precisa saber que isto acontece):
-    //   1) RenderShadowPass (esta funcao): acha a primeira luz Directional
-    //      com CastShadows=true, calcula um frustum ORTHO cobrindo a cena
-    //      inteira a partir do PONTO DE VISTA DELA, e desenha toda
-    //      entidade com mesh (mesmo loop de DrawScene, so que com
-    //      s_ShadowDepthShader em vez de s_BasicShader) dentro do
-    //      ShadowMap.
-    //   2) De volta em DrawScene: pass de cor normal, de novo por toda
-    //      entidade, agora passando o ShadowMap resultante para DrawMesh
-    //      amostrar (ver CalculateShadow no shader).
-    //
-    // ESCOPO DELIBERADAMENTE LIMITADO desta primeira implementacao (ver
-    // discussao de arquitetura que precedeu este codigo):
-    //   - So UMA luz projeta sombra por frame, e so se for Directional -
-    //     Point/Spot exigiriam projecao perspective (ou 6 faces de
-    //     cubemap, no caso de Point) em vez do ortho simples aqui; adiado
-    //     de proposito para manter esta etapa pequena e testavel. Uma
-    //     segunda LightComponent com CastShadows=true simplesmente e
-    //     ignorada, sem erro nem aviso (um PRISM_CORE_WARN uma vez por
-    //     sessao ajudaria).
-    //   - SEM Cascaded Shadow Maps (CSM): um unico frustum ortho cobre a
-    //     cena inteira (ver bounding box abaixo) em vez de varios
-    //     frustums encadeados por distancia da camera. Para as cenas de
-    //     portfolio/prototipo que esta engine desenha hoje a resolucao
-    //     fixa (ShadowMap::m_Resolution) e suficiente; CSM e a evolucao
-    //     natural se cenas maiores comecarem a mostrar sombra
-    //     visivelmente pixelizada.
-    //   - Bounding box da cena recalculado A CADA FRAME (loop simples
-    //     sobre TransformComponent, ver abaixo) - barato (nao envolve
-    //     geometria, so a posicao de cada entidade) mas significa que o
-    //     frustum da luz "respira" (muda de tamanho) conforme objetos se
-    //     movem/aparecem/somem. Aceitavel para o nivel de fidelidade
-    //     atual da engine; uma versao futura poderia fixar o frustum
-    //     manualmente (ex: um campo no LightComponent) se o "respirar"
-    //     incomodar visualmente em alguma cena especifica.
-    ShadowMap* Renderer::RenderShadowPass(Scene& scene) {
-        // Acha a primeira luz Directional com CastShadows=true - "primeira"
-        // na ordem de iteracao do registry EnTT (nao ha prioridade
-        // explicita ainda, mesma limitacao ja documentada para
-        // CollectGPULights/MAX_LIGHTS).
-        entt::entity shadowCasterHandle = entt::null;
-        glm::vec3 lightDirection{ 0.0f, -1.0f, 0.0f };
-
-        auto lightView = scene.GetRegistry().view<TransformComponent, LightComponent>();
-        for (auto entityHandle : lightView) {
-            const auto& light = lightView.get<LightComponent>(entityHandle);
-            if (light.Type == LightType::Directional && light.CastShadows) {
-                shadowCasterHandle = entityHandle;
-                glm::mat4 worldTransform = scene.GetWorldTransform(Entity(entityHandle, &scene));
-                lightDirection = glm::normalize(glm::mat3(worldTransform) * glm::vec3(0.0f, 0.0f, -1.0f));
-                break;
-            }
-        }
-
-        if (shadowCasterHandle == entt::null) {
-            // Nenhuma luz projeta sombra - DrawScene desenha sem shadow
-            // map. Limpa o estado
-            // "shadow caster" do frame anterior (ver comentario em
-            // s_HasShadowCasterEntity, Renderer.h) para DrawScene nao
-            // reusar por engano o indice de um frame onde a luz shadow
-            // caster foi removida/desativada entre um frame e outro.
-            s_HasShadowCasterEntity = false;
-            return nullptr;
-        }
-
-        // Publica a identidade da entidade shadow caster para DrawScene
-        // (ver comentario em s_ShadowCasterEntityId, Renderer.h) - usa a
-        // IDENTIDADE da entidade, nao o Type, para o caso de duas luzes
-        // Directional na cena onde so uma tem CastShadows=true (ver
-        // comentario grande em GPULight::SourceEntityId sobre o bug que
-        // isto evita).
-        s_ShadowCasterEntityId = (uint32_t)shadowCasterHandle;
-        s_HasShadowCasterEntity = true;
-
-        // Aloca o ShadowMap sob demanda (ver comentario em Renderer.h) -
-        // so na primeira vez que uma cena realmente usa CastShadows.
-        if (!s_ShadowMap)
-            s_ShadowMap = CreateScope<ShadowMap>();
-
-        // --- Bounding box (AABB) da cena, so pelas posicoes de mundo das
-        // entidades com mesh - usado para dimensionar o frustum ortho da
-        // luz (ver comentario grande acima da funcao sobre as
-        // simplificacoes desta etapa). Nao usa os vertices de cada mesh
-        // (so o "centro" de cada entidade, via GetWorldTransform) para
-        // manter isto barato - uma margem fixa (ver 'padding' abaixo)
-        // compensa o mesh de cada entidade se estender alem do seu
-        // centro.
-        glm::vec3 sceneMin(std::numeric_limits<float>::max());
-        glm::vec3 sceneMax(std::numeric_limits<float>::lowest());
-        bool anyMesh = false;
-
-        auto meshView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
-        for (auto entityHandle : meshView) {
-            glm::vec3 pos = glm::vec3(scene.GetWorldTransform(Entity(entityHandle, &scene))[3]);
-            sceneMin = glm::min(sceneMin, pos);
-            sceneMax = glm::max(sceneMax, pos);
-            anyMesh = true;
-        }
-
-        if (!anyMesh) {
-            // Cena sem nenhum mesh (so a luz) - nao ha nada para
-            // sombrear; usa uma caixa pequena arbitraria em vez de deixar
-            // sceneMin/sceneMax com os valores extremos de inicializacao
-            // (o que produziria um frustum absurdamente grande).
-            sceneMin = glm::vec3(-1.0f);
-            sceneMax = glm::vec3(1.0f);
-        }
-
-        glm::vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
-        float sceneRadius = glm::length(sceneMax - sceneMin) * 0.5f;
-        const float padding = 2.0f; // margem para o mesh de cada entidade (nao so seu centro) caber dentro do frustum
-        sceneRadius = glm::max(sceneRadius, 1.0f) + padding;
-
-        // Posiciona a "camera" da luz longe o suficiente do centro da
-        // cena (na direcao OPOSTA a lightDirection, ja que a luz "viaja"
-        // na direcao lightDirection) para o near plane (proximo bloco)
-        // nao cortar nada.
-        glm::vec3 lightPos = sceneCenter - lightDirection * sceneRadius * 2.0f;
-        glm::mat4 lightView_ = glm::lookAt(lightPos, sceneCenter, glm::abs(lightDirection.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 lightProjection = glm::ortho(-sceneRadius, sceneRadius, -sceneRadius, sceneRadius, 0.1f, sceneRadius * 4.0f);
-        glm::mat4 lightSpaceMatrix = lightProjection * lightView_;
-
-        s_ShadowMap->SetLightSpaceMatrix(lightSpaceMatrix);
-        s_ShadowMap->SetFrustumRadius(sceneRadius);
-
-        // --- Pass de profundidade: mesmo loop de entidades de DrawScene,
-        // shader/framebuffer diferentes.
-        s_ShadowMap->BindForWriting();
-
-        s_ShadowDepthShader->Bind();
-        s_ShadowDepthShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(lightSpaceMatrix));
-
-        for (auto entityHandle : meshView) {
-            auto& meshRenderer = meshView.get<MeshRendererComponent>(entityHandle);
-            glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-            s_ShadowDepthShader->SetMat4("u_Model", glm::value_ptr(model));
-
-            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
-            if (!mesh) continue;
-            mesh->BindForCurrentContext();
-            glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
-        }
-
-        glBindVertexArray(0);
-        s_ShadowDepthShader->Unbind();
-        s_ShadowMap->Unbind();
-
-        return s_ShadowMap.get();
-    }
 
     // ========================================================================
     // RenderGeometryPrePass / RenderSSAOPass / RenderSSAOBlurPass
@@ -1125,27 +964,27 @@ namespace Prism {
         uint32_t viewportWidth = (uint32_t)previousViewport[2];
         uint32_t viewportHeight = (uint32_t)previousViewport[3];
 
-        ShadowMap* shadowMap = RenderShadowPass(scene);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-
-        // Descobre o indice, dentro de 'lights' (JA COLETADA acima), da
-        // luz shadow caster que RenderShadowPass acabou de desenhar -
-        // casa por IDENTIDADE DE ENTIDADE (GPULight::SourceEntityId),
-        // NAO por Type: comparar so por LIGHT_TYPE_DIRECTIONAL falharia
-        // silenciosamente numa cena com duas luzes Directional onde so
-        // uma tem CastShadows=true (ver comentario grande em
-        // GPULight::SourceEntityId sobre esse bug especifico).
-        int shadowCasterLightIndex = -1;
-        if (shadowMap && s_HasShadowCasterEntity) {
-            for (size_t i = 0; i < lights.size(); i++) {
-                if (lights[i].SourceEntityId == s_ShadowCasterEntityId) {
-                    shadowCasterLightIndex = (int)i;
-                    break;
+        // Sombras: casters = toda entidade com mesh; ShadowSystem desenha os mapas
+        // (cascatas / spot / cubo) e preenche lights[i].ShadowSlot.
+        std::vector<ShadowCaster> casters;
+        {
+            bool anyShadowLight = false;
+            for (const GPULight& l : lights)
+                anyShadowLight = anyShadowLight || l.CastShadows;
+            if (anyShadowLight) {
+                auto casterView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+                for (auto handle : casterView) {
+                    Mesh* geometry = ResolveMesh(casterView.get<MeshRendererComponent>(handle));
+                    if (!geometry) continue;
+                    casters.push_back({ geometry, scene.GetWorldTransform(Entity(handle, &scene)) });
                 }
             }
         }
+        const ShadowFrame& shadowFrame = ShadowSystem::Render(casters, lights, view, projection);
+        const ShadowFrame* shadows = shadowFrame.Any() ? &shadowFrame : nullptr;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
 
         // --- SSAO: pre-pass de geometria (camera principal) + calculo +
         // blur - ver comentario grande em SSAO.h. So roda quando a
@@ -1216,7 +1055,7 @@ namespace Prism {
             const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
-            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadowMap, shadowCasterLightIndex, ssao, material);
+            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadows, ssao, material);
         }
 
         // Particulas por ultimo: blend + sem escrita de profundidade, testando
@@ -1227,14 +1066,25 @@ namespace Prism {
             s_OutputHDR = false;
 
             auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+            // Guarda de layout (ver CameraRenderSettings::LayoutMagic): objeto
+            // vindo de um .cpp compilado com o header antigo -> pos-processamento neutro.
+            const bool layoutOk = (camera.LayoutMagic == CameraRenderSettings::kLayoutMagic);
+            static bool s_WarnedLayout = false;
+            if (!layoutOk && !s_WarnedLayout) {
+                s_WarnedLayout = true;
+                PRISM_CORE_ERROR("Renderer: CameraRenderSettings com layout antigo - a build esta DESATUALIZADA (algum .cpp nao foi recompilado depois de mudar Renderer.h/Components.h). Faca 'Rebuild All' / apague a pasta de build. Usando pos-processamento neutro.");
+            }
+            const CameraRenderSettings neutral;
+            const CameraRenderSettings& source = layoutOk ? camera : neutral;
+
             PostProcessSettings post;
-            post.Bloom = camera.Bloom;
-            post.BloomThreshold = std::min(std::max(finiteOr(camera.BloomThreshold, 1.0f), 0.0f), 32.0f);
-            post.BloomIntensity = std::min(std::max(finiteOr(camera.BloomIntensity, 0.15f), 0.0f), 4.0f);
-            post.FXAA = camera.FXAA;
+            post.Bloom = source.Bloom;
+            post.BloomThreshold = std::min(std::max(finiteOr(source.BloomThreshold, 1.0f), 0.0f), 32.0f);
+            post.BloomIntensity = std::min(std::max(finiteOr(source.BloomIntensity, 0.15f), 0.0f), 4.0f);
+            post.FXAA = source.FXAA;
             post.Exposure = s_Exposure; // ja limitada em ApplyFrameState
-            post.Saturation = std::min(std::max(finiteOr(camera.Saturation, 1.0f), 0.0f), 3.0f);
-            post.Contrast = std::min(std::max(finiteOr(camera.Contrast, 1.0f), 0.1f), 3.0f);
+            post.Saturation = std::min(std::max(finiteOr(source.Saturation, 1.0f), 0.0f), 3.0f);
+            post.Contrast = std::min(std::max(finiteOr(source.Contrast, 1.0f), 0.1f), 3.0f);
             post.SkyPassThrough = !s_SkyNeedsToneMap;
             postProcess->End(post, (uint32_t)previousFramebuffer, previousViewport);
         }
