@@ -20,7 +20,7 @@ namespace Prism {
         constexpr uint32_t kSpotResolution = 1024;
         constexpr uint32_t kPointResolution = 1024;
         constexpr float kMaxShadowDistance = 120.0f; // alem disso nao ha sombra direcional
-        constexpr float kCascadeLambda = 0.6f;       // 0 = divisao uniforme, 1 = logaritmica
+        constexpr float kCascadeLambda = 0.75f;       // 0 = divisao uniforme, 1 = logaritmica
 
         Ref<Shader> s_DepthShader;
         Ref<Shader> s_PointShader;

@@ -30,6 +30,7 @@ namespace Prism {
     float Renderer::s_SkyIntensity = EnvironmentComponent{}.SkyIntensity;
     Scope<SkyTexture> Renderer::s_SkyTexture = nullptr;
     std::string Renderer::s_SkyLoadedPath;
+    bool Renderer::s_IBLActive = false;
     uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_UIShader = nullptr;
     uint32_t Renderer::s_UISSBO = 0;
@@ -145,6 +146,9 @@ namespace Prism {
         if (!ShadowSystem::Init(shaderDir))
             PRISM_CORE_ERROR("Renderer: shaders de sombra invalidos - a cena sera desenhada sem sombras (corrija shadow_depth/shadow_point; o hot reload os recarrega).");
 
+        if (!EnvironmentIBL::Init(shaderDir))
+            PRISM_CORE_ERROR("Renderer: shaders de IBL invalidos - o ambiente usara o gradiente analitico (corrija ibl*.frag; o hot reload os recarrega).");
+
         s_GeometryPrePassShader = loadShader("GeometryPrePass", "geometry_prepass.vert", "geometry_prepass.frag");
         s_SSAOShader = loadShader("SSAO", "fullscreen_quad.vert", "ssao.frag");
         s_SSAOBlurShader = loadShader("SSAOBlur", "fullscreen_quad.vert", "ssao_blur.frag");
@@ -194,6 +198,7 @@ namespace Prism {
         }
         PostProcess::ReloadChangedShaders();
         ShadowSystem::ReloadChangedShaders();
+        EnvironmentIBL::ReloadChangedShaders();
     }
 
     void Renderer::Shutdown() {
@@ -209,6 +214,7 @@ namespace Prism {
         s_SkyLoadedPath.clear();
         if (s_ParticleSSBO) { glDeleteBuffers(1, &s_ParticleSSBO); s_ParticleSSBO = 0; }
         ShadowSystem::Shutdown();
+        EnvironmentIBL::Shutdown();
         s_GeometryPrePassShader.reset();
         s_SSAOShader.reset();
         s_SSAOBlurShader.reset();
@@ -481,6 +487,9 @@ namespace Prism {
         s_BasicShader->SetFloat3("u_EnvHorizon", s_EnvHorizon[0], s_EnvHorizon[1], s_EnvHorizon[2]);
         s_BasicShader->SetFloat3("u_EnvGround",  s_EnvGround[0],  s_EnvGround[1],  s_EnvGround[2]);
         s_BasicShader->SetFloat("u_EnvScale", ComputeEnvironmentNormalization(s_Ambient, s_EnvZenith, s_EnvHorizon, s_EnvGround));
+        // IBL (panorama do ambiente): Ambient/0.10 mantem o slider de Ambient util
+        // (0.10 = o brilho natural do panorama), SkyIntensity escala o panorama.
+        EnvironmentIBL::Upload(*s_BasicShader, s_IBLActive, s_SkyIntensity * (s_Ambient / 0.10f), glm::radians(s_SkyRotation));
 
         // Com 'material' fornecido, AlbedoTint manda (ver comentario em
         // Renderer.h) - 'color' (MeshRendererComponent::Color) e ignorado
@@ -616,22 +625,22 @@ namespace Prism {
             for (int i = 0; i < 3; i++)
                 targets[c][i] = clamp01((*sources[c])[i], defaults[c][i]);
 
-        // Fundo. Camera com cor chapada ignora o skybox da cena.
+        // Fundo. Camera com cor chapada ignora o skybox da cena (mas o panorama
+        // continua iluminando a cena via IBL).
         if (camera.ClearMode == CameraClearMode::SolidColor) {
             s_SkyMode = SkyMode::Solid;
             for (int i = 0; i < 3; i++)
                 s_SkyColor[i] = clamp01(camera.ClearColor[i], 0.0f);
-            s_SkyTexturePath.clear();
         } else {
             int mode = (int)env.Sky;
             s_SkyMode = (mode >= 0 && mode <= (int)SkyMode::Panorama) ? env.Sky : SkyMode::Solid;
             for (int i = 0; i < 3; i++)
                 s_SkyColor[i] = clamp01(env.SkyColor[i], 0.0f);
-            s_SkyTexturePath.clear();
-            if (s_SkyMode == SkyMode::Panorama && env.SkyTexture.IsValid()) {
-                if (auto project = Project::GetActive())
-                    s_SkyTexturePath = project->GetAssetRegistry().AbsolutePath(env.SkyTexture).string();
-            }
+        }
+        s_SkyTexturePath.clear();
+        if (env.Sky == SkyMode::Panorama && env.SkyTexture.IsValid()) {
+            if (auto project = Project::GetActive())
+                s_SkyTexturePath = project->GetAssetRegistry().AbsolutePath(env.SkyTexture).string();
         }
         s_SkyRotation = std::min(std::max(finiteOr(env.SkyRotation, 0.0f), -180.0f), 180.0f);
         s_SkyIntensity = std::min(std::max(finiteOr(env.SkyIntensity, 1.0f), 0.0f), 16.0f);
@@ -639,6 +648,16 @@ namespace Prism {
 
     // Fundo da cena: um triangulo de tela cheia no plano distante, desenhado ANTES
     // da geometria (sem teste nem escrita de profundidade) - ver sky.vert/sky.frag.
+    SkyTexture* Renderer::ResolvePanorama() {
+        if (s_SkyLoadedPath != s_SkyTexturePath) {
+            s_SkyLoadedPath = s_SkyTexturePath; // tenta UMA vez por caminho (falha nao repete o erro todo frame)
+            s_SkyTexture.reset();
+            if (!s_SkyTexturePath.empty())
+                s_SkyTexture = CreateScope<SkyTexture>(s_SkyTexturePath);
+        }
+        return (s_SkyTexture && s_SkyTexture->IsValid()) ? s_SkyTexture.get() : nullptr;
+    }
+
     void Renderer::DrawSky(const float* view, const float* projection, const float* cameraWorldPos) {
         if (!s_SkyShader)
             return;
@@ -647,15 +666,8 @@ namespace Prism {
         int mode = (int)s_SkyMode;
         SkyTexture* panorama = nullptr;
         if (s_SkyMode == SkyMode::Panorama) {
-            if (s_SkyLoadedPath != s_SkyTexturePath) {
-                s_SkyLoadedPath = s_SkyTexturePath; // tenta UMA vez por caminho (falha nao repete o erro todo frame)
-                s_SkyTexture.reset();
-                if (!s_SkyTexturePath.empty())
-                    s_SkyTexture = CreateScope<SkyTexture>(s_SkyTexturePath);
-            }
-            if (s_SkyTexture && s_SkyTexture->IsValid())
-                panorama = s_SkyTexture.get();
-            else
+            panorama = ResolvePanorama();
+            if (!panorama)
                 mode = (int)SkyMode::Solid;
         }
 
@@ -942,6 +954,16 @@ namespace Prism {
     void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera) {
         SetCameraPosition(cameraWorldPos);
         ApplyFrameState(scene, camera);
+
+        // IBL: com panorama valido no ambiente, gera (uma vez por panorama) os mapas de
+        // irradiancia/especular; sem ele, o gradiente analitico continua valendo.
+        s_IBLActive = false;
+        if (!s_SkyTexturePath.empty()) {
+            if (SkyTexture* panorama = ResolvePanorama())
+                s_IBLActive = EnvironmentIBL::Update(*panorama, s_SkyTexturePath);
+        } else {
+            EnvironmentIBL::Invalidate();
+        }
 
         glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
 

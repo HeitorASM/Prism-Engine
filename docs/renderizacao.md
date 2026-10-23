@@ -79,13 +79,14 @@ As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, 
 
 ## Sombras
 
-- **Directional** (1 por cena, a primeira marcada): *Cascaded Shadow Maps* com 3 cascatas de 2048×2048. A divisão mistura escala logarítmica e uniforme (λ = 0,6) até 120 unidades de distância; cada cascata é encaixada numa esfera (não "respira" ao girar a câmera) e alinhada à grade de texels (não treme ao mover). Além de 120 unidades não há sombra direcional.
+- **Directional** (1 por cena, a primeira marcada): *Cascaded Shadow Maps* com 4 cascatas de 2048×2048. A divisão mistura escala logarítmica e uniforme (λ = 0,75) até 120 unidades de distância; cada cascata é encaixada numa esfera (não "respira" ao girar a câmera) e alinhada à grade de texels (não treme ao mover). Além de 120 unidades não há sombra direcional.
 - **Spot** (até 4): projeção perspectiva do cone, 1024×1024 cada.
 - **Point** (até 2): cubemap de **distância** (6 faces de 1024×1024 por luz).
 - Luzes além do limite de cada tipo continuam acesas, sem sombra (um aviso no log).
-- Filtragem PCF manual (3×3 em cascata/spot, 9 direções em point), com *normal offset* e bias proporcionais ao tamanho do texel.
+- Filtragem PCF macia: 16 amostras de um disco de Poisson, giradas por pixel (ruído), nas três técnicas. A penumbra é suave, sem degraus. *Normal offset* e bias proporcionais ao tamanho do texel.
+- Cascatas se misturam nos últimos 12% de cada faixa (sem emenda visível) e a sombra desvanece nos 10% finais da distância máxima.
 - Cada mapa é desenhado uma vez por frame e reaproveitado por todos os meshes. Texturas de sombra são criadas só quando a primeira luz com sombra aparece.
-- Texture units do `basic.frag`: 1 AO, 2–4 material, 5 cascatas, 6 spot, 7 point.
+- Texture units do `basic.frag`: 1 AO, 2–4 material, 5 cascatas, 6 spot, 7 point, 8–9 IBL.
 
 ## SSAO
 
@@ -132,3 +133,14 @@ A `PlayWindow` cria sua janela GLFW compartilhando o contexto OpenGL do editor, 
 Os shaders GLSL ficam em `Prism/shaders/` (um `.vert` e um `.frag` por programa), não em strings no C++. `Renderer::Init` carrega cada um com `Shader::CreateFromFiles`; o mapa de arquivos, o `#include`, os defines injetados pelo C++ (`MAX_LIGHTS`) e o **hot reload** estão em [Prism/shaders/README.md](../Prism/shaders/README.md).
 
 Resumo: salvar um shader com o editor aberto recompila em ~0,5 s (`Renderer::ReloadChangedShaders`, chamado por `Application::Run`). Se não compilar, a versão anterior continua em uso e o erro vai para o Console. A pasta é copiada para ao lado do executável no build, para o jogo distribuído não depender da árvore de código-fonte.
+
+## Ambiente com IBL (panorama)
+
+Quando o ambiente usa um **panorama** (`Sky = Panorama` com textura válida), ele também ilumina a cena (mesmo se a câmera usar cor chapada):
+
+1. No primeiro quadro com aquele panorama, `EnvironmentIBL` gera um cubemap de ambiente (256², com mips), um de **irradiância** difusa (32²) e um **especular pré-filtrado** GGX (128², 5 níveis de rugosidade). É um pequeno custo único; trocar de panorama refaz.
+2. No `basic.frag`, o difuso lê a irradiância pela normal e o especular lê o pré-filtrado pelo vetor refletido, no nível `roughness × 4`. O termo BRDF (escala/bias de Fresnel) continua o analítico.
+3. `SkyRotation` gira a iluminação junto com o fundo; `SkyIntensity` a escala; **`Ambient` / 0,10** também multiplica (0,10 = brilho natural do panorama, 0 = sem luz ambiente).
+4. Sem panorama (cor chapada ou gradiente), vale o gradiente analítico de antes. Shaders `ibl*.frag` inválidos também caem no gradiente.
+
+Texture units 8 e 9 do `basic.frag`: irradiância e pré-filtrado. Valores acima de 256 no panorama são limitados no bake (evita "fireflies"; o sol vem das luzes).

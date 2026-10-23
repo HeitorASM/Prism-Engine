@@ -30,7 +30,7 @@
 
 namespace Prism {
 
-    constexpr int kShadowCascades = 3;
+    constexpr int kShadowCascades = 4;
     constexpr int kMaxSpotShadows = 4;
     constexpr int kMaxPointShadows = 2;
 

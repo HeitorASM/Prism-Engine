@@ -12,6 +12,9 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `UI` | `ui.vert` | `ui.frag` | UI in-game: quads em pixels lendo um SSBO (cor, textura ou glifo da fonte) |
 | `Sky` | `sky.vert` | `sky.frag` | Skybox: cor, gradiente do ambiente ou panorama equirretangular |
 | `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Profundidade do ponto de vista da luz (cascatas Directional e Spot) |
+| `IBLEquirect` | `ibl.vert` | `ibl_equirect.frag` | IBL: panorama equirretangular -> face de cubemap |
+| `IBLIrradiance` | `ibl.vert` | `ibl_irradiance.frag` | IBL: convolução difusa (irradiância) |
+| `IBLPrefilter` | `ibl.vert` | `ibl_prefilter.frag` | IBL: especular pré-filtrado GGX por rugosidade |
 | `ShadowPoint` | `shadow_point.vert` | `shadow_point.frag` | Cubemap de distância normalizada das luzes Point |
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |
 | `SSAO` | `fullscreen_quad.vert` | `ssao.frag` | SSAO, etapa 2: oclusão bruta |

@@ -68,7 +68,7 @@ namespace PrismEditor {
             if (ImGui::Checkbox("Projetar Sombras", &light.CastShadows))
                 CommitComponentEdit(m_Ctx, before, light, "Light");
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Limites de luzes com sombra: Directional 1 (3 cascatas), Spot 4, Point 2.\nAs que passarem do limite continuam acesas, sem sombra.");
+                ImGui::SetTooltip("Limites de luzes com sombra: Directional 1 (4 cascatas), Spot 4, Point 2.\nAs que passarem do limite continuam acesas, sem sombra.");
         }
         if (!keepOpen)
             m_Ctx.History.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::LightComponent>>(m_Ctx.SelectedEntity, "Light"));

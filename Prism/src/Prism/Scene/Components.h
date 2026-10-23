@@ -360,7 +360,7 @@ namespace Prism {
         float InnerSpotAngle = 30.0f;
 
         // Se esta luz projeta sombra (ver Renderer/ShadowSystem.h).
-        // Directional: cascaded shadow maps (3 cascatas). Spot: ate 4 luzes.
+        // Directional: cascaded shadow maps (4 cascatas). Spot: ate 4 luzes.
         // Point: ate 2 luzes (cubemap). Alem do limite de cada tipo a luz
         // continua acesa, so sem sombra (aviso unico no log).
         bool CastShadows = false;

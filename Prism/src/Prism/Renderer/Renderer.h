@@ -25,6 +25,7 @@
 #include "Mesh.h"
 #include "GPULight.h"
 #include "ShadowSystem.h"
+#include "EnvironmentIBL.h"
 #include "GeometryBuffer.h"
 #include "SSAO.h"
 #include "Texture.h"
@@ -370,6 +371,8 @@ namespace Prism {
         // ABSOLUTO muda (nao o AssetID: trocar de projeto com o mesmo ID nao
         // reaproveita a textura do projeto anterior).
         static void ApplyFrameState(class Scene& scene, const CameraRenderSettings& camera);
+        static SkyTexture* ResolvePanorama(); // carrega sob demanda o panorama de s_SkyTexturePath (nullptr se invalido)
+        static bool s_IBLActive;              // este quadro usa os mapas de EnvironmentIBL
         static void DrawSky(const float* view, const float* projection, const float* cameraWorldPos);
         static Ref<Shader> s_SkyShader;
         static SkyMode s_SkyMode;

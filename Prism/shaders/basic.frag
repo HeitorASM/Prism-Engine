@@ -64,6 +64,15 @@ uniform vec3 u_EnvGround;
 // paleta especifica (com o azul padrao, 1.45x errada).
 uniform float u_EnvScale;
 
+// IBL (EnvironmentIBL): quando u_UseIBL, o ambiente vem do panorama (irradiancia difusa
+// + especular pre-filtrado) em vez do gradiente analitico. Units 8 e 9.
+uniform int u_UseIBL;
+uniform samplerCube u_IrradianceMap;
+uniform samplerCube u_PrefilterMap;
+uniform float u_IBLScale;     // SkyIntensity * Ambient / 0.10
+uniform float u_IBLRotation;  // radianos em torno de Y (mesma convencao de sky.frag)
+uniform float u_IBLMaxLod;
+
 #ifndef MAX_LIGHTS
 #error "MAX_LIGHTS deve ser injetado pelo Renderer (ver Renderer::Init) - nao defina aqui."
 #endif
@@ -116,8 +125,56 @@ uniform float u_PointFar[MAX_POINT_SHADOWS];
 
 // Retorna 0.0 = totalmente iluminado ... 1.0 = totalmente na sombra.
 
+// PCF suave: 16 amostras de um disco de Poisson, giradas por pixel com ruido
+// (interleaved gradient noise). O ruido troca o "degrau" do PCF fixo por uma
+// borda macia, e o TAA/FXAA e o proprio olho o integram.
+const vec2 kPoisson16[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
+    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790));
+
+float ShadowNoise() {
+    return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+}
+
+mat2 ShadowRotation() {
+    float a = ShadowNoise() * 6.2831853;
+    float c = cos(a), s = sin(a);
+    return mat2(c, s, -s, c);
+}
+
+// Uma cascata: 0 = iluminado ... 1 = sombra. 'valid' = false se o ponto cai fora do mapa.
+float CascadeSample(int cascade, vec3 worldPos, vec3 normal, float NdotL, mat2 rotation, out bool valid) {
+    float texelWorld = u_CascadeTexel[cascade];
+    vec3 p = worldPos + normal * texelWorld * 1.5;
+    vec4 ls = u_CascadeMatrix[cascade] * vec4(p, 1.0);
+    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
+    valid = !(proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0);
+    if (!valid)
+        return 0.0;
+
+    // Bias em unidades de mundo (cresce em angulos rasantes), convertido em profundidade do ortho.
+    float bias = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) / u_CascadeRange[cascade];
+    vec2 texel = 1.0 / vec2(textureSize(u_CascadeShadow, 0).xy);
+    float radius = 1.75; // texels: penumbra macia, sem borrar demais
+
+    float shadow = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * kPoisson16[i] * radius * texel;
+        float closest = texture(u_CascadeShadow, vec3(proj.xy + offset, float(cascade))).r;
+        shadow += (proj.z - bias) > closest ? 1.0 : 0.0;
+    }
+    return shadow / 16.0;
+}
+
 // Luz direcional: escolhe a cascata pela distancia ao longo do olhar da camera,
-// desloca o ponto pela normal (proporcional ao texel) e faz PCF 3x3.
+// mistura com a proxima perto do limite (sem "degrau" visivel entre cascatas) e
+// some suavemente no fim da distancia de sombra.
 float CascadeShadow(vec3 worldPos, vec3 normal, float NdotL) {
     float along = dot(worldPos - u_CameraWorldPos, u_CameraForward);
     int cascade = -1;
@@ -130,25 +187,26 @@ float CascadeShadow(vec3 worldPos, vec3 normal, float NdotL) {
     if (cascade < 0)
         return 0.0; // alem da distancia de sombra
 
-    float texelWorld = u_CascadeTexel[cascade];
-    vec3 p = worldPos + normal * texelWorld * 1.5;
-    vec4 ls = u_CascadeMatrix[cascade] * vec4(p, 1.0);
-    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
-    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0)
-        return 0.0;
+    mat2 rotation = ShadowRotation();
+    bool valid;
+    float shadow = CascadeSample(cascade, worldPos, normal, NdotL, rotation, valid);
 
-    // Bias em unidades de mundo (cresce em angulos rasantes), convertido em profundidade do ortho.
-    float bias = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) / u_CascadeRange[cascade];
-
-    float shadow = 0.0;
-    vec2 texel = 1.0 / vec2(textureSize(u_CascadeShadow, 0).xy);
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float closest = texture(u_CascadeShadow, vec3(proj.xy + vec2(x, y) * texel, float(cascade))).r;
-            shadow += (proj.z - bias) > closest ? 1.0 : 0.0;
-        }
+    // Mistura com a proxima cascata nos ultimos 12% da faixa atual.
+    float splitStart = (cascade == 0) ? 0.0 : u_CascadeSplit[cascade - 1];
+    float band = max((u_CascadeSplit[cascade] - splitStart) * 0.12, 0.001);
+    float toEnd = u_CascadeSplit[cascade] - along;
+    if (cascade + 1 < u_CascadeCount && toEnd < band) {
+        bool validNext;
+        float next = CascadeSample(cascade + 1, worldPos, normal, NdotL, rotation, validNext);
+        if (validNext)
+            shadow = mix(next, shadow, smoothstep(0.0, band, toEnd));
     }
-    return shadow / 9.0;
+
+    // Fade final (ultima cascata): os 10% finais desvanecem a sombra.
+    float last = u_CascadeSplit[u_CascadeCount - 1];
+    float fadeStart = last * 0.9;
+    shadow *= 1.0 - smoothstep(fadeStart, last, along);
+    return shadow;
 }
 
 // Profundidade da projecao perspectiva -> distancia linear (view-space).
@@ -172,18 +230,19 @@ float SpotShadow(int slot, vec3 worldPos, vec3 normal, float distanceToLight, fl
     float nearP = u_SpotNear[slot];
     float farP = u_SpotFar[slot];
 
+    mat2 rotation = ShadowRotation();
     float shadow = 0.0;
     vec2 texel = 1.0 / vec2(textureSize(u_SpotShadow, 0).xy);
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float stored = texture(u_SpotShadow, vec3(proj.xy + vec2(x, y) * texel, float(slot))).r;
-            shadow += (fragDistance - bias) > LinearizeDepth(stored, nearP, farP) ? 1.0 : 0.0;
-        }
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * kPoisson16[i] * 1.75 * texel;
+        float stored = texture(u_SpotShadow, vec3(proj.xy + offset, float(slot))).r;
+        shadow += (fragDistance - bias) > LinearizeDepth(stored, nearP, farP) ? 1.0 : 0.0;
     }
-    return shadow / 9.0;
+    return shadow / 16.0;
 }
 
-// Ponto: o cubemap guarda distancia/alcance; PCF com 9 direcoes (centro + cantos do cubo).
+// Ponto: o cubemap guarda distancia/alcance; PCF girando um disco no plano
+// perpendicular a direcao da amostra.
 float PointShadow(int slot, vec3 worldPos, vec3 normal, vec3 lightPos, float NdotL) {
     float farP = u_PointFar[slot];
     vec3 toFragment = worldPos - lightPos;
@@ -197,16 +256,19 @@ float PointShadow(int slot, vec3 worldPos, vec3 normal, vec3 lightPos, float Ndo
     float bias = 0.02 + 0.015 * distanceToLight * (1.0 - NdotL);
 
     vec3 dir = toSample / max(sampleDistance, 0.0001);
-    float radius = 0.012 + 0.0012 * distanceToLight; // abertura do PCF (angular)
+    vec3 tangent = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(dir, tangent);
+    float radius = 0.010 + 0.0010 * distanceToLight; // abertura angular do PCF
+
+    mat2 rotation = ShadowRotation();
     float shadow = 0.0;
-    for (int i = 0; i < 9; i++) {
-        vec3 corner = (i == 0) ? vec3(0.0)
-                               : vec3(((i & 1) != 0) ? 1.0 : -1.0, ((i & 2) != 0) ? 1.0 : -1.0, ((i & 4) != 0) ? 1.0 : -1.0);
-        // i = 1..8 usam os 8 cantos; i == 0 e o centro (o laco para em 8 amostras de canto + centro)
-        float stored = texture(u_PointShadow, vec4(normalize(dir + corner * radius), float(slot))).r * farP;
+    for (int i = 0; i < 16; i++) {
+        vec2 d = rotation * kPoisson16[i];
+        vec3 sampleDir = normalize(dir + (tangent * d.x + bitangent * d.y) * radius);
+        float stored = texture(u_PointShadow, vec4(sampleDir, float(slot))).r * farP;
         shadow += (sampleDistance - bias) > stored ? 1.0 : 0.0;
     }
-    return shadow / 9.0;
+    return shadow / 16.0;
 }
 
 // Atenuacao por distancia estilo "smooth falloff" (usada por
@@ -497,6 +559,13 @@ vec3 EnvironmentSpecular(vec3 R, float roughness) {
     return mix(EnvironmentColor(R.y), EnvironmentIrradiance(R.y), w);
 }
 
+// Direcao do mundo -> direcao no cubemap (o panorama e assado sem rotacao).
+vec3 IBLDirection(vec3 dir) {
+    float c = cos(u_IBLRotation);
+    float s = sin(u_IBLRotation);
+    return vec3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+}
+
 void main() {
     vec3 normal = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
@@ -589,10 +658,21 @@ void main() {
     vec3 Fenv = F0env * envAB.x + vec3(envAB.y);
 
     vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metallic);
-    vec3 ambientDiffuse = kDenv * albedo * EnvironmentIrradiance(normal.y) * u_EnvScale * ao;
-
     vec3 R = reflect(-viewDir, normal);
-    vec3 ambientSpecular = Fenv * EnvironmentSpecular(R, clamp(roughness, 0.04, 1.0)) * u_EnvScale * ao;
+    float envRoughness = clamp(roughness, 0.04, 1.0);
+
+    vec3 irradiance;
+    vec3 prefiltered;
+    if (u_UseIBL != 0) {
+        irradiance = texture(u_IrradianceMap, IBLDirection(normal)).rgb * u_IBLScale;
+        prefiltered = textureLod(u_PrefilterMap, IBLDirection(R), envRoughness * u_IBLMaxLod).rgb * u_IBLScale;
+    } else {
+        irradiance = EnvironmentIrradiance(normal.y) * u_EnvScale;
+        prefiltered = EnvironmentSpecular(R, envRoughness) * u_EnvScale;
+    }
+
+    vec3 ambientDiffuse = kDenv * albedo * irradiance * ao;
+    vec3 ambientSpecular = Fenv * prefiltered * ao;
 
     vec3 ambient = ambientDiffuse + ambientSpecular;
 

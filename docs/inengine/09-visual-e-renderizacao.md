@@ -10,7 +10,7 @@ Adicione o component **Light** (ou use **Entidade → Criar Luz**). Tipos:
 
 Cada luz tem **Color** e **Intensity**. São suportadas até **16 luzes** por frame.
 
-**Sombras**: marque `CastShadows` na luz. Directional (a primeira marcada) usa 3 cascatas; até **4 Spot** e **2 Point** projetam sombra por vez. As que passarem do limite continuam acesas, sem sombra.
+**Sombras**: marque `CastShadows` na luz. Directional (a primeira marcada) usa 4 cascatas; até **4 Spot** e **2 Point** projetam sombra por vez. As que passarem do limite continuam acesas, sem sombra.
 
 ## Materiais
 
@@ -38,7 +38,7 @@ O visual da cena vive na entidade **Ambiente**, com o component **Environment**.
 | Gradiente | O mesmo gradiente Céu/Horizonte/Chão do ambiente |
 | Panorama | Uma imagem equirretangular (2:1): `.hdr`, `.png`, `.jpg`, `.tga` ou `.bmp` |
 
-Há rotação e brilho para o panorama. **Importante:** o fundo **não ilumina** a cena; a luz de ambiente continua vindo do gradiente de três cores.
+Há rotação e brilho para o panorama. Com um panorama válido, ele **também ilumina a cena** (IBL): o difuso e os reflexos dos materiais vêm da imagem, e rotação, brilho e Intensidade do ambiente valem para a luz. Sem panorama, a luz de ambiente vem do gradiente de três cores.
 
 ## Opções de render da câmera
 
