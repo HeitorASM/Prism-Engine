@@ -79,7 +79,8 @@ Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **po
 - A textura roughness/metallic só é importada de glTF (canal G = roughness, canal B = metallic).
 - UVs seguem a convenção OpenGL (V para cima), igual às texturas carregadas pela engine; **não** use `aiProcess_FlipUVs`.
 - Arrastar um modelo para o painel *Mesh Renderer* de uma entidade existente aplica o material dele quando o modelo tem um único material; com vários materiais usa a malha mesclada, sem materiais.
-- Ainda **não** importados: esqueleto/animação, câmeras e luzes do arquivo.
+- Esqueleto e animações são importados (ver [animacao.md](animacao.md)): vértices ganham até 4 ossos/pesos, malhas skinadas **não** têm a transformação de nó gravada, e nós animados rígidos usam um osso sintético. O component `Animator` é um bloco próprio (versão 1: modelo, clipe, `PlayOnStart`, `Loop`, `Speed`).
+- Ainda **não** importados: câmeras e luzes do arquivo, *morph targets*.
 
 ## `.prismprefab`
 

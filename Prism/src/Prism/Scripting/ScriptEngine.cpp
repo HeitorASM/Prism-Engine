@@ -5,6 +5,7 @@
 #include "../Physics/PhysicsEngine.h"
 #include "../Core/Input.h"
 #include "../Audio/AudioEngine.h"
+#include "../Animation/AnimationSystem.h"
 #include "../Project/Project.h"
 #include "../Scene/PrefabSerializer.h"
 #include "NativeScripting.h"
@@ -389,6 +390,21 @@ namespace Prism {
             "PlaySound", [](Entity& e) { AudioEngine::PlayEntity(e); },
             "StopSound", [](Entity& e) { AudioEngine::StopEntity(e); },
             "IsSoundPlaying", [](Entity& e) -> bool { return AudioEngine::IsEntityPlaying(e); },
+            // --- Animacao (AnimatorComponent) ---------------------------------
+            // entity:PlayAnimation("Walk")            - troca de clipe (nao reinicia se ja toca)
+            // entity:PlayAnimation("Walk", 0.2)       - com crossfade de 0.2 s
+            // entity:PlayAnimation("Attack", 0.1, false) - 3o arg: loop (omitido = o do Animator)
+            // Devolve false se a entidade nao tem Animator ou o clipe nao existe.
+            "PlayAnimation", [](Entity& e, std::string clip, sol::optional<float> fade, sol::optional<bool> loop) -> bool {
+                return AnimationSystem::Play(e, clip, fade.value_or(0.0f), loop ? (*loop ? 1 : 0) : -1);
+            },
+            "StopAnimation", [](Entity& e) { AnimationSystem::Stop(e); },
+            "PauseAnimation", [](Entity& e, sol::optional<bool> paused) { AnimationSystem::SetPaused(e, paused.value_or(true)); },
+            "SetAnimationSpeed", [](Entity& e, float speed) { AnimationSystem::SetSpeed(e, speed); },
+            "IsAnimationPlaying", [](Entity& e) -> bool { return AnimationSystem::IsPlaying(e); },
+            "GetAnimation", [](Entity& e) -> std::string { return AnimationSystem::GetCurrentClip(e); },
+            "GetAnimationTime", [](Entity& e) -> float { return AnimationSystem::GetTime(e); },
+            "GetAnimationDuration", [](Entity& e) -> float { return AnimationSystem::GetDuration(e); },
             "SetSoundVolume", [](Entity& e, float volume) {
                 if (e.HasComponent<AudioSourceComponent>())
                     e.GetComponent<AudioSourceComponent>().Volume = volume;

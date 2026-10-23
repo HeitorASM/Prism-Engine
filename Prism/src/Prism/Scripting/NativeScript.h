@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 4;
+    constexpr uint32_t kNativeApiVersion = 5;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -119,6 +119,13 @@ namespace Prism {
         bool (*IsBusMuted)(int bus);
         void (*SetMasterVolume)(float volume);
         float (*GetMasterVolume)();
+
+        // v5 - animacao (AnimatorComponent). loop: -1 = o do Animator, 0/1 = forca.
+        bool (*PlayAnimation)(Scene* scene, entt::entity entity, const char* clip, float fadeSeconds, int loop);
+        void (*StopAnimation)(Scene* scene, entt::entity entity);
+        void (*SetAnimationPaused)(Scene* scene, entt::entity entity, bool paused);
+        void (*SetAnimationSpeed)(Scene* scene, entt::entity entity, float speed);
+        bool (*IsAnimationPlaying)(Scene* scene, entt::entity entity);
     };
 
     // Classe base de um script nativo. Uma instancia por entidade que tenha
@@ -254,6 +261,17 @@ namespace Prism {
         bool IsBusMuted(AudioBus bus) const { return Api().IsBusMuted((int)bus); }
         void SetMasterVolume(float volume) const { Api().SetMasterVolume(volume); }
         float GetMasterVolume() const { return Api().GetMasterVolume(); }
+
+        // Animacao (precisa de um Animator na entidade). PlayAnimation("Walk", 0.2f) troca de
+        // clipe com crossfade de 0.2 s; chamar com o clipe que ja toca nao reinicia.
+        // loop: -1 = usa o do Animator, 0 = uma vez, 1 = repete.
+        bool PlayAnimation(const std::string& clip, float fadeSeconds = 0.0f, int loop = -1) {
+            return Api().PlayAnimation(m_Entity.GetScene(), m_Entity.GetHandle(), clip.c_str(), fadeSeconds, loop);
+        }
+        void StopAnimation() { Api().StopAnimation(m_Entity.GetScene(), m_Entity.GetHandle()); }
+        void PauseAnimation(bool paused = true) { Api().SetAnimationPaused(m_Entity.GetScene(), m_Entity.GetHandle(), paused); }
+        void SetAnimationSpeed(float speed) { Api().SetAnimationSpeed(m_Entity.GetScene(), m_Entity.GetHandle(), speed); }
+        bool IsAnimationPlaying() { return Api().IsAnimationPlaying(m_Entity.GetScene(), m_Entity.GetHandle()); }
 
         void PlayParticles() { Api().PlayParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }
         void StopParticles() { Api().StopParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }

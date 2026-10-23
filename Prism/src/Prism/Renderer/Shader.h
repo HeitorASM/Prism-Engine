@@ -37,6 +37,10 @@ namespace Prism {
 
         void SetMat4(const std::string& name, const float* matrix4x4) const;
 
+        // 'count' matrizes 4x4 contiguas (column-major) como 'uniform mat4 name[N]'
+        // - a paleta de ossos (u_Bones, ver shaders/skinning.glsl).
+        void SetMat4Array(const std::string& name, const float* matrices, uint32_t count) const;
+
         // 'matrix3x3' aponta para 9 floats em ordem column-major (o mesmo
         // layout de glm::mat3 / glm::value_ptr). Usado para a matriz normal
         // (ver u_NormalMatrix em Renderer.cpp).

@@ -33,6 +33,8 @@ layout(location = 1) in vec3 a_Normal;
 layout(location = 2) in vec2 a_UV;
 layout(location = 3) in vec3 a_Tangent;
 
+#include "skinning.glsl"
+
 uniform mat4 u_ViewProjection;
 uniform mat4 u_Model;
 
@@ -51,15 +53,22 @@ out vec2 v_UV;
 out vec3 v_Tangent;
 
 void main() {
-    v_Normal = u_NormalMatrix * a_Normal;
+    // Skinning: aplicado ANTES do Model (espaco da malha -> pose -> mundo). A
+    // matriz normal do objeto continua valendo (ossos com escala nao uniforme
+    // distorcem a normal um pouco - aceitavel para personagens).
+    mat4 skin = SkinMatrix();
+    vec3 skinnedNormal = mat3(skin) * a_Normal;
+    vec3 skinnedTangent = mat3(skin) * a_Tangent;
+
+    v_Normal = u_NormalMatrix * skinnedNormal;
     // A TANGENTE continua com mat3(u_Model), de proposito: ela e um
     // vetor AO LONGO da superficie e transforma como qualquer outro
     // vetor do modelo. Usar a matriz normal nela a deixaria de novo
     // nao-perpendicular a normal (~87 graus de desvio) e quebraria a
     // base TBN do normal map.
-    v_Tangent = mat3(u_Model) * a_Tangent;
+    v_Tangent = mat3(u_Model) * skinnedTangent;
     v_UV = a_UV;
-    vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+    vec4 worldPos = u_Model * (skin * vec4(a_Position, 1.0));
     v_WorldPos = worldPos.xyz;
     gl_Position = u_ViewProjection * worldPos;
 }

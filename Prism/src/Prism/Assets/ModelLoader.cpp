@@ -6,11 +6,14 @@
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <system_error>
+#include <unordered_map>
 
 namespace Prism {
 
@@ -146,6 +149,11 @@ namespace Prism {
         }
     }
 
+    static glm::mat4 ToGlm(const aiMatrix4x4& m) {
+        // aiMatrix4x4 e row-major; glm e column-major.
+        return glm::transpose(glm::make_mat4(&m.a1));
+    }
+
     // Estado compartilhado pela travessia da arvore de nos: para cada
     // indice de material do Assimp, qual ImportedSubmesh (em 'Submeshes')
     // ja foi criado para ele (-1 = ainda nenhum). Criado sob demanda, na
@@ -155,7 +163,197 @@ namespace Prism {
         const aiScene* Scene = nullptr;
         std::vector<ImportedSubmesh>* Submeshes = nullptr;
         std::vector<int> MaterialToSubmesh;
+
+        // --- Animacao (so quando HasRig) ---
+        bool HasRig = false;
+        std::shared_ptr<ModelRig> Rig;
+        std::unordered_map<const aiNode*, int> NodeIndex;
+        std::unordered_map<std::string, int> NodeByName;
+        std::vector<glm::mat4> BindGlobal;       // por no
+        std::vector<char> Dynamic;               // no (ou ancestral) animado por algum clipe
+        std::unordered_map<int, int> NodeBone;   // no -> osso sintetico (malhas rigidas)
+        std::unordered_map<std::string, std::vector<int>> BonesByName;
+        bool WarnedBoneLimit = false;
     };
+
+    static bool NearlyEqual(const glm::mat4& a, const glm::mat4& b) {
+        const float* pa = glm::value_ptr(a);
+        const float* pb = glm::value_ptr(b);
+        for (int i = 0; i < 16; i++)
+            if (std::abs(pa[i] - pb[i]) > 1e-4f)
+                return false;
+        return true;
+    }
+
+    // Osso para (nome do no, matriz de bind inversa). Mesma combinacao = mesmo osso.
+    // -1 se a paleta estourou kMaxBones.
+    static int GetOrCreateBone(ImportContext& ctx, const std::string& name, int node, const glm::mat4& inverseBind) {
+        auto& list = ctx.BonesByName[name];
+        for (int index : list)
+            if (NearlyEqual(ctx.Rig->Bones[index].InverseBind, inverseBind))
+                return index;
+        if (ctx.Rig->Bones.size() >= kMaxBones) {
+            if (!ctx.WarnedBoneLimit) {
+                ctx.WarnedBoneLimit = true;
+                PRISM_CORE_WARN("ModelLoader: o modelo tem mais de ", kMaxBones, " ossos - os excedentes sao ignorados (parte da malha fica sem animar).");
+            }
+            return -1;
+        }
+        RigBone bone;
+        bone.Node = node;
+        bone.InverseBind = inverseBind;
+        ctx.Rig->Bones.push_back(bone);
+        int index = (int)ctx.Rig->Bones.size() - 1;
+        list.push_back(index);
+        return index;
+    }
+
+    // Preenche BoneIds/BoneWeights dos vertices [baseIndex, ...) de 'out' a
+    // partir dos aiBone do mesh (maximo 4 influencias por vertice, as mais pesadas).
+    static void ApplySkin(const aiMesh* mesh, ImportContext& ctx, std::vector<MeshVertex>& vertices, uint32_t baseIndex) {
+        struct Influence { int Bone; float Weight; };
+        std::vector<std::vector<Influence>> influences(mesh->mNumVertices);
+
+        for (unsigned int b = 0; b < mesh->mNumBones; b++) {
+            const aiBone* bone = mesh->mBones[b];
+            auto nodeIt = ctx.NodeByName.find(bone->mName.C_Str());
+            if (nodeIt == ctx.NodeByName.end())
+                continue; // osso sem no correspondente (arquivo estranho)
+            int boneIndex = GetOrCreateBone(ctx, bone->mName.C_Str(), nodeIt->second, ToGlm(bone->mOffsetMatrix));
+            if (boneIndex < 0)
+                continue;
+            for (unsigned int w = 0; w < bone->mNumWeights; w++) {
+                const aiVertexWeight& vw = bone->mWeights[w];
+                if (vw.mVertexId < influences.size() && vw.mWeight > 0.0f)
+                    influences[vw.mVertexId].push_back({ boneIndex, vw.mWeight });
+            }
+        }
+
+        for (unsigned int v = 0; v < mesh->mNumVertices; v++) {
+            auto& list = influences[v];
+            if (list.empty())
+                continue;
+            std::sort(list.begin(), list.end(), [](const Influence& a, const Influence& b) { return a.Weight > b.Weight; });
+            if (list.size() > 4)
+                list.resize(4);
+            float sum = 0.0f;
+            for (const Influence& i : list)
+                sum += i.Weight;
+            if (sum <= 0.0f)
+                continue;
+            MeshVertex& vertex = vertices[baseIndex + v];
+            for (size_t i = 0; i < list.size(); i++) {
+                vertex.BoneIds[i] = list[i].Bone;
+                vertex.BoneWeights[i] = list[i].Weight / sum;
+            }
+        }
+    }
+
+    // Malha rigida de um no animado: todos os vertices 100% no osso sintetico do no.
+    static void ApplyRigid(int node, ImportContext& ctx, std::vector<MeshVertex>& vertices, uint32_t baseIndex) {
+        int boneIndex;
+        auto it = ctx.NodeBone.find(node);
+        if (it != ctx.NodeBone.end()) {
+            boneIndex = it->second;
+        }
+        else {
+            // Chave propria (prefixo) para nunca casar com um osso real de mesmo nome.
+            boneIndex = GetOrCreateBone(ctx, "\x01rigid:" + ctx.Rig->Nodes[node].Name + "#" + std::to_string(node), node, glm::inverse(ctx.BindGlobal[node]));
+            ctx.NodeBone[node] = boneIndex;
+        }
+        if (boneIndex < 0)
+            return;
+        for (size_t v = baseIndex; v < vertices.size(); v++) {
+            vertices[v].BoneIds[0] = boneIndex;
+            vertices[v].BoneWeights[0] = 1.0f;
+        }
+    }
+
+    // Monta nos, clipes e tabelas de "no dinamico" do rig. Chamada so quando o
+    // arquivo tem ossos ou animacoes (ctx.HasRig).
+    static void BuildRig(ImportContext& ctx) {
+        const aiScene* scene = ctx.Scene;
+        ctx.Rig = std::make_shared<ModelRig>();
+        ModelRig& rig = *ctx.Rig;
+
+        // Nos em pre-ordem.
+        struct Walker {
+            ImportContext& ctx;
+            ModelRig& rig;
+            void Visit(const aiNode* node, int parent) {
+                int index = (int)rig.Nodes.size();
+                RigNode n;
+                n.Name = node->mName.C_Str();
+                n.Parent = parent;
+                n.LocalBind = ToGlm(node->mTransformation);
+                rig.Nodes.push_back(n);
+                rig.BindTRS.push_back(ModelRig::Decompose(n.LocalBind));
+                ctx.BindGlobal.push_back(parent >= 0 ? ctx.BindGlobal[parent] * n.LocalBind : n.LocalBind);
+                ctx.NodeIndex[node] = index;
+                ctx.NodeByName.emplace(n.Name, index); // nomes repetidos: vale o primeiro
+                for (unsigned int i = 0; i < node->mNumChildren; i++)
+                    Visit(node->mChildren[i], index);
+            }
+        } walker{ ctx, rig };
+        walker.Visit(scene->mRootNode, -1);
+
+        std::vector<char> animated(rig.Nodes.size(), 0);
+
+        for (unsigned int a = 0; a < scene->mNumAnimations; a++) {
+            const aiAnimation* anim = scene->mAnimations[a];
+            double tps = anim->mTicksPerSecond > 0.0 ? anim->mTicksPerSecond : 25.0;
+
+            AnimClip clip;
+            clip.Name = anim->mName.C_Str();
+            if (clip.Name.empty())
+                clip.Name = "Animation " + std::to_string(a);
+            // Nome unico dentro do modelo (PlayAnimation busca por nome).
+            for (const AnimClip& other : rig.Clips)
+                if (other.Name == clip.Name) {
+                    clip.Name += "_" + std::to_string(a);
+                    break;
+                }
+
+            float maxTime = 0.0f;
+            for (unsigned int c = 0; c < anim->mNumChannels; c++) {
+                const aiNodeAnim* nodeAnim = anim->mChannels[c];
+                auto nodeIt = ctx.NodeByName.find(nodeAnim->mNodeName.C_Str());
+                if (nodeIt == ctx.NodeByName.end())
+                    continue;
+                AnimChannel channel;
+                channel.Node = nodeIt->second;
+
+                for (unsigned int k = 0; k < nodeAnim->mNumPositionKeys; k++) {
+                    const aiVectorKey& key = nodeAnim->mPositionKeys[k];
+                    channel.Position.push_back({ (float)(key.mTime / tps), glm::vec3(key.mValue.x, key.mValue.y, key.mValue.z) });
+                }
+                for (unsigned int k = 0; k < nodeAnim->mNumRotationKeys; k++) {
+                    const aiQuatKey& key = nodeAnim->mRotationKeys[k];
+                    channel.Rotation.push_back({ (float)(key.mTime / tps), glm::normalize(glm::quat(key.mValue.w, key.mValue.x, key.mValue.y, key.mValue.z)) });
+                }
+                for (unsigned int k = 0; k < nodeAnim->mNumScalingKeys; k++) {
+                    const aiVectorKey& key = nodeAnim->mScalingKeys[k];
+                    channel.Scale.push_back({ (float)(key.mTime / tps), glm::vec3(key.mValue.x, key.mValue.y, key.mValue.z) });
+                }
+                if (!channel.Position.empty()) maxTime = std::max(maxTime, channel.Position.back().Time);
+                if (!channel.Rotation.empty()) maxTime = std::max(maxTime, channel.Rotation.back().Time);
+                if (!channel.Scale.empty())    maxTime = std::max(maxTime, channel.Scale.back().Time);
+
+                animated[channel.Node] = 1;
+                clip.Channels.push_back(std::move(channel));
+            }
+            clip.Duration = std::max((float)(anim->mDuration / tps), maxTime);
+            if (!clip.Channels.empty())
+                rig.Clips.push_back(std::move(clip));
+        }
+
+        // No "dinamico" = animado ou descendente de um animado (pre-ordem: pai primeiro).
+        ctx.Dynamic.assign(rig.Nodes.size(), 0);
+        for (size_t i = 0; i < rig.Nodes.size(); i++) {
+            int parent = rig.Nodes[i].Parent;
+            ctx.Dynamic[i] = animated[i] || (parent >= 0 && ctx.Dynamic[parent]);
+        }
+    }
 
     // Percorre a arvore de nos (aiNode) recursivamente, acumulando a
     // transformacao de cada no (aiNode::mTransformation, relativa ao PAI)
@@ -183,11 +381,25 @@ namespace Prism {
                 submeshIndex = (int)ctx.Submeshes->size();
                 ctx.Submeshes->emplace_back();
             }
+            GeneratedMesh& target = (*ctx.Submeshes)[submeshIndex].Mesh;
+            const uint32_t baseIndex = (uint32_t)target.Vertices.size();
+
+            // Malha SKINADA: sem transformacao de no gravada (os ossos fazem
+            // isso). Malha rigida de um no animado: gravada (pose de bind) +
+            // osso sintetico, para seguir o no quando o clipe tocar.
+            const bool skinned = ctx.HasRig && mesh->HasBones();
+            const int nodeIndex = ctx.HasRig ? ctx.NodeIndex[node] : -1;
+            const bool rigid = ctx.HasRig && !skinned && nodeIndex >= 0 && ctx.Dynamic[nodeIndex];
+
             // nullptr quando identidade: AppendAiMesh usa isso para pular
             // o trabalho de transformar vertice a vertice quando nao ha
             // nada a fazer (caso comum: arquivo com um unico no raiz sem
             // rotacao/escala/translacao propria).
-            AppendAiMesh(mesh, isIdentity ? nullptr : &worldTransform, (*ctx.Submeshes)[submeshIndex].Mesh);
+            AppendAiMesh(mesh, (skinned || isIdentity) ? nullptr : &worldTransform, target);
+            if (skinned)
+                ApplySkin(mesh, ctx, target.Vertices, baseIndex);
+            else if (rigid)
+                ApplyRigid(nodeIndex, ctx, target.Vertices, baseIndex);
         }
 
         for (unsigned int i = 0; i < node->mNumChildren; i++)
@@ -343,12 +555,12 @@ namespace Prism {
         //   propria - aplicar FlipUVs por cima invertia a textura de TODO
         //   modelo importado.
         // aiProcess_LimitBoneWeights: sem efeito em meshes sem esqueleto
-        //   (a maioria dos casos aqui, ja que skinning nao e importado -
-        //   ver comentario no .h), inofensivo deixar ligado para os que tem.
+        //   limita a 4 ossos por vertice (o que o shader de skinning le).
         unsigned int flags = aiProcess_Triangulate
             | aiProcess_CalcTangentSpace
             | aiProcess_GenSmoothNormals
             | aiProcess_JoinIdenticalVertices
+            | aiProcess_LimitBoneWeights
             | aiProcess_ImproveCacheLocality
             | aiProcess_ValidateDataStructure;
 
@@ -374,6 +586,15 @@ namespace Prism {
         ctx.Scene = scene;
         ctx.Submeshes = &result.Submeshes;
         ctx.MaterialToSubmesh.assign(std::max(1u, scene->mNumMaterials), -1);
+
+        // Tem esqueleto ou animacao? Entao monta o rig ANTES de percorrer as malhas.
+        bool anyBones = false;
+        for (unsigned int m = 0; m < scene->mNumMeshes && !anyBones; m++)
+            anyBones = scene->mMeshes[m]->HasBones();
+        ctx.HasRig = anyBones || scene->mNumAnimations > 0;
+        if (ctx.HasRig)
+            BuildRig(ctx);
+
         ProcessNode(scene->mRootNode, ctx, aiMatrix4x4());
 
         // Materiais dos submeshes + malha mesclada (todos os submeshes
@@ -410,9 +631,18 @@ namespace Prism {
             return result;
         }
 
+        if (ctx.HasRig) {
+            // Rig sem ossos nem clipes (animacao so de nos sem alvo valido) nao serve de nada.
+            if (!ctx.Rig->Bones.empty() || !ctx.Rig->Clips.empty()) {
+                ctx.Rig->ComputePalette(ctx.Rig->BindTRS, ctx.Rig->BindPalette);
+                result.Rig = ctx.Rig;
+            }
+        }
+
         result.Success = true;
         PRISM_CORE_INFO("ModelLoader: '", absolutePath.string(), "' importado (", result.Mesh.Vertices.size(),
-            " vertices, ", result.Mesh.Indices.size() / 3, " triangulos, ", result.Submeshes.size(), " material(is)/submesh(es)).");
+            " vertices, ", result.Mesh.Indices.size() / 3, " triangulos, ", result.Submeshes.size(), " material(is)/submesh(es)",
+            result.Rig ? (", " + std::to_string(result.Rig->Bones.size()) + " osso(s), " + std::to_string(result.Rig->Clips.size()) + " animacao(oes)") : std::string(), ").");
         return result;
     }
 

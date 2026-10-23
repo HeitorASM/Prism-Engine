@@ -81,6 +81,9 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioListenerComponent>())
             DrawAudioListenerUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AnimatorComponent>())
+            DrawAnimatorUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::EnvironmentComponent>())
             DrawEnvironmentUI();
 
@@ -198,6 +201,8 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioSourceComponent>>(entity, displayName));
         else if (displayName == "Audio Listener")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioListenerComponent>>(entity, displayName));
+        else if (displayName == "Animator")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AnimatorComponent>>(entity, displayName));
         else if (displayName == "Environment")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::EnvironmentComponent>>(entity, displayName));
         else {

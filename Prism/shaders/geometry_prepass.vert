@@ -8,6 +8,8 @@
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
 
+#include "skinning.glsl"
+
 uniform mat4 u_ViewProjection;
 uniform mat4 u_View;
 uniform mat4 u_Model;
@@ -25,6 +27,7 @@ uniform mat3 u_ViewNormalMatrix;
 out vec3 v_ViewNormal;
 
 void main() {
-    v_ViewNormal = normalize(u_ViewNormalMatrix * a_Normal);
-    gl_Position = u_ViewProjection * u_Model * vec4(a_Position, 1.0);
+    mat4 skin = SkinMatrix();
+    v_ViewNormal = normalize(u_ViewNormalMatrix * (mat3(skin) * a_Normal));
+    gl_Position = u_ViewProjection * u_Model * (skin * vec4(a_Position, 1.0));
 }

@@ -19,6 +19,7 @@ A Prism é um projeto de hobby em desenvolvimento: o que está aqui pode mudar o
 - **Linguagem principal**: o scripting está sendo trabalhado para que o **C++ vire a linguagem principal** da Prism e o Lua seja uma opção. O que o Lua tem e o C++ ainda não (os "—" da [API de scripting](06-api-de-scripting.md)) deve ser trazido para o C++.
 - **Scripts**: hot reload só para Lua (C++ exige parar o Play e compilar), sem `Scene.Load`, sem gamepad, sem depurador. Variáveis públicas ainda não existem para C++.
 - **Física**: sem juntas; sem camadas configuráveis; corpos físicos devem ser raízes (sem pai).
+- **Animação**: até 128 ossos por modelo e 4 ossos por vértice; sem *morph targets*, sem máquina de estados visual, sem editor de keyframes. Detalhes em `docs/animacao.md` do projeto.
 - **Sombras**: 1 luz Directional (4 cascatas), até 4 Spot e 2 Point por vez.
 - **Iluminação**: com panorama no ambiente há IBL (difuso e reflexos); sem ele vale o gradiente de 3 cores. Não há reflexos de objetos da cena nem *light probes*.
 - **Áudio**: sem efeitos (reverb, filtros).
@@ -28,7 +29,7 @@ A Prism é um projeto de hobby em desenvolvimento: o que está aqui pode mudar o
 
 ## Ideias para o futuro
 
-- Animação esquelética.
+- Máquina de estados de animação, *morph targets*, retargeting/IK e root motion (a animação esquelética em si já existe).
 - Exportar o jogo sem o editor.
 - `Scene.Load`, gamepad.
 - Variáveis públicas e hot reload para scripts C++.

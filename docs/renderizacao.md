@@ -116,6 +116,10 @@ As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, 
 - Textura opcional (`TexturePath`, relativa ao projeto); sem ela, um círculo suave procedural. Sem iluminação, sem sombras, sem partículas ocultas pela fumaça de outras (sem *soft particles*).
 - Limite de 10 000 partículas vivas por emissor.
 
+## Animação esquelética
+
+Malhas com ossos recebem a paleta (`u_Skinned`/`u_Bones[128]`, `shaders/skinning.glsl`) em **três** passes: cor (`basic.vert`), sombras (`shadow_depth.vert`, `shadow_point.vert`) e pré-passe do SSAO (`geometry_prepass.vert`). A paleta vem do `Animator` da entidade (ou de um ancestral) via `AnimationSystem::FindPalette`; sem `Animator`, é a pose de bind do rig. `Renderer::ResolveBonePalette` é chamado uma vez por entidade em cada passe. Ver [animacao.md](animacao.md).
+
 ## Meshes embutidas
 
 Cube, Sphere, Capsule, Cylinder e Plane. A geometria é gerada uma vez na CPU (`PrimitiveMeshFactory`, sem chamadas OpenGL) e enviada à GPU em `Renderer::Init()`, com uma malha por primitiva reaproveitada por todas as entidades. Modelos externos (`.obj`/`.fbx`/`.gltf`/`.glb`) são importados pelo `ModelLoader` (Assimp) e referenciados por `MeshRendererComponent::ModelAsset`; quando válido, ele tem prioridade sobre a primitiva.

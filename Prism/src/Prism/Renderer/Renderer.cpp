@@ -8,6 +8,7 @@
 #include "../Scene/Entity.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Assets/ModelLoader.h"
+#include "../Animation/AnimationSystem.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
 #include <algorithm> 
@@ -56,6 +57,7 @@ namespace Prism {
     float Renderer::s_EnvGround[3]  = { EnvironmentComponent{}.Ground.x,  EnvironmentComponent{}.Ground.y,  EnvironmentComponent{}.Ground.z };
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
     std::unordered_map<AssetID, Renderer::ModelCacheEntry> Renderer::s_ModelMeshCache;
+    std::unordered_map<AssetID, Renderer::RigCacheEntry> Renderer::s_RigCache;
 
     // ========================================================================
     // Shaders: ficam em arquivos (Prism/shaders/*.vert|*.frag), nao mais em
@@ -379,11 +381,59 @@ namespace Prism {
         entry.Submeshes.reserve(imported.Submeshes.size());
         for (const ImportedSubmesh& submesh : imported.Submeshes)
             entry.Submeshes.push_back(Mesh::Create(submesh.Mesh.Vertices, submesh.Mesh.Indices));
+
+        // O rig do MESMO import (ids de osso dos vertices casam com ele). Se a
+        // animacao ja carregou o rig antes, mantem aquele ponteiro (identidade
+        // estavel - os Animators comparam por ponteiro).
+        RigCacheEntry& rigEntry = s_RigCache[modelAsset];
+        if (!rigEntry.Tried) {
+            rigEntry.Tried = true;
+            rigEntry.Rig = imported.Rig;
+        }
         return pick(entry);
+    }
+
+    std::shared_ptr<const ModelRig> Renderer::GetOrLoadModelRig(AssetID modelAsset) {
+        if (!modelAsset.IsValid())
+            return nullptr;
+        auto it = s_RigCache.find(modelAsset);
+        if (it != s_RigCache.end() && it->second.Tried)
+            return it->second.Rig;
+
+        auto project = Project::GetActive();
+        if (!project)
+            return nullptr; // transitorio: tenta de novo depois (nao cacheia)
+        std::filesystem::path absolutePath = project->GetAssetRegistry().AbsolutePath(modelAsset);
+
+        RigCacheEntry& entry = s_RigCache[modelAsset];
+        entry.Tried = true;
+        if (absolutePath.empty())
+            return nullptr; // vinculo quebrado (ja logado por GetOrLoadModelMesh quando desenha)
+        ModelImportResult imported = ModelLoader::Load(absolutePath);
+        if (imported.Success)
+            entry.Rig = imported.Rig;
+        return entry.Rig;
+    }
+
+    Renderer::BonePalette Renderer::ResolveBonePalette(Scene& scene, entt::entity entity, const MeshRendererComponent& meshRenderer, const Mesh* mesh) {
+        if (!mesh || !mesh->IsSkinned() || !meshRenderer.ModelAsset.IsValid())
+            return {};
+
+        // Animator proprio ou de um ancestral (do mesmo modelo).
+        if (const std::vector<glm::mat4>* palette = AnimationSystem::FindPalette(scene, entity, meshRenderer.ModelAsset))
+            if (!palette->empty())
+                return { palette->data(), (uint32_t)palette->size() };
+
+        // Sem Animator: pose de bind.
+        auto it = s_RigCache.find(meshRenderer.ModelAsset);
+        if (it != s_RigCache.end() && it->second.Rig && !it->second.Rig->BindPalette.empty())
+            return { it->second.Rig->BindPalette.data(), (uint32_t)it->second.Rig->BindPalette.size() };
+        return {};
     }
 
     void Renderer::InvalidateModelCache(AssetID modelAsset) {
         s_ModelMeshCache.erase(modelAsset);
+        s_RigCache.erase(modelAsset);
     }
 
     Mesh* Renderer::ResolveMesh(const MeshRendererComponent& meshRenderer) {
@@ -455,18 +505,28 @@ namespace Prism {
         return ambient / meanLum;
     }
 
+    // Envia u_Skinned/u_Bones (shaders/skinning.glsl). Sem paleta: u_Skinned = 0.
+    static void UploadBones(const Shader& shader, const glm::mat4* bones, uint32_t boneCount) {
+        const bool skinned = bones && boneCount > 0;
+        shader.SetInt("u_Skinned", skinned ? 1 : 0);
+        if (skinned)
+            shader.SetMat4Array("u_Bones", glm::value_ptr(bones[0]), std::min(boneCount, (uint32_t)kMaxBones));
+    }
+
     void Renderer::DrawMesh(PrimitiveMesh meshType, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material) {
         Mesh* mesh = s_Meshes[MeshIndex(meshType)].get();
         DrawMesh(mesh, viewProjection, model, color, lights, shadows, ssao, material);
     }
 
-    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material) {
+    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material, const glm::mat4* bones, uint32_t boneCount) {
         if (!s_BasicShader) return;
         if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
 
         s_BasicShader->Bind();
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
         s_BasicShader->SetMat4("u_Model", model);
+        // Skinning (ver shaders/skinning.glsl): sem paleta, u_Skinned = 0.
+        UploadBones(*s_BasicShader, bones, boneCount);
         {
             // Sem este envio, u_NormalMatrix valeria zero (padrao de uniform
             // nao setado): normal (0,0,0) => normalize() vira NaN no fragment
@@ -870,6 +930,8 @@ namespace Prism {
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             if (!mesh) continue;
+            BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
+            UploadBones(*s_GeometryPrePassShader, palette.Data, palette.Count);
             mesh->BindForCurrentContext();
             glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
         }
@@ -996,9 +1058,16 @@ namespace Prism {
             if (anyShadowLight) {
                 auto casterView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
                 for (auto handle : casterView) {
-                    Mesh* geometry = ResolveMesh(casterView.get<MeshRendererComponent>(handle));
+                    const MeshRendererComponent& casterRenderer = casterView.get<MeshRendererComponent>(handle);
+                    Mesh* geometry = ResolveMesh(casterRenderer);
                     if (!geometry) continue;
-                    casters.push_back({ geometry, scene.GetWorldTransform(Entity(handle, &scene)) });
+                    ShadowCaster caster;
+                    caster.Geometry = geometry;
+                    caster.Model = scene.GetWorldTransform(Entity(handle, &scene));
+                    BonePalette palette = ResolveBonePalette(scene, handle, casterRenderer, geometry);
+                    caster.Bones = palette.Data;
+                    caster.BoneCount = palette.Count;
+                    casters.push_back(caster);
                 }
             }
         }
@@ -1077,7 +1146,8 @@ namespace Prism {
             const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
-            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadows, ssao, material);
+            BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
+            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadows, ssao, material, palette.Data, palette.Count);
         }
 
         // Particulas por ultimo: blend + sem escrita de profundidade, testando

@@ -68,6 +68,7 @@ namespace PrismEditor {
         void DrawParticleEmitterUI();
         void DrawUIElementUI();
         void DrawAudioListenerUI();
+        void DrawAnimatorUI();
         void DrawEnvironmentUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
@@ -158,6 +159,7 @@ namespace PrismEditor {
         Prism::CameraComponent m_CameraBeforeEdit;
         Prism::RaycastComponent m_RaycastBeforeEdit;
         Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
+        Prism::AnimatorComponent m_AnimatorBeforeEdit;
         Prism::ScriptComponent m_ScriptBeforeEdit;
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;

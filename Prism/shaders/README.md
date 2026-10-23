@@ -15,6 +15,7 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `IBLEquirect` | `ibl.vert` | `ibl_equirect.frag` | IBL: panorama equirretangular -> face de cubemap |
 | `IBLIrradiance` | `ibl.vert` | `ibl_irradiance.frag` | IBL: convolução difusa (irradiância) |
 | `IBLPrefilter` | `ibl.vert` | `ibl_prefilter.frag` | IBL: especular pré-filtrado GGX por rugosidade |
+| (include) | `skinning.glsl` | — | `SkinMatrix()`: skinning por osso (`u_Skinned`, `u_Bones[128]`, atributos 4/5), incluído por `basic`, `shadow_depth`, `shadow_point` e `geometry_prepass` |
 | `ShadowPoint` | `shadow_point.vert` | `shadow_point.frag` | Cubemap de distância normalizada das luzes Point |
 | `GeometryPrePass` | `geometry_prepass.vert` | `geometry_prepass.frag` | SSAO, etapa 1: normais em view-space |
 | `SSAO` | `fullscreen_quad.vert` | `ssao.frag` | SSAO, etapa 2: oclusão bruta |

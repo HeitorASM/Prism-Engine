@@ -70,6 +70,7 @@ docs/             documentação técnica (GitHub)
 - [Física](docs/fisica.md)
 - [Renderização](docs/renderizacao.md)
 - [Áudio](docs/audio.md)
+- [Animação](docs/animacao.md)
 - [Formatos de arquivo](docs/formatos-de-arquivo.md)
 
 ## Licença

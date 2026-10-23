@@ -24,7 +24,7 @@ Bem-vindo à **Prism Engine**: uma engine 3D escrita em C++20, com um editor int
 
 ## O que ainda não existe
 
-Animação esquelética, pós-processamento (bloom etc.), iluminação por imagem (IBL), exportar o jogo como programa independente do editor e troca de cena por script, entre outros. A lista está em [Limitações e roadmap](12-limitacoes-e-roadmap.md).
+Exportar o jogo como programa independente do editor, troca de cena por script, máquina de estados de animação e *morph targets*, entre outros. A lista está em [Limitações e roadmap](12-limitacoes-e-roadmap.md).
 
 ## Como esta documentação está organizada
 

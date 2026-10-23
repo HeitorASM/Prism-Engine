@@ -29,6 +29,7 @@ Uma entidade pode ser **filha** de outra (arraste na **Hierarquia**). O filho he
 | **Native Script** | Liga uma classe C++ do módulo do projeto à entidade. |
 | **Raycast** | Dispara um raio e guarda o que ele acertou (sensor). |
 | **Audio Source** | Toca um som (2D ou 3D). |
+| **Animator** | Anima um modelo importado (esqueleto e clipes do `.glb/.fbx`). Fica na raiz do modelo. |
 | **Audio Listener** | Marca a entidade que "ouve" (normalmente a câmera). |
 | **Particle Emitter** | Emite partículas (fogo, fumaça, faíscas). |
 | **UI Element** | Elemento de interface in-game: painel, texto, imagem ou botão. |

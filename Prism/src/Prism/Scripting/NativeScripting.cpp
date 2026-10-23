@@ -3,6 +3,7 @@
 #include "../Scene/Scene.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Audio/AudioEngine.h"
+#include "../Animation/AnimationSystem.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Core/Input.h"
 #include "../Core/Log.h"
@@ -215,6 +216,25 @@ namespace Prism {
         void ApiSetMasterVolume(float volume) { AudioEngine::SetMasterVolume(volume); }
         float ApiGetMasterVolume() { return AudioEngine::GetMasterVolume(); }
 
+        bool ApiPlayAnimation(Scene* scene, entt::entity entity, const char* clip, float fadeSeconds, int loop) {
+            return scene && clip && AnimationSystem::Play(Entity(entity, scene), clip, fadeSeconds, loop);
+        }
+        void ApiStopAnimation(Scene* scene, entt::entity entity) {
+            if (scene)
+                AnimationSystem::Stop(Entity(entity, scene));
+        }
+        void ApiSetAnimationPaused(Scene* scene, entt::entity entity, bool paused) {
+            if (scene)
+                AnimationSystem::SetPaused(Entity(entity, scene), paused);
+        }
+        void ApiSetAnimationSpeed(Scene* scene, entt::entity entity, float speed) {
+            if (scene)
+                AnimationSystem::SetSpeed(Entity(entity, scene), speed);
+        }
+        bool ApiIsAnimationPlaying(Scene* scene, entt::entity entity) {
+            return scene && AnimationSystem::IsPlaying(Entity(entity, scene));
+        }
+
         const NativeEngineAPI& GetApiTable() {
             static const NativeEngineAPI api = {
                 kNativeApiVersion,
@@ -231,7 +251,9 @@ namespace Prism {
                 &ApiMouseX, &ApiMouseY, &ApiSetCursorMode, &ApiGetCursorMode, &ApiIsPointerOverUI,
                 &ApiPlaySoundFile, &ApiPlaySoundFile3D, &ApiPreloadSound,
                 &ApiSetBusVolume, &ApiGetBusVolume, &ApiSetBusMuted, &ApiIsBusMuted,
-                &ApiSetMasterVolume, &ApiGetMasterVolume
+                &ApiSetMasterVolume, &ApiGetMasterVolume,
+                // v5
+                &ApiPlayAnimation, &ApiStopAnimation, &ApiSetAnimationPaused, &ApiSetAnimationSpeed, &ApiIsAnimationPlaying
             };
             return api;
         }

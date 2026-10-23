@@ -17,6 +17,7 @@
 #include <entt/entt.hpp>
 #include "../Assets/AssetID.h"
 #include "../Audio/AudioBus.h"
+#include "../Animation/AnimatorRuntime.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -749,6 +750,30 @@ namespace Prism {
 
         AudioListenerComponent() = default;
         AudioListenerComponent(const AudioListenerComponent&) = default;
+    };
+
+    // Animacao esqueletica / de nos de um modelo importado (.glb/.gltf/.fbx).
+    // Fica na RAIZ do modelo (ou em qualquer ancestral das entidades de malha):
+    // toda entidade de malha do MESMO modelo, nela ou abaixo dela, e deformada
+    // pela pose deste Animator. Sem Animator, a malha aparece na pose de bind.
+    //
+    // 'ModelAsset' escolhe o esqueleto e os clipes (o editor preenche ao
+    // importar o modelo). 'Clip' e o clipe tocado ao iniciar o Play (se
+    // PlayOnStart); durante o jogo, scripts trocam com entity:PlayAnimation().
+    // O estado de execucao (tempo, crossfade, paleta de ossos) fica em
+    // 'Runtime' e NAO e salvo nem copiado (ver Animation/AnimatorRuntime.h).
+    struct AnimatorComponent {
+        AssetID ModelAsset;           // modelo de onde vem o esqueleto/clipes; invalido = inativo
+        std::string Clip;             // nome do clipe inicial (vazio = nenhum)
+        bool PlayOnStart = true;      // tocar 'Clip' ao iniciar o Play
+        bool Loop = true;             // repetir o clipe
+        float Speed = 1.0f;           // 0 = congelado, 1 = normal, 2 = dobro...
+
+        ResetOnCopy<AnimatorRuntime> Runtime; // so execucao - ver AnimationSystem
+
+        AnimatorComponent() = default;
+        AnimatorComponent(const AnimatorComponent&) = default;
+        AnimatorComponent& operator=(const AnimatorComponent&) = default;
     };
 
     // Um raio FISICO (contra ColliderComponent, via Jolt - mesmo raycast

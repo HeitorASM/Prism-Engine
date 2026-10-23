@@ -186,4 +186,6 @@ Só `base`, `math`, `string` e `table` estão abertas. `io`, `os`, `package` e `
 
 ## Áudio
 
+`entity:PlayAnimation(nome, fade, loop)`, `entity:StopAnimation()`, `entity:PauseAnimation(p)`, `entity:SetAnimationSpeed(v)`, `entity:IsAnimationPlaying()`, `entity:GetAnimation()` (precisam de um Animator; ver [animacao.md](animacao.md)).
+
 `entity:PlaySound()`, `entity:StopSound()`, `entity:IsSoundPlaying()`, `entity:SetSoundVolume(v)`, `entity:SetSoundPitch(p)` (precisam de um Audio Source) e a tabela global `Audio` (`Play`, `Play3D`, `Preload`, `SetMasterVolume`, `GetMasterVolume`, `SetBusVolume`, `GetBusVolume`, `SetBusMuted`, `IsBusMuted`; canais `"sfx"`, `"music"`, `"ui"`, `"ambient"`). Detalhes em [audio.md](audio.md).

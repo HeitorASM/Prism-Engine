@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 #include "ShadowSystem.h"
 #include "../Core/Log.h"
+#include "../Animation/ModelRig.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -90,6 +91,11 @@ namespace Prism {
                 if (!caster.Geometry)
                     continue;
                 shader.SetMat4("u_Model", glm::value_ptr(caster.Model));
+                // Malha animada: a sombra segue a pose atual (ver shaders/skinning.glsl).
+                const bool skinned = caster.Bones && caster.BoneCount > 0;
+                shader.SetInt("u_Skinned", skinned ? 1 : 0);
+                if (skinned)
+                    shader.SetMat4Array("u_Bones", glm::value_ptr(caster.Bones[0]), std::min(caster.BoneCount, (uint32_t)kMaxBones));
                 caster.Geometry->BindForCurrentContext();
                 glDrawElements(GL_TRIANGLES, (GLsizei)caster.Geometry->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
             }

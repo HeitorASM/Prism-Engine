@@ -5,6 +5,7 @@
 #include "../Scripting/NativeScripting.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Audio/AudioEngine.h"
+#include "../Animation/AnimationSystem.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
@@ -379,8 +380,11 @@ namespace Prism {
         // Scripts e fisica so rodam durante o modo Play (m_IsRunning) -
         // fora disso a Scene fica estatica, exibindo so o estado editado
         // (mesmo comportamento de Unity/Unreal/Godot fora do botao Play).
-        if (!m_IsRunning)
+        if (!m_IsRunning) {
+            // Cena parada no editor: so as PREVIAS de animacao (botao "Tocar" do Animator).
+            AnimationSystem::Update(*this, deltaTime, true);
             return;
+        }
 
         // Fisica ANTES dos scripts, de proposito: assim um script que leia
         // TransformComponent (via entity:GetTransform()) em OnUpdate() ve
@@ -430,6 +434,9 @@ namespace Prism {
 
         // Particulas depois dos scripts: ja enxergam posicao/campos alterados neste frame.
         ParticleSystem::Update(*this, deltaTime);
+
+        // Animacao depois dos scripts: PlayAnimation() chamado neste frame ja vale nele.
+        AnimationSystem::Update(*this, deltaTime, false);
 
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
@@ -535,6 +542,10 @@ namespace Prism {
         // Audio antes dos scripts: fontes com PlayOnStart ja estao tocando
         // quando OnCreate() roda (que ainda pode para-las/reinicia-las).
         AudioEngine::OnSceneStart(*this);
+
+        // Animacao antes dos scripts: Animators com PlayOnStart ja tocam em OnCreate()
+        // (que ainda pode trocar de clipe).
+        AnimationSystem::OnSceneStart(*this);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view) {

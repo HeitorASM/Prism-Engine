@@ -1110,6 +1110,14 @@ namespace PrismEditor {
                     m_Scene->SetParent(child, root);
                 }
             }
+            // Modelo animado (esqueleto/clipes): o Animator fica na raiz e anima
+            // todas as partes (ver AnimatorComponent). Toca o primeiro clipe no Play.
+            if (m_Model.HasRig) {
+                auto& animator = root.AddComponent<Prism::AnimatorComponent>();
+                animator.ModelAsset = m_Model.Asset;
+                animator.Clip = m_Model.FirstClip;
+                animator.PlayOnStart = !m_Model.FirstClip.empty();
+            }
             m_Root = root;
         }
 

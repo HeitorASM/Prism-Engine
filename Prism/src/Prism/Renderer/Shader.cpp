@@ -180,6 +180,12 @@ namespace Prism {
         glUniformMatrix4fv(location, 1, GL_FALSE, matrix4x4);
     }
 
+    void Shader::SetMat4Array(const std::string& name, const float* matrices, uint32_t count) const {
+        int location = glGetUniformLocation(m_RendererID, name.c_str()); // local de name[0]
+        if (location >= 0 && count > 0)
+            glUniformMatrix4fv(location, (GLsizei)count, GL_FALSE, matrices);
+    }
+
     void Shader::SetMat3(const std::string& name, const float* matrix3x3) const {
         int location = glGetUniformLocation(m_RendererID, name.c_str());
         glUniformMatrix3fv(location, 1, GL_FALSE, matrix3x3);

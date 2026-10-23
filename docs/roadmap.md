@@ -42,7 +42,7 @@ Plano de trabalho por fases. Cada fase termina com a engine funcionando e a docu
 - [x] Sistema de partículas (5A): `ParticleEmitterComponent`, simulação CPU, billboards com blend, preview no editor, API Lua/C++.
 
 
-- Animação esquelética (skinning) e importação de animações.
+- [x] Animação esquelética (skinning), animação de nós rígidos e importação de clipes: `AnimatorComponent`, crossfade, `entity:PlayAnimation` em Lua/C++ (API nativa v5), sombras e SSAO seguem a pose (ver [animacao.md](animacao.md)). Pendente: morph targets, máquina de estados, retargeting/IK, root motion.
 - [x] Skybox (5B): cor, gradiente ou panorama equirretangular (.hdr/.png/.jpg) por cena (`EnvironmentComponent`).
 - [x] UI in-game (5C): `UIElementComponent` (Panel/Texto/Imagem/Botão), âncoras, hierarquia, `OnClick` em Lua/C++, fonte embutida (ver [docs/ui.md](ui.md)).
 

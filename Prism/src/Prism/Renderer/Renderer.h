@@ -32,8 +32,10 @@
 #include "SkyTexture.h"
 #include "PostProcess.h"
 #include "../Project/Project.h"
+#include "../Animation/ModelRig.h"
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <utility> 
 #include <string>
@@ -162,7 +164,8 @@ namespace Prism {
         // diferente. 'mesh' nulo e um no-op silencioso (mesmo
         // comportamento de "primitiva ainda nao carregada" da outra
         // sobrecarga).
-        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr,
+                             const glm::mat4* bones = nullptr, uint32_t boneCount = 0);
 
         // Retorna o Mesh (GPU) do modelo IMPORTADO identificado por
         // 'modelAsset' (ver MeshRendererComponent::ModelAsset,
@@ -191,6 +194,24 @@ namespace Prism {
         // o arquivo) na primeira vez que alguem a pede, para nao gastar o
         // dobro de VRAM com modelos usados so por submesh.
         static Mesh* GetOrLoadModelMesh(AssetID modelAsset, int submeshIndex = -1);
+
+        // Esqueleto + clipes de animacao do modelo (nulo se o modelo nao tem ossos
+        // nem animacao, ou se a importacao falhou). Cache por AssetID, MESMA
+        // invalidacao de GetOrLoadModelMesh. NAO cria nada na GPU (so le o arquivo
+        // na primeira vez) - seguro de chamar de qualquer contexto, ex: da
+        // atualizacao da cena. O ponteiro devolvido e o mesmo enquanto o cache valer.
+        static std::shared_ptr<const ModelRig> GetOrLoadModelRig(AssetID modelAsset);
+
+        // Paleta de ossos (matrizes prontas para o shader) com que a entidade
+        // 'entity' deve ser desenhada: a do Animator (na propria entidade ou em
+        // um ancestral, do MESMO modelo) ou, sem Animator, a pose de bind do rig.
+        // count == 0 / data == nullptr: malha sem skinning (nao precisa de paleta).
+        // O ponteiro vale ate o proximo AnimationSystem::Update / InvalidateModelCache.
+        struct BonePalette {
+            const glm::mat4* Data = nullptr;
+            uint32_t Count = 0;
+        };
+        static BonePalette ResolveBonePalette(class Scene& scene, entt::entity entity, const MeshRendererComponent& meshRenderer, const Mesh* mesh);
 
         // Resolve QUAL Mesh (GPU) desenhar/testar picking para um
         // MeshRendererComponent: um modelo IMPORTADO (ModelAsset valido)
@@ -485,6 +506,14 @@ namespace Prism {
             bool MergedTried = false;
         };
         static std::unordered_map<AssetID, ModelCacheEntry> s_ModelMeshCache;
+
+        // Rigs (esqueleto + clipes) por AssetID. 'Tried' distingue "nunca
+        // carreguei" de "carreguei e nao tem rig / falhou" (Rig nulo).
+        struct RigCacheEntry {
+            bool Tried = false;
+            std::shared_ptr<ModelRig> Rig;
+        };
+        static std::unordered_map<AssetID, RigCacheEntry> s_RigCache;
     };
 
 }

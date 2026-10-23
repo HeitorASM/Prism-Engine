@@ -44,6 +44,8 @@ namespace Prism {
     struct ShadowCaster {
         Mesh* Geometry = nullptr;
         glm::mat4 Model{ 1.0f };
+        const glm::mat4* Bones = nullptr; // paleta de ossos (malha animada) - nulo = sem skinning
+        uint32_t BoneCount = 0;
     };
 
     // Resultado de um quadro: o que o basic.frag precisa para amostrar.

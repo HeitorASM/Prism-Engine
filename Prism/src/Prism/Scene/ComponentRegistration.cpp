@@ -557,6 +557,35 @@ namespace Prism {
             }
         );
         s_Registry.back().AddedInSceneFormat = 20; // nao existe em mapas v19 / prefabs v7
+
+        // --- AnimatorComponent (bloco v1) ------------------------------------
+        // Animacao esqueletica / de nos de um modelo importado. O estado de
+        // execucao (AnimatorComponent::Runtime) nao e salvo.
+        Register<AnimatorComponent>(
+            "Animator",
+            [](std::ostream& out, Entity e) {
+                auto& c = e.GetComponent<AnimatorComponent>();
+                WriteRaw(out, c.ModelAsset);
+                WriteString(out, c.Clip);
+                WriteRaw(out, c.PlayOnStart);
+                WriteRaw(out, c.Loop);
+                WriteRaw(out, c.Speed);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<AnimatorComponent>();
+                bool ok = ReadRaw(in, c.ModelAsset) && ReadString(in, c.Clip) && ReadRaw(in, c.PlayOnStart)
+                       && ReadRaw(in, c.Loop) && ReadRaw(in, c.Speed);
+                if (!ok) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (animator da entidade ", entityIndex, ").");
+                    return false;
+                }
+                if (!std::isfinite(c.Speed))
+                    c.Speed = 1.0f;
+                c.Speed = std::clamp(c.Speed, 0.0f, 20.0f);
+                return true;
+            }
+        );
+        s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
     }
 
 }

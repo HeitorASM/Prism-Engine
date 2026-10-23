@@ -114,6 +114,19 @@ A destruição é adiada para o fim do frame, nas duas linguagens.
 | Vetor 3D | `Vec3.new(x, y, z)` (operadores, `Length`, `Normalized`, `Dot`, `Cross`, `Distance`) | `glm::vec3` e funções do GLM |
 | Utilitários | `Mathf.Clamp`, `Mathf.Lerp`, `Mathf.Sign` | `glm::clamp`, `glm::mix`, `<cmath>` |
 
+## Animação
+
+| Função | Lua | C++ |
+|---|---|---|
+| Tocar um clipe (com crossfade opcional) | `entity:PlayAnimation(nome, fade, loop)` | `PlayAnimation(nome, fade, loop)` |
+| Parar (pose de bind) | `entity:StopAnimation()` | `StopAnimation()` |
+| Pausar / continuar | `entity:PauseAnimation(true/false)` | `PauseAnimation(true/false)` |
+| Velocidade | `entity:SetAnimationSpeed(v)` | `SetAnimationSpeed(v)` |
+| Está tocando? | `entity:IsAnimationPlaying()` | `IsAnimationPlaying()` |
+| Clipe atual / tempo / duração | `entity:GetAnimation()` / `GetAnimationTime()` / `GetAnimationDuration()` | — |
+
+Precisam de um **Animator** na entidade. Detalhes em `docs/animacao.md` do projeto.
+
 ## Áudio
 
 | Função | Lua | C++ |

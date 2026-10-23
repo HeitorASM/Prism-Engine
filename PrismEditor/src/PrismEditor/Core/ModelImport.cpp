@@ -77,6 +77,13 @@ namespace PrismEditor::ModelImport {
         if (std::filesystem::exists(options.TextureOutputDir, ec))
             registry.Refresh();
 
+        if (imported.Rig) {
+            result.HasRig = true;
+            result.ClipCount = imported.Rig->Clips.size();
+            if (!imported.Rig->Clips.empty())
+                result.FirstClip = imported.Rig->Clips[0].Name;
+        }
+
         result.Success = true;
         result.Asset = id;
         result.Name = absoluteModelPath.stem().string();

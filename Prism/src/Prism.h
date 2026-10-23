@@ -37,6 +37,7 @@
 #include "Prism/Scripting/ScriptEngine.h"
 #include "Prism/Scripting/NativeScripting.h"
 #include "Prism/Particles/ParticleSystem.h"
+#include "Prism/Animation/AnimationSystem.h"
 #include "Prism/UI/UISystem.h"
 #include "Prism/Physics/PhysicsEngine.h"
 
