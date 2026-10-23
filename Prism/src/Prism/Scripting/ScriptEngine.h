@@ -28,6 +28,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <vector>
+#include <chrono>
 #include "../Scene/Components.h" // ScriptPropertyValue
 
 namespace Prism {
@@ -54,6 +55,25 @@ namespace Prism {
         sol::protected_function OnTriggerEnter;
         sol::protected_function OnTriggerExit;
         sol::protected_function OnClick; // botao de UI desta entidade clicado
+        // Passo FIXO (1/60 s, o mesmo da fisica): chamado ZERO ou mais vezes por frame,
+        // ANTES de cada passo da fisica - o lugar certo para ApplyForce/SetVelocity.
+        sol::protected_function OnFixedUpdate;
+        // Chamado so apos um hot reload (o OnCreate NAO roda de novo).
+        sol::protected_function OnReload;
+
+        // Hot reload: de onde veio o script e a data do arquivo na carga, e os valores
+        // iniciais das variaveis globais (depois das Properties, antes do OnCreate) -
+        // o que difere disso no reload e "estado de execucao" e e preservado.
+        std::filesystem::path SourcePath;
+        std::filesystem::file_time_type WriteTime{};
+        struct InitialValue {
+            sol::type Type = sol::type::none;
+            double Number = 0.0;
+            bool Bool = false;
+            std::string String;
+        };
+        std::unordered_map<std::string, InitialValue> InitialValues;
+
         bool HasRuntimeError = false; // true apos qualquer chamada falhar - impede spam do mesmo erro todo frame
     };
 
@@ -82,6 +102,24 @@ namespace Prism {
         // Scene::OnUpdate() para toda entidade com ScriptComponent.
         static void UpdateScript(Entity entity, float deltaTime);
 
+        // Chama OnFixedUpdate(fixedDeltaTime) do script desta entidade (se houver).
+        // Chamado por Scene antes de cada passo fixo da fisica.
+        static void FixedUpdateScript(Entity entity, float fixedDeltaTime);
+
+        // --- Hot reload (so Lua, durante o Play) ------------------------------
+        // Quando o arquivo .lua de um script em execucao muda em disco (ex: salvo no
+        // editor de scripts), ele e recarregado SEM parar o jogo: o estado de execucao
+        // (variaveis alteradas pelo script, tabelas) e preservado, as variaveis nao
+        // alteradas assumem o valor novo do arquivo, e OnReload() roda se existir.
+        // Se o arquivo novo tem erro, o script antigo continua rodando (erro no Console).
+        // Um script que estava com erro de execucao volta a rodar depois do reload.
+        static void SetHotReloadEnabled(bool enabled) { s_HotReload = enabled; }
+        static bool IsHotReloadEnabled() { return s_HotReload; }
+        // Verifica (no maximo 2x por segundo) os scripts carregados da 'scene'.
+        static void PollHotReload(Scene& scene);
+        // Recarrega agora o script desta entidade, preservando o estado. false = falhou.
+        static bool ReloadScript(Entity entity);
+
         // Chama OnDestroy() (se existir) e libera a instancia carregada
         // desta entidade. Chamado por Scene::OnScriptsStop() e por
         // Scene::DestroyEntity() quando a entidade tinha um script rodando.
@@ -100,6 +138,7 @@ namespace Prism {
         static void ResetTime();
         static void BeginFrame(float deltaTime);
         static float GetDeltaTime() { return s_DeltaTime; }
+        static uint64_t GetFrameCount() { return s_FrameCount; }
         static double GetElapsed() { return s_Elapsed; }
 
         // Chama OnCollisionEnter/Exit ou OnTriggerEnter/Exit do script de
@@ -133,6 +172,10 @@ namespace Prism {
     private:
         static void RegisterAPI();
 
+        // Le, executa e resolve os callbacks de um script (sem registrar nem chamar
+        // OnCreate). Usado por LoadScript e ReloadScript.
+        static bool BuildScript(Entity entity, const std::filesystem::path& scriptAbsolutePath, LoadedScript& out);
+
         // Chave usada no mapa de scripts carregados: combina a Scene dona
         // (ponteiro cru, so para diferenciar - nunca desreferenciado aqui)
         // com o handle da entidade, ja que o mesmo entt::entity pode
@@ -159,6 +202,9 @@ namespace Prism {
             entt::entity Handle;
         };
         inline static std::vector<PendingDestroy> s_PendingDestroy;
+
+        inline static bool s_HotReload = true;
+        inline static std::chrono::steady_clock::time_point s_LastHotReloadPoll{};
 
         inline static Scope<sol::state> s_Lua;
         inline static std::unordered_map<ScriptKey, LoadedScript, ScriptKeyHash> s_LoadedScripts;

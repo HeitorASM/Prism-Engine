@@ -19,6 +19,8 @@ Um script pode definir estas funções globais, todas opcionais:
 ```lua
 function OnCreate() end                  -- ao iniciar o Play
 function OnUpdate(deltaTime) end         -- a cada frame
+function OnFixedUpdate(fixedDt) end      -- passo fixo (1/60 s), antes de cada passo da fisica
+function OnReload() end                  -- depois de um hot reload (o OnCreate NAO roda de novo)
 function OnDestroy() end                 -- ao parar o Play ou destruir a entidade
 function OnCollisionEnter(other) end     -- começou a tocar 'other' (Entity)
 function OnCollisionExit(other) end      -- parou de tocar
@@ -26,6 +28,18 @@ function OnTriggerEnter(other) end       -- 'other' entrou num collider marcado 
 function OnTriggerExit(other) end
 function OnClick() end                   -- botão de UI desta entidade foi clicado
 ```
+
+**`OnFixedUpdate`**: roda em passo fixo (`Time.FixedDeltaTime` = 1/60 s), zero ou mais vezes por frame (várias se o frame demorou, no máximo 5), sempre **antes** de cada passo da física. Aplique forças e velocidades (`ApplyForce`, `SetVelocity`) ali: o resultado não depende do framerate. Entrada e visuais continuam em `OnUpdate`. Exemplo: `example_fixed_update.lua`.
+
+## Hot reload
+
+Com o Play ligado, salvar um `.lua` (por exemplo no editor de scripts) o recarrega **sem parar o jogo**:
+
+- Variáveis que o script **alterou em execução** (e tabelas/objetos) são preservadas. Variáveis que ninguém mexeu assumem o valor novo do arquivo (mudou `local`/constante? vale na hora; `local` de arquivo é sempre refeita).
+- `Properties` e `entity` são refeitas a partir do component; `OnCreate` **não** roda de novo. Se existir `OnReload()`, ela roda no fim.
+- Arquivo novo com erro de sintaxe/execução: o script antigo continua rodando e o erro aparece **uma vez** no Console por salvamento.
+- Um script parado por erro de execução volta a rodar depois de salvar uma versão corrigida.
+- A verificação é a cada 0,5 s. Desligar: `ScriptEngine::SetHotReloadEnabled(false)`.
 
 Os eventos de contato chegam na thread principal, depois da simulação do frame. Cada corpo envolvido recebe o evento com o outro como argumento.
 
@@ -165,11 +179,11 @@ Só `base`, `math`, `string` e `table` estão abertas. `io`, `os`, `package` e `
 
 ## Limitações
 
-- Sem hot-reload: edite o `.lua`, pare e rode de novo.
+- Hot reload só vale para Lua (scripts C++ precisam de Play parado + Compilar). Variáveis `local` do arquivo não sobrevivem ao reload (só globais do script).
 - `Scene.Load` (trocar de cena) ainda não existe.
 - Entidades criadas durante um frame só rodam `OnUpdate` a partir do próximo.
 - Sem debugger nem breakpoints.
 
 ## Áudio
 
-`entity:PlaySound()`, `entity:StopSound()`, `entity:IsSoundPlaying()`, `entity:SetSoundVolume(v)`, `entity:SetSoundPitch(p)` (precisam de um Audio Source) e a tabela global `Audio` (`Play`, `Play3D`, `SetMasterVolume`, `GetMasterVolume`). Detalhes em [audio.md](audio.md).
+`entity:PlaySound()`, `entity:StopSound()`, `entity:IsSoundPlaying()`, `entity:SetSoundVolume(v)`, `entity:SetSoundPitch(p)` (precisam de um Audio Source) e a tabela global `Audio` (`Play`, `Play3D`, `Preload`, `SetMasterVolume`, `GetMasterVolume`, `SetBusVolume`, `GetBusVolume`, `SetBusMuted`, `IsBusMuted`; canais `"sfx"`, `"music"`, `"ui"`, `"ambient"`). Detalhes em [audio.md](audio.md).

@@ -6,7 +6,7 @@ um. Os textos abaixo foram copiados dos repositórios originais.
 
 Dois grupos de dependências:
 
-- **Incluídas neste repositório** (`vendor/`): glad, stb_image e stb_truetype. Estas
+- **Incluídas neste repositório** (`vendor/`): glad, stb_image, stb_truetype e stb_vorbis. Estas
   **são redistribuídas** junto com o código da engine.
 - **Baixadas pelo CMake na compilação** (`FetchContent`): as demais. O código
   delas **não** está neste repositório, mas quem distribuir um build da engine
@@ -20,6 +20,7 @@ Dois grupos de dependências:
 | [glad](https://github.com/Dav1dde/glad) (gerado, OpenGL 4.5 Core) | 2.0.8 | WTFPL ou CC0-1.0 (código gerado); Apache-2.0 (specs Khronos); MIT (`khrplatform.h`) | incluída em `vendor/glad` |
 | [stb_image](https://github.com/nothings/stb) | 2.30 | MIT ou domínio público | incluída em `vendor/stb` |
 | [stb_truetype](https://github.com/nothings/stb) | 1.26 | MIT ou domínio público | incluída em `vendor/stb` |
+| [stb_vorbis](https://github.com/nothings/stb) | 1.22 | MIT ou domínio público | incluída em `vendor/stb` |
 | [GLFW](https://github.com/glfw/glfw) | 3.4 | zlib | FetchContent |
 | [glm](https://github.com/g-truc/glm) | 1.0.1 | MIT (ou Happy Bunny) | FetchContent |
 | [EnTT](https://github.com/skypjack/entt) | v3.13.2 | MIT | FetchContent |
@@ -302,6 +303,10 @@ Copyright (c) 2013-2020 The Khronos Group Inc.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## stb_vorbis
+
+`vendor/stb/stb_vorbis.c`, v1.22, de Sean Barrett (decoder Ogg Vorbis). Mesma licença dupla do stb_image (MIT ou domínio público); o texto completo está no final do próprio arquivo.
 
 ## stb_truetype
 

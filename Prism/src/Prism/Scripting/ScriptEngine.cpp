@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <system_error>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -213,7 +214,17 @@ namespace Prism {
             "Loop", &AudioSourceComponent::Loop,
             "Spatial", &AudioSourceComponent::Spatial,
             "MinDistance", &AudioSourceComponent::MinDistance,
-            "MaxDistance", &AudioSourceComponent::MaxDistance
+            "MaxDistance", &AudioSourceComponent::MaxDistance,
+            // Canal de volume como texto: "sfx", "music", "ui" ou "ambient".
+            "Bus", sol::property(
+                [](const AudioSourceComponent& c) -> std::string { return AudioBusName(c.Bus); },
+                [](AudioSourceComponent& c, const std::string& name) {
+                    AudioBus bus;
+                    if (AudioBusFromName(name, bus))
+                        c.Bus = bus;
+                    else
+                        Log::AppLog(LogLevel::Warn, "[Lua] Bus de audio desconhecido: '", name, "' (use sfx, music, ui ou ambient).");
+                })
         );
 
         // --- TransformComponent -----------------------------------------
@@ -489,10 +500,12 @@ namespace Prism {
         // --- Audio -----------------------------------------------------
         // Tabela global `Audio`: sons soltos (efeitos) e volume global.
         // 'path' e RELATIVO a pasta do projeto, como os caminhos de textura
-        // (ex: "Assets/Sounds/tiro.wav"). Formatos: .wav, .mp3, .flac.
+        // (ex: "Assets/Sounds/tiro.wav"). Formatos: .wav, .mp3, .ogg, .flac.
         //   Audio.Play("Assets/Sounds/tiro.wav")                  -- 2D, volume 1
         //   Audio.Play("Assets/Sounds/tiro.wav", 0.5, 1.2)        -- volume, pitch
         //   Audio.Play3D("Assets/Sounds/boom.wav", x, y, z, 1.0)  -- na posicao do mundo
+        //   Audio.Play("Assets/Music/tema.ogg", 0.8, 1.0, "music") -- no canal "music"
+        //   Audio.SetBusVolume("music", 0.5)   Audio.SetBusMuted("sfx", true)
         //   Audio.SetMasterVolume(0.8)
         sol::table audioTable = lua.create_table();
         auto resolveProjectPath = [](const std::string& relative) -> std::filesystem::path {
@@ -501,20 +514,35 @@ namespace Prism {
                 return {};
             return project->GetProjectDirectory() / relative;
         };
-        audioTable["Play"] = [resolveProjectPath](const std::string& path, sol::optional<float> volume, sol::optional<float> pitch) {
+        // Bus opcional (ultimo argumento): "sfx" (padrao), "music", "ui", "ambient".
+        auto parseBus = [](const sol::optional<std::string>& name) -> AudioBus {
+            AudioBus bus = AudioBus::SFX;
+            if (name && !AudioBusFromName(*name, bus))
+                Log::AppLog(LogLevel::Warn, "[Lua] Bus de audio desconhecido: '", *name, "' (use sfx, music, ui ou ambient).");
+            return bus;
+        };
+        audioTable["Play"] = [resolveProjectPath, parseBus](const std::string& path, sol::optional<float> volume, sol::optional<float> pitch, sol::optional<std::string> bus) {
             AudioPlayOptions options;
             options.Volume = volume.value_or(1.0f);
             options.Pitch = pitch.value_or(1.0f);
+            options.Bus = parseBus(bus);
             AudioEngine::PlayOneShot(resolveProjectPath(path), options);
         };
-        audioTable["Play3D"] = [resolveProjectPath](const std::string& path, float x, float y, float z, sol::optional<float> volume, sol::optional<float> pitch) {
+        audioTable["Play3D"] = [resolveProjectPath, parseBus](const std::string& path, float x, float y, float z, sol::optional<float> volume, sol::optional<float> pitch, sol::optional<std::string> bus) {
             AudioPlayOptions options;
             options.Volume = volume.value_or(1.0f);
             options.Pitch = pitch.value_or(1.0f);
             options.Spatial = true;
             options.Position = { x, y, z };
+            options.Bus = parseBus(bus);
             AudioEngine::PlayOneShot(resolveProjectPath(path), options);
         };
+        // Carrega antes um efeito curto (sem engasgo no primeiro disparo).
+        audioTable["Preload"] = [resolveProjectPath](const std::string& path) { AudioEngine::Preload(resolveProjectPath(path)); };
+        audioTable["SetBusVolume"] = [parseBus](const std::string& bus, float volume) { AudioEngine::SetBusVolume(parseBus(bus), volume); };
+        audioTable["GetBusVolume"] = [parseBus](const std::string& bus) { return AudioEngine::GetBusVolume(parseBus(bus)); };
+        audioTable["SetBusMuted"] = [parseBus](const std::string& bus, bool muted) { AudioEngine::SetBusMuted(parseBus(bus), muted); };
+        audioTable["IsBusMuted"] = [parseBus](const std::string& bus) { return AudioEngine::IsBusMuted(parseBus(bus)); };
         audioTable["SetMasterVolume"] = [](float volume) { AudioEngine::SetMasterVolume(volume); };
         audioTable["GetMasterVolume"] = []() { return AudioEngine::GetMasterVolume(); };
         lua["Audio"] = audioTable;
@@ -542,6 +570,7 @@ namespace Prism {
         timeTable["DeltaTime"] = []() { return s_DeltaTime; };
         timeTable["Elapsed"] = []() { return s_Elapsed; };
         timeTable["FrameCount"] = []() { return s_FrameCount; };
+        timeTable["FixedDeltaTime"] = []() { return PhysicsEngine::GetFixedTimeStep(); };
         lua["Time"] = timeTable;
 
         // --- Mathf -----------------------------------------------------
@@ -716,21 +745,9 @@ namespace Prism {
         lua["UI"] = uiTable;
     }
 
-    bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {
-        if (!s_Lua) {
-            PRISM_CORE_ERROR("ScriptEngine::LoadScript chamado antes de ScriptEngine::Init().");
-            return false;
-        }
-
-        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
-
-        // Recarregar: se ja havia um script carregado para esta entidade,
-        // desliga ele primeiro (chama OnDestroy do script ANTIGO) antes de
-        // montar a instancia nova - evita duas instancias do "mesmo"
-        // script vivas ao mesmo tempo apos um reload.
-        if (s_LoadedScripts.find(key) != s_LoadedScripts.end())
-            UnloadScript(entity);
-
+    // Le, executa e resolve os callbacks de um script - sem registrar no mapa nem
+    // chamar OnCreate (ver LoadScript / ReloadScript).
+    bool ScriptEngine::BuildScript(Entity entity, const std::filesystem::path& scriptAbsolutePath, LoadedScript& out) {
         std::ifstream file(scriptAbsolutePath);
         if (!file.is_open()) {
             PRISM_CORE_ERROR("ScriptEngine: arquivo de script nao encontrado: ", scriptAbsolutePath.string());
@@ -783,22 +800,25 @@ namespace Prism {
 
         // Convencao do script: o arquivo .lua e uma sequencia de
         // definicoes de funcao no escopo global DELE (OnCreate/OnUpdate/
-        // OnDestroy) - nao uma table literal retornada. Pegamos essas tres
+        // OnDestroy...) - nao uma table literal retornada. Pegamos essas
         // funcoes de dentro do environment depois do script rodar. Nenhuma
         // delas e obrigatoria (um script so com OnUpdate, por exemplo, e
         // valido).
-        LoadedScript loaded;
-        loaded.Instance = env;
-        loaded.OnCreate = env["OnCreate"];
-        loaded.OnUpdate = env["OnUpdate"];
-        loaded.OnDestroy = env["OnDestroy"];
-        loaded.OnCollisionEnter = env["OnCollisionEnter"];
-        loaded.OnCollisionExit = env["OnCollisionExit"];
-        loaded.OnTriggerEnter = env["OnTriggerEnter"];
-        loaded.OnTriggerExit = env["OnTriggerExit"];
-        loaded.OnClick = env["OnClick"];
-
-        s_LoadedScripts[key] = std::move(loaded);
+        out = LoadedScript{};
+        out.Instance = env;
+        out.OnCreate = env["OnCreate"];
+        out.OnUpdate = env["OnUpdate"];
+        out.OnFixedUpdate = env["OnFixedUpdate"];
+        out.OnDestroy = env["OnDestroy"];
+        out.OnReload = env["OnReload"];
+        out.OnCollisionEnter = env["OnCollisionEnter"];
+        out.OnCollisionExit = env["OnCollisionExit"];
+        out.OnTriggerEnter = env["OnTriggerEnter"];
+        out.OnTriggerExit = env["OnTriggerExit"];
+        out.OnClick = env["OnClick"];
+        out.SourcePath = scriptAbsolutePath;
+        std::error_code timeError;
+        out.WriteTime = std::filesystem::last_write_time(scriptAbsolutePath, timeError);
 
         // "self" implicito: um script chama entity:GetTransform() etc
         // recebendo a PROPRIA entidade como variavel global `entity`
@@ -826,6 +846,43 @@ namespace Prism {
             }
         }
 
+        // Valores iniciais das globais simples (para o hot reload distinguir
+        // "constante do arquivo" de "estado alterado em execucao").
+        sol::table envTable = env;
+        for (auto& [keyObject, valueObject] : envTable) {
+            if (keyObject.get_type() != sol::type::string)
+                continue;
+            LoadedScript::InitialValue initial;
+            initial.Type = valueObject.get_type();
+            if (initial.Type == sol::type::number) initial.Number = valueObject.as<double>();
+            else if (initial.Type == sol::type::boolean) initial.Bool = valueObject.as<bool>();
+            else if (initial.Type == sol::type::string) initial.String = valueObject.as<std::string>();
+            else continue;
+            out.InitialValues[keyObject.as<std::string>()] = std::move(initial);
+        }
+        return true;
+    }
+
+    bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {
+        if (!s_Lua) {
+            PRISM_CORE_ERROR("ScriptEngine::LoadScript chamado antes de ScriptEngine::Init().");
+            return false;
+        }
+
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+
+        // Recarregar: se ja havia um script carregado para esta entidade,
+        // desliga ele primeiro (chama OnDestroy do script ANTIGO) antes de
+        // montar a instancia nova - evita duas instancias do "mesmo"
+        // script vivas ao mesmo tempo apos um reload.
+        if (s_LoadedScripts.find(key) != s_LoadedScripts.end())
+            UnloadScript(entity);
+
+        LoadedScript loaded;
+        if (!BuildScript(entity, scriptAbsolutePath, loaded))
+            return false;
+        s_LoadedScripts[key] = std::move(loaded);
+
         LoadedScript& script = s_LoadedScripts[key];
         if (script.OnCreate.valid()) {
             sol::protected_function_result createResult = script.OnCreate();
@@ -837,6 +894,120 @@ namespace Prism {
         }
 
         return true;
+    }
+
+    bool ScriptEngine::ReloadScript(Entity entity) {
+        if (!s_Lua || !entity.IsValid())
+            return false;
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+        auto found = s_LoadedScripts.find(key);
+        if (found == s_LoadedScripts.end())
+            return false;
+
+        const std::filesystem::path path = found->second.SourcePath;
+        LoadedScript fresh;
+        if (!BuildScript(entity, path, fresh)) {
+            // Erro no arquivo novo: o script antigo segue rodando. Marca a data como
+            // vista para o erro aparecer UMA vez por salvamento (nao a cada poll).
+            auto stillThere = s_LoadedScripts.find(key);
+            if (stillThere != s_LoadedScripts.end()) {
+                std::error_code timeError;
+                stillThere->second.WriteTime = std::filesystem::last_write_time(path, timeError);
+            }
+            PRISM_CORE_WARN("ScriptEngine: hot reload de '", path.filename().string(), "' falhou; o script anterior continua rodando.");
+            return false;
+        }
+
+        found = s_LoadedScripts.find(key);
+        if (found == s_LoadedScripts.end())
+            return false; // a entidade foi descarregada durante a compilacao
+
+        // Estado de execucao: copia do ambiente antigo para o novo tudo que o script
+        // alterou/criou desde a carga (numero/bool/string diferente do valor inicial,
+        // variaveis novas, tabelas e objetos). Constantes nao alteradas assumem o
+        // valor novo do arquivo. 'Properties' e 'entity' sao refeitas pela carga.
+        {
+            LoadedScript& old = found->second;
+            sol::table oldTable = old.Instance;
+            sol::table newTable = fresh.Instance;
+            for (auto& [keyObject, valueObject] : oldTable) {
+                if (keyObject.get_type() != sol::type::string)
+                    continue;
+                const std::string name = keyObject.as<std::string>();
+                if (name == "entity" || name == "Properties")
+                    continue;
+                const sol::type type = valueObject.get_type();
+                if (type == sol::type::function)
+                    continue; // funcoes vem do arquivo novo
+                if (type == sol::type::number || type == sol::type::boolean || type == sol::type::string) {
+                    auto initial = old.InitialValues.find(name);
+                    if (initial != old.InitialValues.end() && initial->second.Type == type) {
+                        bool unchanged = (type == sol::type::number && initial->second.Number == valueObject.as<double>())
+                                      || (type == sol::type::boolean && initial->second.Bool == valueObject.as<bool>())
+                                      || (type == sol::type::string && initial->second.String == valueObject.as<std::string>());
+                        if (unchanged)
+                            continue;
+                    }
+                }
+                newTable[name] = valueObject;
+            }
+        }
+
+        found->second = std::move(fresh);
+        PRISM_CORE_INFO("ScriptEngine: script recarregado: ", path.filename().string());
+
+        LoadedScript& script = found->second;
+        if (script.OnReload.valid()) {
+            sol::protected_function_result reloadResult = script.OnReload();
+            if (!reloadResult.valid()) {
+                sol::error err = reloadResult;
+                PRISM_CORE_ERROR("ScriptEngine: erro em OnReload(): ", err.what());
+                script.HasRuntimeError = true;
+            }
+        }
+        return true;
+    }
+
+    void ScriptEngine::PollHotReload(Scene& scene) {
+        if (!s_HotReload || !s_Lua || s_LoadedScripts.empty())
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_LastHotReloadPoll < std::chrono::milliseconds(500))
+            return;
+        s_LastHotReloadPoll = now;
+
+        std::vector<uint32_t> changed;
+        for (auto& [key, script] : s_LoadedScripts) {
+            if (key.SceneKey != &scene)
+                continue;
+            std::error_code timeError;
+            auto writeTime = std::filesystem::last_write_time(script.SourcePath, timeError);
+            if (!timeError && writeTime != script.WriteTime)
+                changed.push_back(key.EntityHandle);
+        }
+        for (uint32_t handle : changed) {
+            entt::entity entityHandle = (entt::entity)handle;
+            if (scene.GetRegistry().valid(entityHandle))
+                ReloadScript(Entity(entityHandle, &scene));
+        }
+    }
+
+    void ScriptEngine::FixedUpdateScript(Entity entity, float fixedDeltaTime) {
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+        auto it = s_LoadedScripts.find(key);
+        if (it == s_LoadedScripts.end())
+            return;
+
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError || !script.OnFixedUpdate.valid())
+            return;
+
+        sol::protected_function_result result = script.OnFixedUpdate(fixedDeltaTime);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em OnFixedUpdate(): ", err.what());
+            script.HasRuntimeError = true;
+        }
     }
 
     void ScriptEngine::UpdateScript(Entity entity, float deltaTime) {

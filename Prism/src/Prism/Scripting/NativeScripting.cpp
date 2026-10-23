@@ -6,6 +6,8 @@
 #include "../Particles/ParticleSystem.h"
 #include "../Core/Input.h"
 #include "../Core/Log.h"
+#include "../UI/UISystem.h"
+#include "../Project/Project.h"
 
 #include <algorithm>
 #include <exception>
@@ -129,6 +131,90 @@ namespace Prism {
                 ParticleSystem::Stop(Entity(entity, scene));
         }
 
+        // --- v4: paridade com a API Lua ----------------------------------------
+        float ApiFixedDeltaTime() { return PhysicsEngine::GetFixedTimeStep(); }
+        uint64_t ApiFrameCount() { return ScriptEngine::GetFrameCount(); }
+        glm::mat4 ApiGetWorldTransform(Scene* scene, entt::entity entity) {
+            return scene ? scene->GetWorldTransform(Entity(entity, scene)) : glm::mat4(1.0f);
+        }
+        bool ApiSetParent(Scene* scene, entt::entity child, entt::entity parent) {
+            if (!scene)
+                return false;
+            return scene->SetParent(Entity(child, scene), parent == entt::null ? Entity() : Entity(parent, scene));
+        }
+        void ApiApplyForce(Scene* scene, entt::entity entity, glm::vec3 force) {
+            if (scene)
+                PhysicsEngine::ApplyForce(*scene, Entity(entity, scene), force);
+        }
+        entt::entity ApiCreateMeshEntity(Scene* scene, const char* name, int primitive, glm::vec3 position) {
+            if (!scene)
+                return entt::null;
+            Entity created = scene->CreateEntity(name ? name : "Entity");
+            auto& meshRenderer = created.AddComponent<MeshRendererComponent>();
+            switch ((PrimitiveMesh)primitive) {
+                case PrimitiveMesh::Sphere: meshRenderer.Mesh = PrimitiveMesh::Sphere; break;
+                case PrimitiveMesh::Capsule: meshRenderer.Mesh = PrimitiveMesh::Capsule; break;
+                case PrimitiveMesh::Cylinder: meshRenderer.Mesh = PrimitiveMesh::Cylinder; break;
+                case PrimitiveMesh::Plane: meshRenderer.Mesh = PrimitiveMesh::Plane; break;
+                default: meshRenderer.Mesh = PrimitiveMesh::Cube; break;
+            }
+            created.GetComponent<TransformComponent>().Translation = position;
+            return created.GetHandle();
+        }
+        uint32_t ApiFindAllEntities(Scene* scene, const char* name, entt::entity* out, uint32_t capacity) {
+            if (!scene || !name)
+                return 0;
+            uint32_t total = 0;
+            auto view = scene->GetRegistry().view<TagComponent>();
+            for (auto handle : view) {
+                if (view.get<TagComponent>(handle).Tag != name)
+                    continue;
+                if (out && total < capacity)
+                    out[total] = handle;
+                ++total;
+            }
+            return total;
+        }
+
+        float ApiMouseX() { return (float)Input::GetMouseX(); }
+        float ApiMouseY() { return (float)Input::GetMouseY(); }
+        void ApiSetCursorMode(int mode) { Input::SetCursorMode((CursorMode)mode); }
+        int ApiGetCursorMode() { return (int)Input::GetCursorMode(); }
+        bool ApiIsPointerOverUI() { return UISystem::IsPointerOverUI(); }
+
+        AudioBus ToBus(int bus) {
+            return IsValidAudioBus((int32_t)bus) ? (AudioBus)bus : AudioBus::SFX;
+        }
+        std::filesystem::path ResolveProjectPath(const char* relative) {
+            auto project = Project::GetActive();
+            if (!project || !relative)
+                return {};
+            return project->GetProjectDirectory() / relative;
+        }
+        void ApiPlaySoundFile(const char* path, float volume, float pitch, int bus) {
+            AudioPlayOptions options;
+            options.Volume = volume;
+            options.Pitch = pitch;
+            options.Bus = ToBus(bus);
+            AudioEngine::PlayOneShot(ResolveProjectPath(path), options);
+        }
+        void ApiPlaySoundFile3D(const char* path, glm::vec3 position, float volume, float pitch, int bus) {
+            AudioPlayOptions options;
+            options.Volume = volume;
+            options.Pitch = pitch;
+            options.Spatial = true;
+            options.Position = position;
+            options.Bus = ToBus(bus);
+            AudioEngine::PlayOneShot(ResolveProjectPath(path), options);
+        }
+        void ApiPreloadSound(const char* path) { AudioEngine::Preload(ResolveProjectPath(path)); }
+        void ApiSetBusVolume(int bus, float volume) { AudioEngine::SetBusVolume(ToBus(bus), volume); }
+        float ApiGetBusVolume(int bus) { return AudioEngine::GetBusVolume(ToBus(bus)); }
+        void ApiSetBusMuted(int bus, bool muted) { AudioEngine::SetBusMuted(ToBus(bus), muted); }
+        bool ApiIsBusMuted(int bus) { return AudioEngine::IsBusMuted(ToBus(bus)); }
+        void ApiSetMasterVolume(float volume) { AudioEngine::SetMasterVolume(volume); }
+        float ApiGetMasterVolume() { return AudioEngine::GetMasterVolume(); }
+
         const NativeEngineAPI& GetApiTable() {
             static const NativeEngineAPI api = {
                 kNativeApiVersion,
@@ -138,7 +224,14 @@ namespace Prism {
                 &ApiFindEntity, &ApiCreateEntity, &ApiInstantiate, &ApiDestroyEntity,
                 &ApiApplyImpulse, &ApiSetVelocity, &ApiGetVelocity, &ApiRaycast,
                 &ApiPlaySound, &ApiStopSound,
-                &ApiPlayParticles, &ApiStopParticles
+                &ApiPlayParticles, &ApiStopParticles,
+                // v4
+                &ApiFixedDeltaTime, &ApiFrameCount, &ApiGetWorldTransform, &ApiSetParent, &ApiApplyForce,
+                &ApiCreateMeshEntity, &ApiFindAllEntities,
+                &ApiMouseX, &ApiMouseY, &ApiSetCursorMode, &ApiGetCursorMode, &ApiIsPointerOverUI,
+                &ApiPlaySoundFile, &ApiPlaySoundFile3D, &ApiPreloadSound,
+                &ApiSetBusVolume, &ApiGetBusVolume, &ApiSetBusMuted, &ApiIsBusMuted,
+                &ApiSetMasterVolume, &ApiGetMasterVolume
             };
             return api;
         }
@@ -359,6 +452,19 @@ namespace Prism {
         }
         catch (const std::exception& error) {
             PRISM_ERROR("Script C++: excecao em OnUpdate: ", error.what());
+            it->second.Faulted = true;
+        }
+    }
+
+    void NativeScripting::FixedUpdateScript(Entity entity, float fixedDeltaTime) {
+        auto it = s_Instances.find(InstanceKey{ entity.GetScene(), (uint32_t)entity.GetHandle() });
+        if (it == s_Instances.end() || it->second.Faulted)
+            return;
+        try {
+            it->second.Object->OnFixedUpdate(fixedDeltaTime);
+        }
+        catch (const std::exception& error) {
+            PRISM_ERROR("Script C++: excecao em OnFixedUpdate: ", error.what());
             it->second.Faulted = true;
         }
     }

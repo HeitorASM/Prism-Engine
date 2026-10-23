@@ -389,7 +389,13 @@ namespace Prism {
         // decide algo com base em "onde meu personagem esta depois da
         // fisica mover ele".
         ScriptEngine::BeginFrame(deltaTime);
-        PhysicsEngine::Simulate(*this, deltaTime);
+
+        // Hot reload dos scripts Lua (arquivo salvo durante o Play), antes de qualquer
+        // callback do frame - ver ScriptEngine::PollHotReload.
+        ScriptEngine::PollHotReload(*this);
+
+        // OnFixedUpdate dos scripts roda dentro de Simulate, antes de cada passo fixo.
+        PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });
 
         // RaycastComponent tambem ANTES dos scripts, mesmo motivo: um
         // script que leia o resultado de um sensor de raycast da propria
@@ -428,6 +434,25 @@ namespace Prism {
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
         AudioEngine::OnSceneUpdate(*this);
+    }
+
+    void Scene::RunFixedUpdate(float fixedDeltaTime) {
+        // Mesma regra de snapshot do OnUpdate: scripts podem criar/destruir entidades.
+        std::vector<entt::entity> scriptEntities;
+        for (auto entityHandle : m_Registry.view<ScriptComponent>())
+            scriptEntities.push_back(entityHandle);
+        for (auto entityHandle : scriptEntities) {
+            if (m_Registry.valid(entityHandle))
+                ScriptEngine::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
+        }
+
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        for (auto entityHandle : nativeEntities) {
+            if (m_Registry.valid(entityHandle))
+                NativeScripting::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
+        }
     }
 
     void Scene::UpdateRaycastComponents() {

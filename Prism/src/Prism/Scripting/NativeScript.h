@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 3;
+    constexpr uint32_t kNativeApiVersion = 4;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -93,6 +93,32 @@ namespace Prism {
         // v2: particulas (a configuracao do emissor se edita pelo ParticleEmitterComponent).
         void (*PlayParticles)(Scene* scene, entt::entity entity);
         void (*StopParticles)(Scene* scene, entt::entity entity);
+
+        // v4: paridade com a API Lua.
+        float (*GetFixedDeltaTime)();
+        uint64_t (*GetFrameCount)();
+        glm::mat4 (*GetWorldTransform)(Scene* scene, entt::entity entity);
+        bool (*SetParent)(Scene* scene, entt::entity child, entt::entity parent); // parent == entt::null: vira raiz
+        void (*ApplyForce)(Scene* scene, entt::entity entity, glm::vec3 force);
+        entt::entity (*CreateMeshEntity)(Scene* scene, const char* name, int primitive, glm::vec3 position); // primitive = (int)PrimitiveMesh
+        uint32_t (*FindAllEntities)(Scene* scene, const char* name, entt::entity* out, uint32_t capacity); // devolve o total achado
+
+        float (*GetMouseX)();
+        float (*GetMouseY)();
+        void (*SetCursorMode)(int mode); // (int)CursorMode
+        int (*GetCursorMode)();
+        bool (*IsPointerOverUI)();
+
+        // Audio: caminhos relativos a pasta do projeto; bus = (int)AudioBus.
+        void (*PlaySoundFile)(const char* projectRelativePath, float volume, float pitch, int bus);
+        void (*PlaySoundFile3D)(const char* projectRelativePath, glm::vec3 position, float volume, float pitch, int bus);
+        void (*PreloadSound)(const char* projectRelativePath);
+        void (*SetBusVolume)(int bus, float volume);
+        float (*GetBusVolume)(int bus);
+        void (*SetBusMuted)(int bus, bool muted);
+        bool (*IsBusMuted)(int bus);
+        void (*SetMasterVolume)(float volume);
+        float (*GetMasterVolume)();
     };
 
     // Classe base de um script nativo. Uma instancia por entidade que tenha
@@ -104,6 +130,9 @@ namespace Prism {
         // Ciclo de vida (todos opcionais).
         virtual void OnCreate() {}
         virtual void OnUpdate(float deltaTime) { (void)deltaTime; }
+        // Passo FIXO (1/60 s, o mesmo da fisica): chamado 0 ou mais vezes por frame,
+        // ANTES de cada passo da fisica - o lugar certo para ApplyForce/SetVelocity.
+        virtual void OnFixedUpdate(float fixedDeltaTime) { (void)fixedDeltaTime; }
         virtual void OnDestroy() {}
         virtual void OnCollisionEnter(Entity other) { (void)other; }
         virtual void OnCollisionExit(Entity other) { (void)other; }
@@ -137,6 +166,43 @@ namespace Prism {
 
         float GetDeltaTime() const { return Api().GetDeltaTime(); }
         double GetElapsedTime() const { return Api().GetElapsed(); }
+        float GetFixedDeltaTime() const { return Api().GetFixedDeltaTime(); }
+        uint64_t GetFrameCount() const { return Api().GetFrameCount(); }
+
+        float GetMouseX() const { return Api().GetMouseX(); }
+        float GetMouseY() const { return Api().GetMouseY(); }
+        void SetCursorMode(CursorMode mode) const { Api().SetCursorMode((int)mode); }
+        CursorMode GetCursorMode() const { return (CursorMode)Api().GetCursorMode(); }
+        // O mouse esta sobre um elemento de UI que barra o ponteiro? (UI.IsPointerOverUI no Lua)
+        bool IsPointerOverUI() const { return Api().IsPointerOverUI(); }
+
+        // --- Transform de mundo / hierarquia ---------------------------------
+        glm::mat4 GetWorldTransform() { return Api().GetWorldTransform(m_Entity.GetScene(), m_Entity.GetHandle()); }
+        glm::vec3 GetWorldPosition() { return glm::vec3(GetWorldTransform()[3]); }
+        glm::vec3 GetWorldForward() { return glm::normalize(glm::mat3(GetWorldTransform()) * glm::vec3(0.0f, 0.0f, -1.0f)); }
+        glm::vec3 GetWorldRight() { return glm::normalize(glm::mat3(GetWorldTransform()) * glm::vec3(1.0f, 0.0f, 0.0f)); }
+        // 'parent' invalido (Entity()) torna a entidade raiz. false se recusado (ciclo).
+        bool SetParent(Entity parent) {
+            return Api().SetParent(m_Entity.GetScene(), m_Entity.GetHandle(), parent.IsValid() ? parent.GetHandle() : entt::entity(entt::null));
+        }
+        // Todas as entidades com este nome (Tag). Equivale a Scene.FindAll do Lua.
+        std::vector<Entity> FindAllEntities(const std::string& name) {
+            std::vector<entt::entity> handles(64, entt::entity(entt::null));
+            uint32_t total = Api().FindAllEntities(m_Entity.GetScene(), name.c_str(), handles.data(), (uint32_t)handles.size());
+            if (total > handles.size()) {
+                handles.assign(total, entt::entity(entt::null));
+                Api().FindAllEntities(m_Entity.GetScene(), name.c_str(), handles.data(), total);
+            }
+            std::vector<Entity> result;
+            for (uint32_t i = 0; i < total && i < handles.size(); ++i)
+                result.emplace_back(handles[i], m_Entity.GetScene());
+            return result;
+        }
+        // primitive: PrimitiveMesh::Cube/Sphere/Capsule/Cylinder/Plane (Scene.CreateMesh do Lua).
+        Entity CreateMeshEntity(const std::string& name, PrimitiveMesh primitive, const glm::vec3& position = glm::vec3(0.0f)) {
+            entt::entity handle = Api().CreateMeshEntity(m_Entity.GetScene(), name.c_str(), (int)primitive, position);
+            return handle == entt::null ? Entity() : Entity(handle, m_Entity.GetScene());
+        }
 
         // Entidade invalida (Entity::IsValid() == false) se nao achar.
         Entity FindEntity(const std::string& name) {
@@ -160,6 +226,8 @@ namespace Prism {
         void Destroy(Entity entity) { Api().DestroyEntity(m_Entity.GetScene(), entity.GetHandle()); }
         void Destroy() { Destroy(m_Entity); }
 
+        // Forca continua (use em OnFixedUpdate); ApplyImpulse e instantaneo.
+        void ApplyForce(const glm::vec3& force) { Api().ApplyForce(m_Entity.GetScene(), m_Entity.GetHandle(), force); }
         void ApplyImpulse(const glm::vec3& impulse) { Api().ApplyImpulse(m_Entity.GetScene(), m_Entity.GetHandle(), impulse); }
         void SetVelocity(const glm::vec3& velocity) { Api().SetVelocity(m_Entity.GetScene(), m_Entity.GetHandle(), velocity); }
         glm::vec3 GetVelocity() { return Api().GetVelocity(m_Entity.GetScene(), m_Entity.GetHandle()); }
@@ -171,6 +239,21 @@ namespace Prism {
 
         void PlaySound() { Api().PlaySound(m_Entity.GetScene(), m_Entity.GetHandle()); }
         void StopSound() { Api().StopSound(m_Entity.GetScene(), m_Entity.GetHandle()); }
+
+        // Sons soltos (caminho relativo a pasta do projeto) e canais de volume.
+        void PlayAudio(const std::string& path, float volume = 1.0f, float pitch = 1.0f, AudioBus bus = AudioBus::SFX) const {
+            Api().PlaySoundFile(path.c_str(), volume, pitch, (int)bus);
+        }
+        void PlayAudio3D(const std::string& path, const glm::vec3& position, float volume = 1.0f, float pitch = 1.0f, AudioBus bus = AudioBus::SFX) const {
+            Api().PlaySoundFile3D(path.c_str(), position, volume, pitch, (int)bus);
+        }
+        void PreloadAudio(const std::string& path) const { Api().PreloadSound(path.c_str()); }
+        void SetBusVolume(AudioBus bus, float volume) const { Api().SetBusVolume((int)bus, volume); }
+        float GetBusVolume(AudioBus bus) const { return Api().GetBusVolume((int)bus); }
+        void SetBusMuted(AudioBus bus, bool muted) const { Api().SetBusMuted((int)bus, muted); }
+        bool IsBusMuted(AudioBus bus) const { return Api().IsBusMuted((int)bus); }
+        void SetMasterVolume(float volume) const { Api().SetMasterVolume(volume); }
+        float GetMasterVolume() const { return Api().GetMasterVolume(); }
 
         void PlayParticles() { Api().PlayParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }
         void StopParticles() { Api().StopParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }

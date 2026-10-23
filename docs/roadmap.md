@@ -1,5 +1,7 @@
 # Roadmap de melhorias
 
+Plano de trabalho por fases. Cada fase termina com a engine funcionando e a documentação atualizada.
+
 ## Fase 1 — Modelos e texturas (feito)
 
 - [x] Texturas de modelos importados invertidas: removido `aiProcess_FlipUVs` (a engine já carrega as imagens com flip vertical).
@@ -11,9 +13,10 @@
 
 - [x] `AudioEngine` em `Prism/Audio/` (miniaudio via FetchContent, só o header).
 - [x] Components `AudioSource` (clip, volume, pitch, loop, 3D, play on start) e `AudioListener` (mapa v15, prefab v3).
-- [x] Assets `.wav/.mp3/.flac` arrastáveis para o campo Clip; botão **Ouvir** no editor.
+- [x] Assets `.wav/.mp3/.ogg/.flac` arrastáveis para o campo Clip; botão **Ouvir** no editor.
 - [x] API Lua: `entity:PlaySound()`, `Audio.Play/Play3D/SetMasterVolume`. Veja [audio.md](audio.md).
-- [ ] Pendente: `.ogg` (stb_vorbis), canais de volume, efeitos.
+- [x] `.ogg` (stb_vorbis), canais de volume (buses) e cache de recursos.
+- [ ] Pendente: efeitos (reverb, filtros).
 
 ## Fase 3 — Scripting Lua melhor (feito, exceto itens abaixo)
 
@@ -21,16 +24,18 @@
 - API de entidade: buscar por nome/tag, criar/destruir, acessar e modificar qualquer component, hierarquia.
 - `Time`, `Input` completo (ações, mouse, gamepad), `Scene.Load`, `Physics` (forças, raycast, overlap), `Log`.
 - Variáveis públicas do script editáveis no painel Propriedades.
-- Mensagens de erro de Lua com arquivo/linha no Console; hot reload de scripts.
+- Mensagens de erro de Lua com arquivo/linha no Console; hot reload de scripts (Lua, preservando o estado; ver [scripting-lua.md](scripting-lua.md)).
 - Entregue: callbacks de colisão/trigger, `Time`, `Scene` (Find/Create/Instantiate/Destroy), getters de components, operadores de `Vec3`, `Mathf`, variáveis públicas (`Properties`).
-- Pendente: `OnFixedUpdate`, `Scene.Load`, gamepad, hot reload.
+- [x] `OnFixedUpdate` (Lua e C++) e hot reload de Lua.
+- Pendente: `Scene.Load`, gamepad.
 
 ## Fase 4 — Scripts em C++ (feito, exceto hot reload durante o Play)
 
 - Módulo nativo do projeto (DLL/.so) com CMake gerado pelo editor, carregado em runtime.
-- Interface `ScriptableEntity` (`OnCreate/OnUpdate/OnDestroy`) e registro por macro `PRISM_REGISTER_SCRIPT`.
+- Interface `ScriptableEntity` (`OnCreate/OnUpdate/OnFixedUpdate/OnDestroy`) e registro por macro `PRISM_REGISTER_SCRIPT`.
 - Entregue: `ScriptableEntity`, `PRISM_REGISTER_SCRIPT`, módulo DLL/.so com CMake gerado, menu "Scripts C++" (gerar/compilar/recarregar), component "Native Script", API da engine para o módulo. Ver [scripting-cpp.md](scripting-cpp.md).
-- Pendente: recarregar o módulo com o jogo em Play, propriedades públicas dos scripts C++, `OnFixedUpdate`.
+- [x] API v4: paridade com o Lua (transform de mundo, `ApplyForce`, hierarquia, mouse/cursor, UI, áudio com canais, `OnFixedUpdate`).
+- Pendente: recarregar o módulo com o jogo em Play, propriedades públicas dos scripts C++.
 
 ## Fase 5 — Básicos que ainda faltam
 

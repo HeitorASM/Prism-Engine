@@ -38,9 +38,13 @@ public:
 PRISM_REGISTER_SCRIPT(Coletavel)
 ```
 
-Ciclo de vida (todos opcionais): `OnCreate`, `OnUpdate(dt)`, `OnDestroy`, `OnCollisionEnter/Exit(other)`, `OnTriggerEnter/Exit(other)`, `OnClick()` (botão de UI; API v3). Mesma semântica dos scripts Lua; a mesma entidade pode ter um script Lua **e** um C++.
+Ciclo de vida (todos opcionais): `OnCreate`, `OnUpdate(dt)`, `OnFixedUpdate(fixedDt)` (passo fixo de 1/60 s antes de cada passo da física; API v4), `OnDestroy`, `OnCollisionEnter/Exit(other)`, `OnTriggerEnter/Exit(other)`, `OnClick()` (botão de UI; API v3). Mesma semântica dos scripts Lua; a mesma entidade pode ter um script Lua **e** um C++.
 
 Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `HasComponent<T>`, `GetTransform`, `LogInfo/Warn/Error`, `IsKeyDown/IsKeyPressed/IsMouseButtonDown`, `GetMouseDeltaX/Y`, `GetDeltaTime`, `GetElapsedTime`, `FindEntity`, `CreateEntity`, `Instantiate`, `Destroy`, `ApplyImpulse`, `SetVelocity`, `GetVelocity`, `Raycast`, `PlaySound`, `StopSound`, `PlayParticles`, `StopParticles`.
+
+Adicionados na **API v4** (paridade com o Lua): `GetFixedDeltaTime`, `GetFrameCount`, `ApplyForce`, `GetWorldTransform`/`GetWorldPosition`/`GetWorldForward`/`GetWorldRight`, `SetParent` (e `GetParent`/`GetChildCount`/`GetChildAt` da própria `Entity`), `FindAllEntities`, `CreateMeshEntity`, `GetMouseX/Y`, `SetCursorMode`/`GetCursorMode`, `IsPointerOverUI`, e o áudio: `PlayAudio`, `PlayAudio3D`, `PreloadAudio`, `SetBusVolume`/`GetBusVolume`/`SetBusMuted`/`IsBusMuted` (canais `AudioBus::SFX/Music/UI/Ambient`), `SetMasterVolume`/`GetMasterVolume`.
+
+> Módulos compilados com a API v3 são recusados ao carregar: faça **Compilar** de novo (o `Source/` do projeto não muda).
 
 ## Como funciona (e limites)
 
@@ -53,6 +57,6 @@ Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `Ha
 
 ## Limitações
 
-- Sem recarga com o Play aberto: pare o Play, compile (ou aguarde o recarregamento automático).
+- Sem recarga com o Play aberto: pare o Play, compile (ou aguarde o recarregamento automático). O hot reload com o jogo rodando existe só para Lua.
 - Propriedades públicas editáveis no painel (como `Properties` do Lua) ainda não existem para scripts C++.
 - A classe é escolhida pelo nome: renomear a classe deixa os components antigos apontando para um nome que não existe (aviso no painel e no Play).

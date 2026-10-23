@@ -220,6 +220,10 @@ namespace Prism {
         // que retorna cedo sem a Scene rodando fisica).
         void UpdateRaycastComponents();
 
+        // OnFixedUpdate de todos os scripts (Lua e C++), chamado por
+        // PhysicsEngine::Simulate antes de cada passo fixo da fisica.
+        void RunFixedUpdate(float fixedDeltaTime);
+
         std::string m_Name;
         entt::registry m_Registry;
         bool m_IsRunning = false;

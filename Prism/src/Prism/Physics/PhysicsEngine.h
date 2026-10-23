@@ -19,6 +19,7 @@
 #include "../Core/Base.h"
 #include <glm/glm.hpp>
 #include <entt/entt.hpp>
+#include <functional>
 #include <unordered_map>
 #include <memory>
 #include <cstdint>
@@ -98,7 +99,15 @@ namespace Prism {
         // cinematica movida, e entrega eventos de colisao (ver
         // ConsumeCollisionEvents) para o ScriptEngine chamar
         // OnCollisionEnter/OnCollisionExit dos scripts relevantes.
-        static void Simulate(Scene& scene, float deltaTime);
+        //
+        // 'onFixedStep' (opcional) e chamada ANTES de CADA passo fixo, com o
+        // timestep (GetFixedTimeStep()): e o gancho do OnFixedUpdate dos scripts
+        // (forcas/velocidades aplicadas ali valem no passo que vem em seguida).
+        // Pode ser chamada 0, 1 ou ate kMaxStepsPerFrame vezes por frame.
+        static void Simulate(Scene& scene, float deltaTime, const std::function<void(float)>& onFixedStep = {});
+
+        // Timestep fixo da fisica e dos scripts (OnFixedUpdate): 1/60 s.
+        static float GetFixedTimeStep();
 
         // Cria (ou recria, se ja existia) o corpo Jolt de UMA entidade a
         // partir do RigidBodyComponent+ColliderComponent dela. Chamado

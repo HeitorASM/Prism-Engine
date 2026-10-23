@@ -60,7 +60,7 @@ namespace PrismEditor {
                 ImGui::EndDragDropTarget();
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Arraste um .wav, .mp3 ou .flac do painel Conteudo do Projeto.");
+                ImGui::SetTooltip("Arraste um .wav, .mp3, .ogg ou .flac do painel Conteudo do Projeto.");
 
             if (source.Clip.IsValid()) {
                 bool previewing = Prism::AudioEngine::IsPreviewPlaying();
@@ -87,6 +87,18 @@ namespace PrismEditor {
             if (ImGui::SliderFloat("Pitch", &source.Pitch, 0.1f, 4.0f))
                 source.Pitch = std::clamp(source.Pitch, 0.1f, 4.0f);
             TrackContinuousEdit(m_Ctx, m_AudioSourceBeforeEdit, source, "Audio Source");
+
+            {
+                // Bus (canal de volume): o volume do bus escala todos os sons dele.
+                static const char* kBusLabels[] = { "Efeitos (SFX)", "Musica", "Interface (UI)", "Ambiente" };
+                int bus = Prism::IsValidAudioBus((int32_t)source.Bus) ? (int)source.Bus : 0;
+                if (ImGui::Combo("Canal (bus)", &bus, kBusLabels, Prism::kAudioBusCount)) {
+                    source.Bus = (Prism::AudioBus)bus;
+                    CommitComponentEdit(m_Ctx, before, source, "Audio Source");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Cada canal tem volume e mudo proprios (script: Audio.SetBusVolume(\"music\", 0.5)).\nVolume final = volume do som x volume do canal x volume global.");
+            }
 
             if (ImGui::Checkbox("Repetir (Loop)", &source.Loop))
                 CommitComponentEdit(m_Ctx, before, source, "Audio Source");

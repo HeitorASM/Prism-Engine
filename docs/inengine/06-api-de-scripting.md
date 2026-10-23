@@ -12,6 +12,8 @@ Convenções: em Lua, `entity` é a entidade dona do script e as funções usam 
 |---|---|---|
 | Ao iniciar o Play | `function OnCreate()` | `void OnCreate() override` |
 | A cada frame | `function OnUpdate(dt)` | `void OnUpdate(float dt) override` |
+| Passo fixo (1/60 s, antes da física) | `function OnFixedUpdate(dt)` | `void OnFixedUpdate(float dt) override` |
+| Depois de um hot reload (só Lua) | `function OnReload()` | — |
 | Ao destruir / parar o Play | `function OnDestroy()` | `void OnDestroy() override` |
 | Começou a colidir | `function OnCollisionEnter(other)` | `void OnCollisionEnter(Entity other) override` |
 | Terminou a colisão | `function OnCollisionExit(other)` | `void OnCollisionExit(Entity other) override` |
@@ -107,7 +109,8 @@ A destruição é adiada para o fim do frame, nas duas linguagens.
 |---|---|---|
 | Delta time | `Time.DeltaTime` | `GetDeltaTime()` (ou o `dt` de `OnUpdate`) |
 | Tempo total | `Time.Elapsed` | `GetElapsedTime()` |
-| Contador de frames | `Time.FrameCount` | — |
+| Passo fixo | `Time.FixedDeltaTime` | `GetFixedDeltaTime()` |
+| Contador de frames | `Time.FrameCount` | `GetFrameCount()` |
 | Vetor 3D | `Vec3.new(x, y, z)` (operadores, `Length`, `Normalized`, `Dot`, `Cross`, `Distance`) | `glm::vec3` e funções do GLM |
 | Utilitários | `Mathf.Clamp`, `Mathf.Lerp`, `Mathf.Sign` | `glm::clamp`, `glm::mix`, `<cmath>` |
 
@@ -122,6 +125,8 @@ A destruição é adiada para o fim do frame, nas duas linguagens.
 | Tocar arquivo avulso | `Audio.Play(caminho)` | — |
 | Tocar em 3D | `Audio.Play3D(caminho, x, y, z)` | — |
 | Volume geral | `Audio.SetMasterVolume(v)` / `GetMasterVolume()` | — |
+| Volume por canal | `Audio.SetBusVolume("music", v)` / `GetBusVolume` / `SetBusMuted` | — |
+| Carregar antes | `Audio.Preload(caminho)` | — |
 
 ## Partículas
 

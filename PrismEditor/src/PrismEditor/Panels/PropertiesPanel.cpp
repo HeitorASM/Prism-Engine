@@ -437,6 +437,8 @@ namespace PrismEditor {
             "--   OnCreate()            -- chamada uma vez, quando o Play comeca\n"
             "--   OnUpdate(deltaTime)   -- chamada toda frame enquanto o Play estiver ligado\n"
             "--   OnDestroy()           -- chamada uma vez quando o Play para\n"
+            "-- Tambem existe OnFixedUpdate(dt): passo fixo (1/60 s) antes da fisica - bom para forcas.\n"
+            "-- Com o Play ligado, salvar este arquivo o recarrega sozinho (hot reload).\n"
             "--\n"
             "-- A variavel global `entity` ja existe dentro do script - e a PROPRIA\n"
             "-- entidade dona deste ScriptComponent.\n"

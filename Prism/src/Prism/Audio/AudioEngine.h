@@ -18,6 +18,8 @@
 // todas as chamadas viram no-ops - o resto da engine nao precisa checar nada.
 // ============================================================================
 
+#include "AudioBus.h"
+
 #include <glm/glm.hpp>
 #include <filesystem>
 
@@ -34,6 +36,7 @@ namespace Prism {
         glm::vec3 Position = { 0.0f, 0.0f, 0.0f };
         float MinDistance = 1.0f;
         float MaxDistance = 25.0f;
+        AudioBus Bus = AudioBus::SFX;
     };
 
     class AudioEngine {
@@ -46,6 +49,22 @@ namespace Prism {
         // Volume global (0..2), aplicado a tudo.
         static void SetMasterVolume(float volume);
         static float GetMasterVolume();
+
+        // --- Buses (canais de volume) ---------------------------------------
+        // Volume final = volume do som x volume do bus x volume global.
+        static void SetBusVolume(AudioBus bus, float volume); // 0..2
+        static float GetBusVolume(AudioBus bus);
+        static void SetBusMuted(AudioBus bus, bool muted);
+        static bool IsBusMuted(AudioBus bus);
+
+        // --- Cache de recursos ----------------------------------------------
+        // Efeitos curtos (ate 1 MB) sao decodificados UMA vez e compartilhados por
+        // todos os sons que usam o arquivo (sem ler/decodificar a cada disparo).
+        // Preload evita o engasgo do primeiro disparo; o cache percebe arquivo
+        // alterado em disco (recarrega) e e limitado a poucas centenas de entradas.
+        static void Preload(const std::filesystem::path& absolutePath);
+        static void ClearCache();
+        static size_t GetCachedClipCount();
 
         // --- Sons soltos ----------------------------------------------------
         // Toca o arquivo (caminho ABSOLUTO) uma vez e libera sozinho ao terminar.

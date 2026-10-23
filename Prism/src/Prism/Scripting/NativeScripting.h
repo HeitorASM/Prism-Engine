@@ -50,6 +50,7 @@ namespace Prism {
         // --- Instancias (chamado por Scene durante o Play) -----------------------
         static bool LoadScript(Entity entity);
         static void UpdateScript(Entity entity, float deltaTime);
+        static void FixedUpdateScript(Entity entity, float fixedDeltaTime);
         static void UnloadScript(Entity entity);
         static void UnloadAll();
         static void DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger);

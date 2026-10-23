@@ -8,6 +8,7 @@
 file(GLOB_RECURSE PRISM_SOURCES CONFIGURE_DEPENDS
     src/*.cpp
     src/*.h
+    src/*.c
 )
 
 add_library(Prism STATIC ${PRISM_SOURCES})

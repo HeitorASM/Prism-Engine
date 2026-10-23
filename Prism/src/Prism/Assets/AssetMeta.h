@@ -37,7 +37,7 @@ namespace Prism {
         Scene,     // .prismmap
         Script,    // .lua
         Model,     // .obj .fbx .gltf .glb (importacao ainda nao existe; ja ganha identidade)
-        Audio      // .wav .ogg .mp3 .flac (o AudioEngine toca wav/mp3/flac)
+        Audio      // .wav .ogg .mp3 .flac (o AudioEngine toca todos)
     };
 
     const char* AssetTypeToString(AssetType type);

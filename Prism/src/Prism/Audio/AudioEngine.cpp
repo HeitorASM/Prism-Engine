@@ -6,11 +6,14 @@
 
 // Implementacao do miniaudio: EXATAMENTE neste .cpp do projeto inteiro (ver
 // vendor/CMakeLists.txt). Encoding e geracao de ondas ficam de fora - a
-// engine so toca arquivos. Decoders embutidos: WAV, MP3 e FLAC. (OGG Vorbis
-// exigiria o stb_vorbis compilado como C junto desta implementacao - ver
-// docs/audio.md.)
+// engine so toca arquivos. Decoders embutidos: WAV, MP3 e FLAC; OGG Vorbis vem
+// do stb_vorbis (vendor/stb): aqui entram so as DECLARACOES (o miniaudio detecta
+// STB_VORBIS_INCLUDE_STB_VORBIS_H); a implementacao e compilada como C em
+// StbVorbisImpl.c.
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c>
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
 
@@ -22,6 +25,8 @@
 #include "../Core/Log.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -52,6 +57,72 @@ namespace Prism {
         bool s_Initialized = false;
         float s_MasterVolume = 1.0f;
 
+        // Um ma_sound_group por bus: todo som toca dentro do grupo do seu bus.
+        ma_sound_group s_BusGroups[kAudioBusCount];
+        bool s_BusGroupReady[kAudioBusCount] = {};
+        float s_BusVolume[kAudioBusCount] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        bool s_BusMuted[kAudioBusCount] = {};
+
+        int BusIndex(AudioBus bus) {
+            return IsValidAudioBus((int32_t)bus) ? (int)bus : 0;
+        }
+
+        void ApplyBusVolume(int index) {
+            if (s_BusGroupReady[index])
+                ma_sound_group_set_volume(&s_BusGroups[index], s_BusMuted[index] ? 0.0f : s_BusVolume[index]);
+        }
+
+        // Cache de clipes curtos (ver AudioEngine::Preload): o proprio
+        // ma_resource_manager guarda o PCM decodificado; aqui so lembramos o que
+        // registramos (e a data do arquivo) para recarregar quando mudar.
+        struct CacheEntry {
+            std::filesystem::path Path;
+            std::filesystem::file_time_type WriteTime;
+        };
+        std::vector<CacheEntry> s_Cache; // do mais antigo ao mais novo
+        constexpr size_t kMaxCacheEntries = 128;
+
+        void UnregisterFromManager(const std::filesystem::path& path) {
+#ifdef _WIN32
+            ma_resource_manager_unregister_file_w(ma_engine_get_resource_manager(&s_Engine), path.c_str());
+#else
+            ma_resource_manager_unregister_file(ma_engine_get_resource_manager(&s_Engine), path.c_str());
+#endif
+        }
+
+        // Garante o clipe curto decodificado no cache e atualizado. false = nao entrou no cache.
+        bool EnsureCached(const std::filesystem::path& path) {
+            std::error_code ec;
+            auto writeTime = std::filesystem::last_write_time(path, ec);
+            if (ec)
+                return false;
+
+            for (size_t i = 0; i < s_Cache.size(); ++i) {
+                if (s_Cache[i].Path != path)
+                    continue;
+                if (s_Cache[i].WriteTime == writeTime)
+                    return true;
+                UnregisterFromManager(path); // arquivo mudou: descarta e recarrega abaixo
+                s_Cache.erase(s_Cache.begin() + (std::ptrdiff_t)i);
+                break;
+            }
+
+            if (s_Cache.size() >= kMaxCacheEntries) {
+                UnregisterFromManager(s_Cache.front().Path);
+                s_Cache.erase(s_Cache.begin());
+            }
+
+#ifdef _WIN32
+            ma_result result = ma_resource_manager_register_file_w(ma_engine_get_resource_manager(&s_Engine), path.c_str(), MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE);
+#else
+            ma_result result = ma_resource_manager_register_file(ma_engine_get_resource_manager(&s_Engine), path.c_str(), MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE);
+#endif
+            if (result != MA_SUCCESS)
+                return false;
+            s_Cache.push_back({ path, writeTime });
+            return true;
+        }
+
         std::unordered_map<SourceKey, std::unique_ptr<ma_sound>, SourceKeyHash> s_Sources;
         std::vector<std::unique_ptr<ma_sound>> s_OneShots;
         std::unique_ptr<ma_sound> s_Preview;
@@ -77,19 +148,24 @@ namespace Prism {
 
             ma_uint32 flags = 0;
             std::uintmax_t size = std::filesystem::file_size(path, ec);
-            flags |= (!ec && size > kStreamThresholdBytes) ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+            const bool stream = (!ec && size > kStreamThresholdBytes);
+            flags |= stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+            if (!stream)
+                EnsureCached(path); // clipe curto: decodificado uma vez e compartilhado
             if (!options.Spatial)
                 flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
 
+            const int busIndex = BusIndex(options.Bus);
+            ma_sound_group* group = s_BusGroupReady[busIndex] ? &s_BusGroups[busIndex] : nullptr;
             auto sound = std::make_unique<ma_sound>();
 #ifdef _WIN32
-            ma_result result = ma_sound_init_from_file_w(&s_Engine, path.c_str(), flags, nullptr, nullptr, sound.get());
+            ma_result result = ma_sound_init_from_file_w(&s_Engine, path.c_str(), flags, group, nullptr, sound.get());
 #else
-            ma_result result = ma_sound_init_from_file(&s_Engine, path.c_str(), flags, nullptr, nullptr, sound.get());
+            ma_result result = ma_sound_init_from_file(&s_Engine, path.c_str(), flags, group, nullptr, sound.get());
 #endif
             if (result != MA_SUCCESS) {
                 PRISM_CORE_WARN("AudioEngine: nao foi possivel carregar '", path.string(), "' (", ma_result_description(result),
-                    "). Formatos suportados: .wav, .mp3, .flac.");
+                    "). Formatos suportados: .wav, .mp3, .flac, .ogg.");
                 return nullptr;
             }
 
@@ -133,6 +209,7 @@ namespace Prism {
             options.Position = position;
             options.MinDistance = source.MinDistance;
             options.MaxDistance = source.MaxDistance;
+            options.Bus = source.Bus;
             return options;
         }
 
@@ -203,6 +280,10 @@ namespace Prism {
         }
         s_Initialized = true;
         ma_engine_set_volume(&s_Engine, s_MasterVolume);
+        for (int i = 0; i < kAudioBusCount; ++i) {
+            s_BusGroupReady[i] = ma_sound_group_init(&s_Engine, 0, nullptr, &s_BusGroups[i]) == MA_SUCCESS;
+            ApplyBusVolume(i);
+        }
         PRISM_CORE_INFO("AudioEngine: miniaudio inicializado (", ma_engine_get_sample_rate(&s_Engine), " Hz).");
     }
 
@@ -216,6 +297,12 @@ namespace Prism {
             DestroySound(sound);
         s_OneShots.clear();
         DestroySound(s_Preview);
+        for (int i = 0; i < kAudioBusCount; ++i) {
+            if (s_BusGroupReady[i])
+                ma_sound_group_uninit(&s_BusGroups[i]);
+            s_BusGroupReady[i] = false;
+        }
+        s_Cache.clear(); // o resource manager libera tudo junto com o engine
         ma_engine_uninit(&s_Engine);
         s_Initialized = false;
     }
@@ -232,6 +319,48 @@ namespace Prism {
 
     float AudioEngine::GetMasterVolume() {
         return s_MasterVolume;
+    }
+
+    void AudioEngine::SetBusVolume(AudioBus bus, float volume) {
+        const int index = BusIndex(bus);
+        s_BusVolume[index] = std::clamp(std::isfinite(volume) ? volume : 1.0f, 0.0f, 2.0f);
+        ApplyBusVolume(index);
+    }
+
+    float AudioEngine::GetBusVolume(AudioBus bus) {
+        return s_BusVolume[BusIndex(bus)];
+    }
+
+    void AudioEngine::SetBusMuted(AudioBus bus, bool muted) {
+        const int index = BusIndex(bus);
+        s_BusMuted[index] = muted;
+        ApplyBusVolume(index);
+    }
+
+    bool AudioEngine::IsBusMuted(AudioBus bus) {
+        return s_BusMuted[BusIndex(bus)];
+    }
+
+    void AudioEngine::Preload(const std::filesystem::path& absolutePath) {
+        if (!s_Initialized || absolutePath.empty())
+            return;
+        std::error_code ec;
+        std::uintmax_t size = std::filesystem::file_size(absolutePath, ec);
+        if (ec || size > kStreamThresholdBytes)
+            return; // musica grande: toca em streaming, nao entra no cache
+        EnsureCached(absolutePath);
+    }
+
+    void AudioEngine::ClearCache() {
+        if (!s_Initialized)
+            return;
+        for (const CacheEntry& entry : s_Cache)
+            UnregisterFromManager(entry.Path);
+        s_Cache.clear();
+    }
+
+    size_t AudioEngine::GetCachedClipCount() {
+        return s_Cache.size();
     }
 
     void AudioEngine::PlayOneShot(const std::filesystem::path& absolutePath, const AudioPlayOptions& options) {
@@ -264,6 +393,10 @@ namespace Prism {
             return;
         UpdateListener(scene);
         auto view = scene.GetRegistry().view<AudioSourceComponent>();
+        // Carrega antes todos os clipes curtos da cena: o primeiro disparo no meio do
+        // jogo (tiro, passo) nao decodifica nada.
+        for (auto handle : view)
+            Preload(ResolveClip(view.get<AudioSourceComponent>(handle).Clip));
         for (auto handle : view) {
             if (view.get<AudioSourceComponent>(handle).PlayOnStart)
                 StartSource(scene, Entity(handle, &scene));

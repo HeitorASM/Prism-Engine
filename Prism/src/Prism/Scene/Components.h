@@ -16,6 +16,7 @@
 #include <glm/gtx/euler_angles.hpp> // glm::yawPitchRoll (extensao GTX, header separado do gtc/quaternion)
 #include <entt/entt.hpp>
 #include "../Assets/AssetID.h"
+#include "../Audio/AudioBus.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -735,6 +736,7 @@ namespace Prism {
         bool Spatial = true;           // false = som 2D (ignora posicao, ex: musica/UI)
         float MinDistance = 1.0f;      // ate aqui, volume cheio
         float MaxDistance = 25.0f;     // a partir daqui, mudo (queda linear entre os dois)
+        AudioBus Bus = AudioBus::SFX;  // canal de volume (ver Audio/AudioBus.h); bloco v2 da cena
 
         AudioSourceComponent() = default;
         AudioSourceComponent(const AudioSourceComponent&) = default;

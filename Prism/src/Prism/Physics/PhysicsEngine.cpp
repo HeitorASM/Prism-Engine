@@ -692,7 +692,11 @@ namespace Prism {
         state->EntityToBody.erase(it);
     }
 
-    void PhysicsEngine::Simulate(Scene& scene, float deltaTime) {
+    float PhysicsEngine::GetFixedTimeStep() {
+        return kFixedTimeStep;
+    }
+
+    void PhysicsEngine::Simulate(Scene& scene, float deltaTime, const std::function<void(float)>& onFixedStep) {
         SceneState* state = GetState(scene);
         if (!state)
             return;
@@ -712,6 +716,11 @@ namespace Prism {
             // em vez de pedir para o proprio Jolt subdividir um
             // deltaTime maior internamente (que e para o que
             // collisionSteps > 1 serve).
+            // Scripts (OnFixedUpdate) ANTES do passo: forcas e velocidades que eles
+            // aplicam entram neste passo. Um script pode destruir/criar entidades
+            // (adiado pelo ScriptEngine) mas nao o mundo fisico, entao 'state' segue valido.
+            if (onFixedStep)
+                onFixedStep(kFixedTimeStep);
             state->PhysicsSystem->Update(kFixedTimeStep, kCollisionSteps, state->TempAllocator.get(), state->JobSystem.get());
             state->Accumulator -= kFixedTimeStep;
             stepsThisFrame++;

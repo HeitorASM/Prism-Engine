@@ -485,17 +485,27 @@ namespace Prism {
                 WriteRaw(out, c.Spatial);
                 WriteRaw(out, c.MinDistance);
                 WriteRaw(out, c.MaxDistance);
+                WriteRaw(out, (int32_t)c.Bus); // bloco v2
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<AudioSourceComponent>();
-                if (!(ReadRaw(in, c.Clip) && ReadRaw(in, c.Volume) && ReadRaw(in, c.Pitch) && ReadRaw(in, c.Loop)
-                    && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Spatial) && ReadRaw(in, c.MinDistance) && ReadRaw(in, c.MaxDistance))) {
+                bool ok = ReadRaw(in, c.Clip) && ReadRaw(in, c.Volume) && ReadRaw(in, c.Pitch) && ReadRaw(in, c.Loop)
+                       && ReadRaw(in, c.PlayOnStart) && ReadRaw(in, c.Spatial) && ReadRaw(in, c.MinDistance) && ReadRaw(in, c.MaxDistance);
+                // Bloco v2: bus de audio (blocos v1 ficam em SFX).
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    int32_t bus = 0;
+                    ok = ReadRaw(in, bus);
+                    c.Bus = IsValidAudioBus(bus) ? (AudioBus)bus : AudioBus::SFX;
+                }
+                if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (audio source da entidade ", entityIndex, ").");
                     return false;
                 }
                 return true;
             }
         );
+        // v2 do bloco: campo Bus no fim. Cenas legadas (sem blocos) nunca o tiveram.
+        s_Registry.back().Version = 2;
 
         // --- AudioListenerComponent (v15) ------------------------------------
         Register<AudioListenerComponent>(
