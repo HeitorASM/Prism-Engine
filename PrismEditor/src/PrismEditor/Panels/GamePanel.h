@@ -60,6 +60,7 @@ namespace PrismEditor {
         EditorContext& m_Ctx;
 
         Prism::Ref<Prism::Scene> m_PlayScene;
+        Prism::Ref<Prism::Scene> m_PristineScene; // copia intacta da cena de edicao (Scene.Reload)
         Prism::Scope<Prism::Framebuffer> m_Framebuffer;
 
         // Tamanho/posicao da imagem no ultimo frame de ImGui (a simulacao usa

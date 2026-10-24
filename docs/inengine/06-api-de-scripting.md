@@ -74,7 +74,9 @@ Rotação sempre em **graus**.
 | Achar por nome | `Scene.Find("nome")` | `FindEntity("nome")` |
 | Achar todas por nome | `Scene.FindAll("nome")` | — |
 | Criar entidade vazia | `Scene.Create("nome")` | `CreateEntity("nome")` |
-| Criar com mesh | `Scene.CreateMesh("nome", ...)` | — |
+| Criar com mesh | `Scene.CreateMesh("nome", ...)` | `CreateMeshEntity("nome", PrimitiveMesh::Cube, pos)` |
+| Trocar de cena | `Scene.Load("Fase2")` | `LoadScene("Fase2")` |
+| Recomeçar a cena | `Scene.Reload()` | `ReloadScene()` |
 | Instanciar prefab | `Scene.Instantiate(caminho, pos)` | `Instantiate(caminho)` / `Instantiate(caminho, pos)` |
 | Destruir outra entidade | `Scene.Destroy(e)` | `Destroy(entidade)` |
 | Trocar de cena | — | — |

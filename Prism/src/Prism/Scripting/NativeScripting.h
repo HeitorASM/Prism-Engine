@@ -11,12 +11,15 @@
 #include "NativeScript.h"
 #include "../Scene/Entity.h"
 #include "../Project/Project.h"
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace Prism {
+
+    class Scene;
 
     class NativeScripting {
     public:
@@ -34,6 +37,20 @@ namespace Prism {
         static bool IsModuleLoaded() { return s_Module.Handle != nullptr; }
         static const std::vector<std::string>& GetClassNames() { return s_ClassNames; }
         static bool HasClass(const std::string& name);
+
+        // Variaveis publicas declaradas pela classe em OnProperties, com os valores
+        // PADRAO (os iniciais dos membros). Cria um objeto temporario sem entidade.
+        // Em cache ate o modulo ser recarregado. Vazio se a classe nao existe/nao declara.
+        static const std::vector<ScriptPropertyValue>& ReadClassProperties(const std::string& className);
+
+        // Hot reload do modulo DURANTE o Play: se o .dll/.so do projeto mudou (o botao
+        // Compilar do editor, ou um build por fora), troca o codigo sem parar o jogo.
+        // Os scripts C++ em execucao sao destruidos (OnDestroy) e recriados com o codigo
+        // novo (OnProperties + OnCreate) - o estado do MUNDO (entidades, fisica) fica; o
+        // estado dos MEMBROS dos scripts recomeca. Chamado por Scene::OnUpdate (~2x/s).
+        // Se o modulo novo for invalido, o antigo segue rodando.
+        static void PollHotReload(Scene& scene);
+        static void SetHotReloadEnabled(bool enabled) { s_HotReload = enabled; }
 
         static std::filesystem::path GetModulePath(const Project& project);
         static std::filesystem::path GetSourceDirectory(const Project& project) { return project.GetProjectDirectory() / "Source"; }
@@ -83,7 +100,23 @@ namespace Prism {
             }
         };
 
+        // Modulo ja aberto e validado, ainda NAO instalado (ver OpenModule/InstallModule).
+        struct LoadedModule {
+            void* Handle = nullptr;
+            std::filesystem::path LoadedCopy;
+            std::filesystem::file_time_type SourceWriteTime{};
+            std::vector<std::pair<std::string, ClassInfo>> Classes;
+        };
+        static bool OpenModule(const Project& project, LoadedModule& out);
+        static void InstallModule(LoadedModule& module);
+        static void ApplyProperties(ScriptableEntity& object, const NativeScriptComponent& component);
+
         static ModuleState s_Module;
+        static std::unordered_map<std::string, std::vector<ScriptPropertyValue>> s_PropertyCache;
+        static std::filesystem::file_time_type s_LoadedWriteTime;
+        static std::filesystem::file_time_type s_PendingWriteTime;
+        static std::chrono::steady_clock::time_point s_LastHotReloadPoll;
+        static bool s_HotReload;
         static std::vector<std::string> s_ClassNames;
         static std::unordered_map<std::string, ClassInfo> s_Classes;
         static std::unordered_map<InstanceKey, Instance, InstanceKeyHash> s_Instances;

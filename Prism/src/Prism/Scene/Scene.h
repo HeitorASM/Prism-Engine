@@ -103,6 +103,35 @@ namespace Prism {
         // TransformComponent sozinho so tem o espaco LOCAL (relativo ao pai).
         glm::mat4 GetWorldTransform(Entity entity);
 
+        // --- Troca de cena em jogo (Scene.Load / Scene.Reload nos scripts) ------
+        // Scripts so PEDEM a troca (RequestLoadScene/RequestReloadScene); quem
+        // possui a cena em execucao (aba Game, janela de Play, PrismRuntime)
+        // aplica DEPOIS do OnUpdate com ApplyPendingLoad - nunca no meio de um
+        // callback de script.
+        //
+        // 'relativeMapPath': relativo a pasta de mapas do projeto, com ou sem
+        // ".prismmap" (ex: "Fase2" ou "Levels/Fase2.prismmap").
+        void RequestLoadScene(const std::string& relativeMapPath);
+        void RequestReloadScene();
+        bool HasPendingSceneLoad() const { return m_PendingLoadKind != PendingLoad::None; }
+
+        // Mapa de origem (relativo a pasta de mapas) quando a cena veio de LoadMap;
+        // vazio para a cena clonada do editor.
+        const std::string& GetSourceMap() const { return m_SourceMap; }
+        void SetSourceMap(const std::string& relativeMapPath) { m_SourceMap = relativeMapPath; }
+
+        // Le um mapa do projeto ativo para uma cena nova (ainda sem OnScriptsStart).
+        // nullptr + erro no log se nao existir/estiver invalido.
+        static Ref<Scene> LoadMap(const std::string& relativeMapPath);
+
+        // Se 'current' pediu uma troca, carrega a nova cena, para os scripts da
+        // antiga (OnScriptsStop), inicia os da nova (OnScriptsStart) e troca o
+        // ponteiro. 'pristine' (opcional) e uma copia intacta da cena de edicao,
+        // usada por Scene.Reload() quando a cena atual nao veio de um mapa
+        // (jogo iniciado do editor). Se o carregamento falhar, a cena atual
+        // continua rodando. Devolve true se trocou.
+        static bool ApplyPendingLoad(Ref<Scene>& current, const Ref<Scene>& pristine = nullptr);
+
         // true se 'possibleAncestor' e o proprio 'entity' ou um ancestral
         // dele (pai, avo, etc). Usado por SetParent para recusar ciclos e
         // pela Hierarchy panel para recusar um drag-and-drop invalido antes
@@ -227,6 +256,11 @@ namespace Prism {
         std::string m_Name;
         entt::registry m_Registry;
         bool m_IsRunning = false;
+
+        enum class PendingLoad { None, Load, Reload };
+        PendingLoad m_PendingLoadKind = PendingLoad::None;
+        std::string m_PendingLoadPath;
+        std::string m_SourceMap;
 
         friend class Entity;
     };

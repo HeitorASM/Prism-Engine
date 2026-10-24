@@ -252,7 +252,18 @@ namespace Prism {
         Register<NativeScriptComponent>(
             "Native Script",
             [](std::ostream& out, Entity e) {
-                WriteString(out, e.GetComponent<NativeScriptComponent>().ClassName);
+                auto& c = e.GetComponent<NativeScriptComponent>();
+                WriteString(out, c.ClassName);
+                // Bloco v2: overrides das variaveis publicas (mesmo formato do Script Lua).
+                uint32_t count = (uint32_t)c.Properties.size();
+                WriteRaw(out, count);
+                for (const ScriptPropertyValue& property : c.Properties) {
+                    WriteString(out, property.Name);
+                    WriteRaw(out, property.Type);
+                    WriteRaw(out, property.Number);
+                    WriteRaw(out, property.Bool);
+                    WriteString(out, property.String);
+                }
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<NativeScriptComponent>();
@@ -260,9 +271,26 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (script nativo da entidade ", entityIndex, ").");
                     return false;
                 }
+                if (ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    uint32_t count = 0;
+                    if (!ReadRaw(in, count) || count > 4096) {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (variaveis do script nativo da entidade ", entityIndex, ").");
+                        return false;
+                    }
+                    c.Properties.resize(count);
+                    for (ScriptPropertyValue& property : c.Properties) {
+                        if (!(ReadString(in, property.Name) && ReadRaw(in, property.Type) && ReadRaw(in, property.Number)
+                            && ReadRaw(in, property.Bool) && ReadString(in, property.String))) {
+                            PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (variaveis do script nativo da entidade ", entityIndex, ").");
+                            return false;
+                        }
+                    }
+                }
                 return true;
             }
         );
+        // v2 do bloco: overrides de variaveis publicas no fim.
+        s_Registry.back().Version = 2;
 
         // --- ParticleEmitterComponent (v18) ----------------------------------------
         Register<ParticleEmitterComponent>(

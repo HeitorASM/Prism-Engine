@@ -86,6 +86,7 @@ namespace PrismEditor {
     private:
         GLFWwindow* m_Window = nullptr;
         Prism::Ref<Prism::Scene> m_PlayScene;
+        Prism::Ref<Prism::Scene> m_PristineScene; // copia intacta da cena de edicao (Scene.Reload)
 
         // Tamanho inicial da janela de Play - fixo (sem configuracao de
         // resolucao na UI). Atualizado se o usuario redimensionar a janela

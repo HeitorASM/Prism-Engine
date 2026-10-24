@@ -81,6 +81,7 @@ namespace PrismRuntime {
             return;
         }
         m_Scene = serializer.GetScene();
+        m_Scene->SetSourceMap(startMap.generic_string()); // Scene.Reload() recarrega este mapa
 
         // Scripts C++ (Binaries/NativeScripts.*): sem modulo compilado nao e erro.
         Prism::NativeScripting::LoadProjectModule(*project);
@@ -142,6 +143,9 @@ namespace PrismRuntime {
 
         m_Scene->OnUpdate(deltaTime);
         Prism::Input::EndFrame(); // depois de toda a logica do quadro (ver Input::EndFrame)
+
+        // Scene.Load / Scene.Reload pedidos por scripts: troca a cena depois do quadro.
+        Prism::Scene::ApplyPendingLoad(m_Scene);
 
         int framebufferWidth = 0, framebufferHeight = 0;
         glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);

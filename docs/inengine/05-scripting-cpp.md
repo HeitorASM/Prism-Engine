@@ -65,4 +65,5 @@ PRISM_REGISTER_SCRIPT(Jogador)
 - Exceções C++ dentro dos callbacks são capturadas (o erro vai para o Console e o script para). Falhas graves, como acesso inválido à memória, derrubam o editor, como qualquer código nativo.
 - A classe é escolhida **pelo nome**: renomeá-la deixa o component apontando para um nome que não existe (aparece um aviso).
 - Não há recarga com o Play aberto: pare o Play, compile e rode de novo.
-- Ainda não existem variáveis públicas editáveis no painel para C++ (só `Properties` em Lua).
+- Variáveis públicas: declare em `OnProperties(NativeProperties& p)` (`p.Float("nome", membro)`, `Int`, `Bool`, `String`) e edite no painel.
+- Hot reload: **Compilar** funciona com o Play rodando; os scripts C++ recomeçam com o código novo e o mundo continua.

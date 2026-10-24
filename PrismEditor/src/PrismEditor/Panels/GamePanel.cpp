@@ -41,6 +41,7 @@ namespace PrismEditor {
         m_Capturing = false;
         m_LoggedNoCameraWarning = false;
 
+        m_PristineScene = editorScene->Clone();
         m_PlayScene = cloned;
         m_PlayScene->OnScriptsStart();
         m_FocusRequested = true;
@@ -61,6 +62,7 @@ namespace PrismEditor {
         Prism::UISystem::ResetInput();
 
         m_PlayScene = nullptr;
+        m_PristineScene = nullptr;
         m_Capturing = false;
         PRISM_CORE_INFO("Game: parado.");
     }
@@ -79,6 +81,10 @@ namespace PrismEditor {
 
         m_PlayScene->OnUpdate(deltaTime);
         Prism::Input::EndFrame();
+
+        // Scene.Load / Scene.Reload pedidos por scripts: aplica depois do frame.
+        if (Prism::Scene::ApplyPendingLoad(m_PlayScene, m_PristineScene))
+            m_LoggedNoCameraWarning = false;
 
         if (width == 0 || height == 0)
             return;

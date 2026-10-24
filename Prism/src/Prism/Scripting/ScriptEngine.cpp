@@ -662,6 +662,17 @@ namespace Prism {
                 return Entity();
             return InstantiateRuntime(*scene, relativePath, position.has_value() ? &*position : nullptr);
         };
+        // Scene.Load("Fase2")   -> troca para o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
+        // Scene.Reload()        -> recomeca a cena atual do zero.
+        // Todos os scripts e entidades da cena atual sao destruidos; nada persiste entre cenas.
+        sceneTable["Load"] = [callerScene](sol::this_environment thisEnv, const std::string& mapPath) {
+            if (Scene* scene = callerScene(thisEnv))
+                scene->RequestLoadScene(mapPath);
+        };
+        sceneTable["Reload"] = [callerScene](sol::this_environment thisEnv) {
+            if (Scene* scene = callerScene(thisEnv))
+                scene->RequestReloadScene();
+        };
         sceneTable["Destroy"] = [](Entity entity) { QueueDestroy(entity); };
         lua["Scene"] = sceneTable;
 

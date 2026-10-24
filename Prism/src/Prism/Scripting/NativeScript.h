@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 5;
+    constexpr uint32_t kNativeApiVersion = 6;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -126,6 +126,44 @@ namespace Prism {
         void (*SetAnimationPaused)(Scene* scene, entt::entity entity, bool paused);
         void (*SetAnimationSpeed)(Scene* scene, entt::entity entity, float speed);
         bool (*IsAnimationPlaying)(Scene* scene, entt::entity entity);
+
+        // v6 - troca de cena (aplicada pela engine DEPOIS do frame atual).
+        void (*LoadScene)(Scene* scene, const char* mapPath); // relativo a pasta de mapas, com ou sem .prismmap
+        void (*ReloadScene)(Scene* scene);
+    };
+
+    // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
+    // O visitante e implementado pela ENGINE; o modulo so o chama, via
+    // NativeProperties abaixo. Cada chamada recebe o valor atual do membro e
+    // devolve o override do editor (se houver).
+    class NativePropertyVisitor {
+    public:
+        virtual bool Number(const char* name, double current, double* overrideValue) = 0;
+        virtual bool Bool(const char* name, bool current, bool* overrideValue) = 0;
+        virtual const char* String(const char* name, const char* current) = 0; // nullptr = sem override
+    protected:
+        ~NativePropertyVisitor() = default;
+    };
+
+    // Passado a ScriptableEntity::OnProperties. Exemplo:
+    //   void OnProperties(NativeProperties& p) override {
+    //       p.Float("speed", m_Speed);
+    //       p.Bool("canJump", m_CanJump);
+    //   }
+    // O valor inicial do membro vira o PADRAO mostrado no editor. Chamado antes de
+    // OnCreate (e no editor, num objeto SEM entidade - nao use GetEntity() aqui).
+    class NativeProperties {
+    public:
+        explicit NativeProperties(NativePropertyVisitor& visitor) : m_Visitor(visitor) {}
+
+        void Float(const char* name, float& value) { double o; if (m_Visitor.Number(name, (double)value, &o)) value = (float)o; }
+        void Double(const char* name, double& value) { double o; if (m_Visitor.Number(name, value, &o)) value = o; }
+        void Int(const char* name, int& value) { double o; if (m_Visitor.Number(name, (double)value, &o)) value = (int)(o < 0.0 ? o - 0.5 : o + 0.5); }
+        void Bool(const char* name, bool& value) { bool o; if (m_Visitor.Bool(name, value, &o)) value = o; }
+        void String(const char* name, std::string& value) { if (const char* o = m_Visitor.String(name, value.c_str())) value = o; }
+
+    private:
+        NativePropertyVisitor& m_Visitor;
     };
 
     // Classe base de um script nativo. Uma instancia por entidade que tenha
@@ -147,6 +185,8 @@ namespace Prism {
         virtual void OnTriggerExit(Entity other) { (void)other; }
         // Botao de UI (UIElementComponent::Button) desta entidade foi clicado.
         virtual void OnClick() {}
+        // Declara as variaveis publicas (ver NativeProperties). Opcional.
+        virtual void OnProperties(NativeProperties& properties) { (void)properties; }
 
         // Uso da engine: associa a instancia a entidade antes de OnCreate.
         void PrismBind(Entity entity) { m_Entity = entity; }
@@ -272,6 +312,11 @@ namespace Prism {
         void PauseAnimation(bool paused = true) { Api().SetAnimationPaused(m_Entity.GetScene(), m_Entity.GetHandle(), paused); }
         void SetAnimationSpeed(float speed) { Api().SetAnimationSpeed(m_Entity.GetScene(), m_Entity.GetHandle(), speed); }
         bool IsAnimationPlaying() { return Api().IsAnimationPlaying(m_Entity.GetScene(), m_Entity.GetHandle()); }
+
+        // Troca de cena: carrega o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
+        // Todos os scripts e entidades da cena atual sao destruidos.
+        void LoadScene(const std::string& mapPath) { Api().LoadScene(m_Entity.GetScene(), mapPath.c_str()); }
+        void ReloadScene() { Api().ReloadScene(m_Entity.GetScene()); }
 
         void PlayParticles() { Api().PlayParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }
         void StopParticles() { Api().StopParticles(m_Entity.GetScene(), m_Entity.GetHandle()); }

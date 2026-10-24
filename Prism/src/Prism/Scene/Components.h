@@ -623,6 +623,10 @@ namespace Prism {
     struct NativeScriptComponent {
         std::string ClassName;
 
+        // Overrides das variaveis publicas (declaradas em ScriptableEntity::OnProperties):
+        // so as que o usuario mudou no editor. Aplicadas antes do OnCreate.
+        std::vector<ScriptPropertyValue> Properties;
+
         NativeScriptComponent() = default;
         NativeScriptComponent(const NativeScriptComponent&) = default;
         NativeScriptComponent(const std::string& className) : ClassName(className) {}

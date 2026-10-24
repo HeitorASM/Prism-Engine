@@ -27,15 +27,16 @@ Plano de trabalho por fases. Cada fase termina com a engine funcionando e a docu
 - Mensagens de erro de Lua com arquivo/linha no Console; hot reload de scripts (Lua, preservando o estado; ver [scripting-lua.md](scripting-lua.md)).
 - Entregue: callbacks de colisão/trigger, `Time`, `Scene` (Find/Create/Instantiate/Destroy), getters de components, operadores de `Vec3`, `Mathf`, variáveis públicas (`Properties`).
 - [x] `OnFixedUpdate` (Lua e C++) e hot reload de Lua.
-- Pendente: `Scene.Load`, gamepad.
+- [x] `Scene.Load` / `Scene.Reload` (Lua e C++).
+- Pendente: gamepad.
 
-## Fase 4 — Scripts em C++ (feito, exceto hot reload durante o Play)
+## Fase 4 — Scripts em C++ (feito)
 
 - Módulo nativo do projeto (DLL/.so) com CMake gerado pelo editor, carregado em runtime.
 - Interface `ScriptableEntity` (`OnCreate/OnUpdate/OnFixedUpdate/OnDestroy`) e registro por macro `PRISM_REGISTER_SCRIPT`.
 - Entregue: `ScriptableEntity`, `PRISM_REGISTER_SCRIPT`, módulo DLL/.so com CMake gerado, menu "Scripts C++" (gerar/compilar/recarregar), component "Native Script", API da engine para o módulo. Ver [scripting-cpp.md](scripting-cpp.md).
 - [x] API v4: paridade com o Lua (transform de mundo, `ApplyForce`, hierarquia, mouse/cursor, UI, áudio com canais, `OnFixedUpdate`).
-- Pendente: recarregar o módulo com o jogo em Play, propriedades públicas dos scripts C++.
+- [x] API v6: variáveis públicas (`OnProperties`), hot reload do módulo durante o Play, `LoadScene`/`ReloadScene`.
 
 ## Fase 5 — Básicos que ainda faltam
 

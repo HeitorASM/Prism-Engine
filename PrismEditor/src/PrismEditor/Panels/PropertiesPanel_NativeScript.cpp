@@ -4,6 +4,8 @@
 #include "../Play/PlayWindow.h"
 #include <imgui.h>
 #include <Prism/Scripting/NativeScripting.h>
+#include <algorithm>
+#include <cstdio>
 #include <string>
 
 // PropertiesPanel_NativeScript.cpp
@@ -47,7 +49,71 @@ namespace PrismEditor {
                 ImGui::TextDisabled("Clique em Compilar na barra superior.");
             }
             else if (m_Ctx.IsPlaying()) {
-                ImGui::TextDisabled("Play em andamento - Pare e aperte Play de novo para aplicar mudancas.");
+                ImGui::TextDisabled("Play em andamento - Compilar troca o codigo sem parar (os scripts recomecam).");
+            }
+
+            // --- Variaveis publicas (ScriptableEntity::OnProperties) ---
+            if (!script.ClassName.empty() && Prism::NativeScripting::HasClass(script.ClassName)) {
+                const auto& declared = Prism::NativeScripting::ReadClassProperties(script.ClassName);
+                if (!declared.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Variaveis (OnProperties)");
+                    for (const auto& defaults : declared) {
+                        ImGui::PushID(defaults.Name.c_str());
+
+                        auto findOverride = [&]() -> Prism::ScriptPropertyValue* {
+                            for (auto& value : script.Properties)
+                                if (value.Name == defaults.Name && value.Type == defaults.Type)
+                                    return &value;
+                            return nullptr;
+                        };
+                        auto getOrCreate = [&]() -> Prism::ScriptPropertyValue& {
+                            if (auto* existing = findOverride())
+                                return *existing;
+                            script.Properties.push_back(defaults);
+                            return script.Properties.back();
+                        };
+
+                        Prism::ScriptPropertyValue* current = findOverride();
+                        const Prism::ScriptPropertyValue& shown = current ? *current : defaults;
+                        const bool overridden = current != nullptr;
+
+                        if (defaults.Type == Prism::ScriptPropertyType::Number) {
+                            float number = (float)shown.Number;
+                            if (ImGui::DragFloat(defaults.Name.c_str(), &number, 0.05f))
+                                getOrCreate().Number = number;
+                            TrackContinuousEdit(m_Ctx, m_NativeScriptBeforeEdit, script, "Native Script");
+                        }
+                        else if (defaults.Type == Prism::ScriptPropertyType::Bool) {
+                            bool flag = shown.Bool;
+                            auto before = script;
+                            if (ImGui::Checkbox(defaults.Name.c_str(), &flag)) {
+                                getOrCreate().Bool = flag;
+                                CommitComponentEdit(m_Ctx, before, script, "Native Script");
+                            }
+                        }
+                        else {
+                            char buffer[256];
+                            std::snprintf(buffer, sizeof(buffer), "%s", shown.String.c_str());
+                            if (ImGui::InputText(defaults.Name.c_str(), buffer, sizeof(buffer)))
+                                getOrCreate().String = buffer;
+                            TrackContinuousEdit(m_Ctx, m_NativeScriptBeforeEdit, script, "Native Script");
+                        }
+
+                        if (overridden) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Reset")) {
+                                auto before = script;
+                                script.Properties.erase(
+                                    std::remove_if(script.Properties.begin(), script.Properties.end(),
+                                        [&](const Prism::ScriptPropertyValue& v) { return v.Name == defaults.Name && v.Type == defaults.Type; }),
+                                    script.Properties.end());
+                                CommitComponentEdit(m_Ctx, before, script, "Native Script");
+                            }
+                        }
+                        ImGui::PopID();
+                    }
+                }
             }
         }
         if (!keepOpen)

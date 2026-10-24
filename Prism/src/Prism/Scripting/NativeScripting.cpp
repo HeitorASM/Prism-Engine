@@ -34,6 +34,11 @@ namespace Prism {
     std::unordered_map<std::string, NativeScripting::ClassInfo> NativeScripting::s_Classes;
     std::unordered_map<NativeScripting::InstanceKey, NativeScripting::Instance, NativeScripting::InstanceKeyHash> NativeScripting::s_Instances;
     unsigned NativeScripting::s_LoadCounter = 0;
+    std::unordered_map<std::string, std::vector<ScriptPropertyValue>> NativeScripting::s_PropertyCache;
+    std::filesystem::file_time_type NativeScripting::s_LoadedWriteTime{};
+    std::filesystem::file_time_type NativeScripting::s_PendingWriteTime{};
+    std::chrono::steady_clock::time_point NativeScripting::s_LastHotReloadPoll{};
+    bool NativeScripting::s_HotReload = true;
 
     namespace {
 
@@ -235,6 +240,93 @@ namespace Prism {
             return scene && AnimationSystem::IsPlaying(Entity(entity, scene));
         }
 
+        void ApiLoadScene(Scene* scene, const char* mapPath) {
+            if (scene && mapPath)
+                scene->RequestLoadScene(mapPath);
+        }
+        void ApiReloadScene(Scene* scene) {
+            if (scene)
+                scene->RequestReloadScene();
+        }
+
+        // --- Variaveis publicas ---------------------------------------------------
+        // Coleta: registra nome/tipo/padrao, nunca devolve override.
+        class CollectVisitor final : public NativePropertyVisitor {
+        public:
+            std::vector<ScriptPropertyValue> Values;
+
+            bool Number(const char* name, double current, double*) override {
+                ScriptPropertyValue value;
+                value.Name = name ? name : "";
+                value.Type = ScriptPropertyType::Number;
+                value.Number = current;
+                AddUnique(std::move(value));
+                return false;
+            }
+            bool Bool(const char* name, bool current, bool*) override {
+                ScriptPropertyValue value;
+                value.Name = name ? name : "";
+                value.Type = ScriptPropertyType::Bool;
+                value.Bool = current;
+                AddUnique(std::move(value));
+                return false;
+            }
+            const char* String(const char* name, const char* current) override {
+                ScriptPropertyValue value;
+                value.Name = name ? name : "";
+                value.Type = ScriptPropertyType::String;
+                value.String = current ? current : "";
+                AddUnique(std::move(value));
+                return nullptr;
+            }
+
+        private:
+            void AddUnique(ScriptPropertyValue&& value) {
+                if (value.Name.empty())
+                    return;
+                for (const auto& existing : Values)
+                    if (existing.Name == value.Name)
+                        return; // nome repetido: vale o primeiro
+                Values.push_back(std::move(value));
+            }
+        };
+
+        // Aplicacao: devolve o override salvo no component (mesmo nome E tipo).
+        class ApplyVisitor final : public NativePropertyVisitor {
+        public:
+            explicit ApplyVisitor(const std::vector<ScriptPropertyValue>& values) : m_Values(values) {}
+
+            bool Number(const char* name, double, double* overrideValue) override {
+                if (const auto* v = Find(name, ScriptPropertyType::Number)) {
+                    *overrideValue = v->Number;
+                    return true;
+                }
+                return false;
+            }
+            bool Bool(const char* name, bool, bool* overrideValue) override {
+                if (const auto* v = Find(name, ScriptPropertyType::Bool)) {
+                    *overrideValue = v->Bool;
+                    return true;
+                }
+                return false;
+            }
+            const char* String(const char* name, const char*) override {
+                const auto* v = Find(name, ScriptPropertyType::String);
+                return v ? v->String.c_str() : nullptr;
+            }
+
+        private:
+            const ScriptPropertyValue* Find(const char* name, ScriptPropertyType type) const {
+                if (!name)
+                    return nullptr;
+                for (const auto& v : m_Values)
+                    if (v.Type == type && v.Name == name)
+                        return &v;
+                return nullptr;
+            }
+            const std::vector<ScriptPropertyValue>& m_Values;
+        };
+
         const NativeEngineAPI& GetApiTable() {
             static const NativeEngineAPI api = {
                 kNativeApiVersion,
@@ -253,7 +345,9 @@ namespace Prism {
                 &ApiSetBusVolume, &ApiGetBusVolume, &ApiSetBusMuted, &ApiIsBusMuted,
                 &ApiSetMasterVolume, &ApiGetMasterVolume,
                 // v5
-                &ApiPlayAnimation, &ApiStopAnimation, &ApiSetAnimationPaused, &ApiSetAnimationSpeed, &ApiIsAnimationPlaying
+                &ApiPlayAnimation, &ApiStopAnimation, &ApiSetAnimationPaused, &ApiSetAnimationSpeed, &ApiIsAnimationPlaying,
+                // v6
+                &ApiLoadScene, &ApiReloadScene
             };
             return api;
         }
@@ -344,17 +438,15 @@ namespace Prism {
         return s_Classes.find(name) != s_Classes.end();
     }
 
-    bool NativeScripting::LoadProjectModule(const Project& project) {
-        if (!s_Instances.empty()) {
-            PRISM_CORE_ERROR("NativeScripting: nao e possivel recarregar o modulo com scripts em execucao (pare o Play).");
-            return false;
-        }
-        UnloadModule();
-
+    // Copia o modulo do projeto para Cache/NativeModule, abre e valida. NAO mexe no
+    // modulo atualmente instalado (assim o hot reload pode manter o antigo se o novo
+    // for invalido).
+    bool NativeScripting::OpenModule(const Project& project, LoadedModule& out) {
         std::filesystem::path source = GetModulePath(project);
         std::error_code ec;
         if (!std::filesystem::exists(source, ec))
             return false; // projeto sem scripts C++ compilados ainda - nao e erro
+        out.SourceWriteTime = std::filesystem::last_write_time(source, ec);
 
         // Copia para Cache/NativeModule: o original fica livre para o compilador.
         std::filesystem::path cacheDirectory = project.GetProjectDirectory() / "Cache" / "NativeModule";
@@ -397,17 +489,43 @@ namespace Prism {
         }
 
         initFn(&GetApiTable());
-        s_Module.Handle = handle;
-        s_Module.LoadedCopy = copy;
+        out.Handle = handle;
+        out.LoadedCopy = copy;
         uint32_t count = countFn();
         for (uint32_t i = 0; i < count; i++) {
             const NativeModule::ClassEntry* entry = classFn(i);
             if (!entry || !entry->Name || !entry->Create || !entry->Destroy)
                 continue;
-            s_Classes[entry->Name] = ClassInfo{ entry->Create, entry->Destroy };
-            s_ClassNames.push_back(entry->Name);
+            out.Classes.emplace_back(entry->Name, ClassInfo{ entry->Create, entry->Destroy });
+        }
+        return true;
+    }
+
+    void NativeScripting::InstallModule(LoadedModule& module) {
+        s_Module.Handle = module.Handle;
+        s_Module.LoadedCopy = module.LoadedCopy;
+        s_LoadedWriteTime = module.SourceWriteTime;
+        s_PendingWriteTime = {};
+        s_PropertyCache.clear();
+        for (auto& [name, info] : module.Classes) {
+            s_Classes[name] = info;
+            s_ClassNames.push_back(name);
         }
         std::sort(s_ClassNames.begin(), s_ClassNames.end());
+        module.Handle = nullptr; // agora pertence a s_Module
+    }
+
+    bool NativeScripting::LoadProjectModule(const Project& project) {
+        if (!s_Instances.empty()) {
+            PRISM_CORE_ERROR("NativeScripting: nao e possivel recarregar o modulo com scripts em execucao (o hot reload do Play cuida disso).");
+            return false;
+        }
+        UnloadModule();
+
+        LoadedModule module;
+        if (!OpenModule(project, module))
+            return false;
+        InstallModule(module);
         PRISM_CORE_INFO("NativeScripting: modulo carregado (", s_ClassNames.size(), " classe(s)).");
         return true;
     }
@@ -416,11 +534,105 @@ namespace Prism {
         UnloadAll(); // instancias apontam para codigo do modulo
         s_Classes.clear();
         s_ClassNames.clear();
+        s_PropertyCache.clear();
         if (s_Module.Handle) {
             CloseLibrary(s_Module.Handle);
             s_Module.Handle = nullptr;
         }
         s_Module.LoadedCopy.clear();
+    }
+
+    const std::vector<ScriptPropertyValue>& NativeScripting::ReadClassProperties(const std::string& className) {
+        static const std::vector<ScriptPropertyValue> kEmpty;
+        auto cached = s_PropertyCache.find(className);
+        if (cached != s_PropertyCache.end())
+            return cached->second;
+
+        auto classIt = s_Classes.find(className);
+        if (classIt == s_Classes.end())
+            return kEmpty;
+
+        CollectVisitor visitor;
+        try {
+            ScriptableEntity* object = classIt->second.Create();
+            if (object) {
+                NativeProperties properties(visitor);
+                object->OnProperties(properties);
+                classIt->second.Destroy(object);
+            }
+        }
+        catch (const std::exception& error) {
+            PRISM_ERROR("Script C++ '", className, "': excecao em OnProperties: ", error.what());
+        }
+        return s_PropertyCache.emplace(className, std::move(visitor.Values)).first->second;
+    }
+
+    void NativeScripting::ApplyProperties(ScriptableEntity& object, const NativeScriptComponent& component) {
+        if (component.Properties.empty())
+            return;
+        ApplyVisitor visitor(component.Properties);
+        NativeProperties properties(visitor);
+        object.OnProperties(properties);
+    }
+
+    void NativeScripting::PollHotReload(Scene& scene) {
+        (void)scene;
+        if (!s_HotReload || s_Instances.empty() || !s_Module.Handle)
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_LastHotReloadPoll < std::chrono::milliseconds(500))
+            return;
+        s_LastHotReloadPoll = now;
+
+        auto project = Project::GetActive();
+        if (!project)
+            return;
+        std::error_code ec;
+        auto writeTime = std::filesystem::last_write_time(GetModulePath(*project), ec);
+        if (ec)
+            return; // o linker pode ter apagado o arquivo no meio do build
+        if (writeTime == s_LoadedWriteTime) {
+            s_PendingWriteTime = {};
+            return;
+        }
+        if (writeTime != s_PendingWriteTime) {
+            s_PendingWriteTime = writeTime; // mudou: espera estabilizar (build ainda gravando)
+            return;
+        }
+        s_PendingWriteTime = {};
+
+        LoadedModule fresh;
+        if (!OpenModule(*project, fresh)) {
+            // Modulo novo invalido: o antigo segue rodando. Marca como visto para nao repetir o erro.
+            s_LoadedWriteTime = writeTime;
+            PRISM_CORE_ERROR("NativeScripting: hot reload ignorado (modulo novo invalido) - os scripts continuam com o codigo anterior.");
+            return;
+        }
+
+        // Quais entidades tinham script, para recriar com o codigo novo.
+        std::vector<std::pair<Scene*, entt::entity>> targets;
+        targets.reserve(s_Instances.size());
+        for (const auto& [key, instance] : s_Instances) {
+            (void)instance;
+            targets.emplace_back(const_cast<Scene*>(static_cast<const Scene*>(key.SceneKey)), (entt::entity)key.EntityHandle);
+        }
+
+        UnloadAll(); // OnDestroy com o codigo ANTIGO ainda carregado
+        s_Classes.clear();
+        s_ClassNames.clear();
+        if (s_Module.Handle)
+            CloseLibrary(s_Module.Handle);
+        s_Module.Handle = nullptr;
+        InstallModule(fresh);
+
+        size_t recreated = 0;
+        for (const auto& [targetScene, handle] : targets) {
+            if (!targetScene || !targetScene->GetRegistry().valid(handle))
+                continue;
+            if (LoadScript(Entity(handle, targetScene)))
+                ++recreated;
+        }
+        PRISM_CORE_INFO("NativeScripting: hot reload - ", s_ClassNames.size(), " classe(s), ", recreated, " script(s) recriado(s).");
     }
 
     bool NativeScripting::LoadScript(Entity entity) {
@@ -446,6 +658,7 @@ namespace Prism {
         try {
             instance.Object = classIt->second.Create();
             instance.Object->PrismBind(entity);
+            ApplyProperties(*instance.Object, entity.GetComponent<NativeScriptComponent>());
         }
         catch (const std::exception& error) {
             PRISM_ERROR("Script C++ '", className, "': excecao ao criar: ", error.what());
@@ -626,6 +839,11 @@ namespace Prism {
             "class Spinner : public ScriptableEntity {\n"
             "public:\n"
             "    float SpeedDegreesPerSecond = 90.0f;\n"
+            "\n"
+            "    // Variaveis publicas: aparecem no painel Propriedades (o valor inicial e o padrao).\n"
+            "    void OnProperties(NativeProperties& properties) override {\n"
+            "        properties.Float(\"speed\", SpeedDegreesPerSecond);\n"
+            "    }\n"
             "\n"
             "    void OnUpdate(float deltaTime) override {\n"
             "        GetTransform().Rotation.y += SpeedDegreesPerSecond * deltaTime;\n"

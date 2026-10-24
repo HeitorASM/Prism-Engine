@@ -6,6 +6,7 @@
 #include "../Physics/PhysicsEngine.h"
 #include "../Audio/AudioEngine.h"
 #include "../Animation/AnimationSystem.h"
+#include "SceneSerializer.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
@@ -30,6 +31,86 @@ namespace Prism {
         entity.AddComponent<TransformComponent>();
         entity.AddComponent<TagComponent>(name.empty() ? std::string("Entity") : name);
         return entity;
+    }
+
+    void Scene::RequestLoadScene(const std::string& relativeMapPath) {
+        if (relativeMapPath.empty()) {
+            PRISM_CORE_WARN("Scene.Load: caminho vazio ignorado.");
+            return;
+        }
+        m_PendingLoadKind = PendingLoad::Load;
+        m_PendingLoadPath = relativeMapPath;
+    }
+
+    void Scene::RequestReloadScene() {
+        m_PendingLoadKind = PendingLoad::Reload;
+        m_PendingLoadPath.clear();
+    }
+
+    Ref<Scene> Scene::LoadMap(const std::string& relativeMapPath) {
+        auto project = Project::GetActive();
+        if (!project) {
+            PRISM_CORE_ERROR("Scene.Load: nenhum projeto ativo.");
+            return nullptr;
+        }
+        std::filesystem::path relative = std::filesystem::path(relativeMapPath).lexically_normal();
+        // Nunca sair da pasta de mapas (sem caminho absoluto nem "..").
+        bool escapes = relative.empty() || relative.is_absolute() || relative.has_root_name();
+        for (const auto& part : relative)
+            if (part == "..")
+                escapes = true;
+        if (escapes) {
+            PRISM_CORE_ERROR("Scene.Load: caminho invalido '", relativeMapPath, "' (use um caminho relativo a pasta de mapas).");
+            return nullptr;
+        }
+        if (relative.extension() != ".prismmap")
+            relative += ".prismmap";
+
+        std::filesystem::path absolute = project->GetMapDirectory() / relative;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(absolute, ec)) {
+            PRISM_CORE_ERROR("Scene.Load: mapa '", relative.generic_string(), "' nao existe em ", project->GetMapDirectory().string());
+            return nullptr;
+        }
+        SceneSerializer serializer(Scene::Create());
+        if (!serializer.Deserialize(absolute)) {
+            PRISM_CORE_ERROR("Scene.Load: falha ao ler o mapa '", relative.generic_string(), "'.");
+            return nullptr;
+        }
+        Ref<Scene> loaded = serializer.GetScene();
+        loaded->SetSourceMap(relative.generic_string());
+        return loaded;
+    }
+
+    bool Scene::ApplyPendingLoad(Ref<Scene>& current, const Ref<Scene>& pristine) {
+        if (!current || current->m_PendingLoadKind == PendingLoad::None)
+            return false;
+
+        const PendingLoad kind = current->m_PendingLoadKind;
+        const std::string path = current->m_PendingLoadPath;
+        current->m_PendingLoadKind = PendingLoad::None;
+        current->m_PendingLoadPath.clear();
+
+        Ref<Scene> next;
+        if (kind == PendingLoad::Load) {
+            next = LoadMap(path);
+        }
+        else if (!current->m_SourceMap.empty()) {
+            next = LoadMap(current->m_SourceMap);
+        }
+        else if (pristine) {
+            next = pristine->Clone();
+        }
+        else {
+            PRISM_CORE_WARN("Scene.Reload: esta cena nao tem origem conhecida.");
+        }
+        if (!next)
+            return false; // erro ja logado; a cena atual continua
+
+        current->OnScriptsStop();
+        next->OnScriptsStart();
+        current = next;
+        return true;
     }
 
     Ref<Scene> Scene::Clone() {
@@ -397,6 +478,7 @@ namespace Prism {
         // Hot reload dos scripts Lua (arquivo salvo durante o Play), antes de qualquer
         // callback do frame - ver ScriptEngine::PollHotReload.
         ScriptEngine::PollHotReload(*this);
+        NativeScripting::PollHotReload(*this); // modulo C++ recompilado durante o Play
 
         // OnFixedUpdate dos scripts roda dentro de Simulate, antes de cada passo fixo.
         PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });

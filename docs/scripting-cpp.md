@@ -40,11 +40,41 @@ PRISM_REGISTER_SCRIPT(Coletavel)
 
 Ciclo de vida (todos opcionais): `OnCreate`, `OnUpdate(dt)`, `OnFixedUpdate(fixedDt)` (passo fixo de 1/60 s antes de cada passo da física; API v4), `OnDestroy`, `OnCollisionEnter/Exit(other)`, `OnTriggerEnter/Exit(other)`, `OnClick()` (botão de UI; API v3). Mesma semântica dos scripts Lua; a mesma entidade pode ter um script Lua **e** um C++.
 
-Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `HasComponent<T>`, `GetTransform`, `LogInfo/Warn/Error`, `IsKeyDown/IsKeyPressed/IsMouseButtonDown`, `GetMouseDeltaX/Y`, `GetDeltaTime`, `GetElapsedTime`, `FindEntity`, `CreateEntity`, `Instantiate`, `Destroy`, `ApplyImpulse`, `SetVelocity`, `GetVelocity`, `Raycast`, `PlaySound`, `StopSound`, `PlayAnimation(nome, fade, loop)`, `StopAnimation`, `PauseAnimation`, `SetAnimationSpeed`, `IsAnimationPlaying` (API v5), `PlayParticles`, `StopParticles`.
+Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `HasComponent<T>`, `GetTransform`, `LogInfo/Warn/Error`, `IsKeyDown/IsKeyPressed/IsMouseButtonDown`, `GetMouseDeltaX/Y`, `GetDeltaTime`, `GetElapsedTime`, `FindEntity`, `CreateEntity`, `Instantiate`, `Destroy`, `ApplyImpulse`, `SetVelocity`, `GetVelocity`, `Raycast`, `PlaySound`, `StopSound`, `PlayAnimation(nome, fade, loop)`, `StopAnimation`, `PauseAnimation`, `SetAnimationSpeed`, `IsAnimationPlaying` (API v5), `LoadScene(mapa)`, `ReloadScene()` (API v6), `PlayParticles`, `StopParticles`.
 
 Adicionados na **API v4** (paridade com o Lua): `GetFixedDeltaTime`, `GetFrameCount`, `ApplyForce`, `GetWorldTransform`/`GetWorldPosition`/`GetWorldForward`/`GetWorldRight`, `SetParent` (e `GetParent`/`GetChildCount`/`GetChildAt` da própria `Entity`), `FindAllEntities`, `CreateMeshEntity`, `GetMouseX/Y`, `SetCursorMode`/`GetCursorMode`, `IsPointerOverUI`, e o áudio: `PlayAudio`, `PlayAudio3D`, `PreloadAudio`, `SetBusVolume`/`GetBusVolume`/`SetBusMuted`/`IsBusMuted` (canais `AudioBus::SFX/Music/UI/Ambient`), `SetMasterVolume`/`GetMasterVolume`.
 
-> Módulos compilados com a API v3 são recusados ao carregar: faça **Compilar** de novo (o `Source/` do projeto não muda).
+> Módulos compilados com uma API mais antiga (a atual é a **v6**) são recusados ao carregar: faça **Compilar** de novo (o `Source/` do projeto não muda).
+
+## Variáveis públicas (`OnProperties`)
+
+Declare os membros que quer editar no painel Propriedades, como o `Properties` do Lua:
+
+```cpp
+class Inimigo : public ScriptableEntity {
+public:
+    float velocidade = 3.0f;
+    int vida = 100;
+    bool agressivo = true;
+    std::string apelido = "Grunt";
+
+    void OnProperties(NativeProperties& p) override {
+        p.Float("velocidade", velocidade);
+        p.Int("vida", vida);
+        p.Bool("agressivo", agressivo);
+        p.String("apelido", apelido);
+    }
+};
+PRISM_REGISTER_SCRIPT(Inimigo)
+```
+
+- O valor inicial do membro é o **padrão** mostrado no editor; só o que você muda é salvo na cena (bloco `Native Script` v2) e vale antes do `OnCreate`. O botão **Reset** volta ao padrão.
+- `OnProperties` roda também no editor, num objeto temporário **sem entidade**: não chame `GetEntity()`/`GetComponent` dentro dele.
+- `Int` aparece como número (arrastável) e é arredondado.
+
+## Troca de cena
+
+`LoadScene("Fase2")` (mapa relativo à pasta de mapas, com ou sem `.prismmap`) e `ReloadScene()`. A troca acontece **depois do frame atual**: todos os scripts e entidades da cena são destruídos e a nova começa do zero (nada persiste entre cenas). Em Lua: `Scene.Load("Fase2")` / `Scene.Reload()`.
 
 ## Como funciona (e limites)
 
@@ -57,6 +87,5 @@ Adicionados na **API v4** (paridade com o Lua): `GetFixedDeltaTime`, `GetFrameCo
 
 ## Limitações
 
-- Sem recarga com o Play aberto: pare o Play, compile (ou aguarde o recarregamento automático). O hot reload com o jogo rodando existe só para Lua.
-- Propriedades públicas editáveis no painel (como `Properties` do Lua) ainda não existem para scripts C++.
+- **Hot reload no Play**: o botão **Compilar** funciona com o jogo rodando. Quando o `.dll/.so` muda (e estabiliza, para não pegar o arquivo pela metade), a engine troca o módulo sem parar o Play: os scripts C++ recebem `OnDestroy` (código antigo) e são recriados com o código novo (`OnProperties` + `OnCreate`). O **mundo** (entidades, física, posições) continua; o estado dos **membros** dos scripts recomeça. Se o módulo novo for inválido, o antigo segue rodando (erro no Console).
 - A classe é escolhida pelo nome: renomear a classe deixa os components antigos apontando para um nome que não existe (aviso no painel e no Play).

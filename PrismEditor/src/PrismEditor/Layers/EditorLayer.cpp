@@ -685,12 +685,13 @@ namespace PrismEditor {
         const bool playing = IsPlaying();
         const bool hasProject = Prism::Project::GetActive() != nullptr;
 
-        ImGui::BeginDisabled(!hasProject || building || playing);
+        // Compilar tambem com o Play rodando: o modulo novo entra por hot reload (NativeScripting::PollHotReload).
+        ImGui::BeginDisabled(!hasProject || building);
         if (ImGui::Button(building ? "Compilando..." : "Compilar"))
             StartNativeBuild();
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", playing ? "Pare o Play para compilar os scripts."
+            ImGui::SetTooltip("%s", playing ? "Compila os scripts C++ e troca o codigo com o jogo rodando (hot reload: os scripts C++ recomecam, o mundo continua)."
                 : "Compila os scripts C++ (pasta Source/) e recarrega o modulo.");
 
         ImGui::SameLine();

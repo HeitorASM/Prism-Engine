@@ -30,6 +30,7 @@ namespace PrismEditor {
             return false;
         }
         m_PlayScene = clonedScene;
+        m_PristineScene = editorScene->Clone();
 
         // --- Cria a janela do SO, com contexto OpenGL COMPARTILHADO ---
         // O ultimo parametro de glfwCreateWindow (sharedContextWindow) e o
@@ -167,6 +168,7 @@ namespace PrismEditor {
         glfwDestroyWindow(m_Window);
         m_Window = nullptr;
         m_PlayScene = nullptr;
+        m_PristineScene = nullptr;
 
         PRISM_CORE_INFO("PlayWindow: fechada.");
     }
@@ -211,6 +213,10 @@ namespace PrismEditor {
 
         // --- Simulacao (scripts + fisica) da Scene CLONADA -----------------
         m_PlayScene->OnUpdate(deltaTime);
+
+        // Scene.Load / Scene.Reload pedidos por scripts: aplica depois do frame.
+        if (Prism::Scene::ApplyPendingLoad(m_PlayScene, m_PristineScene))
+            m_LoggedNoCameraWarning = false;
 
         // Avanca o estado "frame anterior" do Input DEPOIS que toda a
         // logica de gameplay deste frame ja rodou (scripts, dentro de

@@ -136,6 +136,8 @@ Operam na cena do script que chamou.
 | `Scene.Create("Nome")` | entidade vazia |
 | `Scene.CreateMesh("Nome", "Cube", x, y, z)` | entidade visível (`Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`) |
 | `Scene.Instantiate("Assets/Prefabs/X.prismprefab", pos)` | instancia um prefab (caminho relativo ao projeto; `pos` opcional) |
+| `Scene.Load("Fase2")` | troca para o mapa (relativo à pasta de mapas, com ou sem `.prismmap`) **depois do frame**; scripts e entidades da cena atual são destruídos |
+| `Scene.Reload()` | recomeça a cena atual do zero |
 | `Scene.Destroy(e)` / `e:Destroy()` | destrói no **fim do frame** |
 
 ### Mais métodos de `entity`
