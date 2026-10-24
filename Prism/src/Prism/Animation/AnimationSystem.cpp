@@ -502,18 +502,23 @@ namespace Prism {
 
     const std::vector<glm::mat4>* AnimationSystem::FindPalette(Scene& scene, entt::entity entity, AssetID modelAsset) {
         auto& registry = scene.GetRegistry();
-        // Sobe a hierarquia (limite defensivo contra ciclos).
+        // Sobe a hierarquia (limite defensivo contra ciclos). Se houver mais de um Animator
+        // do mesmo modelo na cadeia (tipico: o Animator que a importacao poe na raiz do modelo
+        // + o do Player que o controla), vence o MAIS EXTERNO: quem controla o personagem fica
+        // acima do modelo. Sem isso o Animator interno (tocando o 1o clipe, geralmente T-pose)
+        // esconderia o do Player.
+        const std::vector<glm::mat4>* found = nullptr;
         for (int depth = 0; depth < 64 && entity != entt::null && registry.valid(entity); depth++) {
             if (auto* animator = registry.try_get<AnimatorComponent>(entity)) {
                 if (animator->ModelAsset == modelAsset && animator->Runtime.Ptr && !animator->Runtime.Ptr->Palette.empty())
-                    return &animator->Runtime.Ptr->Palette;
+                    found = &animator->Runtime.Ptr->Palette;
             }
             auto* relationship = registry.try_get<RelationshipComponent>(entity);
             if (!relationship)
                 break;
             entity = relationship->Parent;
         }
-        return nullptr;
+        return found;
     }
 
 }
