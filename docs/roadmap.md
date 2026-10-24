@@ -36,6 +36,7 @@ Plano de trabalho por fases. Cada fase termina com a engine funcionando e a docu
 - Interface `ScriptableEntity` (`OnCreate/OnUpdate/OnFixedUpdate/OnDestroy`) e registro por macro `PRISM_REGISTER_SCRIPT`.
 - Entregue: `ScriptableEntity`, `PRISM_REGISTER_SCRIPT`, módulo DLL/.so com CMake gerado, menu "Scripts C++" (gerar/compilar/recarregar), component "Native Script", API da engine para o módulo. Ver [scripting-cpp.md](scripting-cpp.md).
 - [x] API v4: paridade com o Lua (transform de mundo, `ApplyForce`, hierarquia, mouse/cursor, UI, áudio com canais, `OnFixedUpdate`).
+- [x] API v7: máquina de estados do Animator e `OnAnimationEvent`.
 - [x] API v6: variáveis públicas (`OnProperties`), hot reload do módulo durante o Play, `LoadScene`/`ReloadScene`.
 
 ## Fase 5 — Básicos que ainda faltam
@@ -43,7 +44,8 @@ Plano de trabalho por fases. Cada fase termina com a engine funcionando e a docu
 - [x] Sistema de partículas (5A): `ParticleEmitterComponent`, simulação CPU, billboards com blend, preview no editor, API Lua/C++.
 
 
-- [x] Animação esquelética (skinning), animação de nós rígidos e importação de clipes: `AnimatorComponent`, crossfade, `entity:PlayAnimation` em Lua/C++ (API nativa v5), sombras e SSAO seguem a pose (ver [animacao.md](animacao.md)). Pendente: morph targets, máquina de estados, retargeting/IK, root motion.
+- [x] Animação esquelética (skinning), animação de nós rígidos e importação de clipes: `AnimatorComponent`, crossfade, `entity:PlayAnimation` em Lua/C++ (API nativa v5), sombras e SSAO seguem a pose (ver [animacao.md](animacao.md)). Pendente: morph targets, blend trees, retargeting/IK.
+- [x] Animação fase 2 (API nativa v7): máquina de estados visual (parâmetros, transições com condições/tempo de saída/Qualquer estado), eventos de animação (`OnAnimationEvent`), root motion XZ.
 - [x] Skybox (5B): cor, gradiente ou panorama equirretangular (.hdr/.png/.jpg) por cena (`EnvironmentComponent`).
 - [x] UI in-game (5C): `UIElementComponent` (Panel/Texto/Imagem/Botão), âncoras, hierarquia, `OnClick` em Lua/C++, fonte embutida (ver [docs/ui.md](ui.md)).
 

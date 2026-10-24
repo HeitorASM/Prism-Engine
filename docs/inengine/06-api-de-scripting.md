@@ -127,6 +127,8 @@ A destruição é adiada para o fim do frame, nas duas linguagens.
 | Está tocando? | `entity:IsAnimationPlaying()` | `IsAnimationPlaying()` |
 | Clipe atual / tempo / duração | `entity:GetAnimation()` / `GetAnimationTime()` / `GetAnimationDuration()` | — |
 
+Máquina de estados: `entity:SetAnimFloat(nome, v)`, `SetAnimBool`, `SetAnimTrigger(nome)`, `SetAnimState(estado, fade)`, `GetAnimState()`. Evento de animação: defina `function OnAnimationEvent(name)` no script.
+
 Precisam de um **Animator** na entidade. Detalhes em `docs/animacao.md` do projeto.
 
 ## Áudio

@@ -240,6 +240,25 @@ namespace Prism {
             return scene && AnimationSystem::IsPlaying(Entity(entity, scene));
         }
 
+        // v7 - maquina de estados do Animator
+        bool ApiSetAnimFloat(Scene* scene, entt::entity entity, const char* name, float value) {
+            return scene && name && AnimationSystem::SetFloat(Entity(entity, scene), name, value);
+        }
+        bool ApiSetAnimBool(Scene* scene, entt::entity entity, const char* name, bool value) {
+            return scene && name && AnimationSystem::SetBool(Entity(entity, scene), name, value);
+        }
+        bool ApiSetAnimTrigger(Scene* scene, entt::entity entity, const char* name) {
+            return scene && name && AnimationSystem::SetTrigger(Entity(entity, scene), name);
+        }
+        bool ApiSetAnimState(Scene* scene, entt::entity entity, const char* state, float fadeSeconds) {
+            return scene && state && AnimationSystem::SetState(Entity(entity, scene), state, fadeSeconds);
+        }
+        const char* ApiGetAnimState(Scene* scene, entt::entity entity) {
+            static thread_local std::string buffer; // valido ate a proxima chamada
+            buffer = scene ? AnimationSystem::GetState(Entity(entity, scene)) : std::string();
+            return buffer.c_str();
+        }
+
         void ApiLoadScene(Scene* scene, const char* mapPath) {
             if (scene && mapPath)
                 scene->RequestLoadScene(mapPath);
@@ -347,7 +366,9 @@ namespace Prism {
                 // v5
                 &ApiPlayAnimation, &ApiStopAnimation, &ApiSetAnimationPaused, &ApiSetAnimationSpeed, &ApiIsAnimationPlaying,
                 // v6
-                &ApiLoadScene, &ApiReloadScene
+                &ApiLoadScene, &ApiReloadScene,
+                // v7
+                &ApiSetAnimFloat, &ApiSetAnimBool, &ApiSetAnimTrigger, &ApiSetAnimState, &ApiGetAnimState
             };
             return api;
         }
@@ -766,6 +787,21 @@ namespace Prism {
         }
         catch (const std::exception& error) {
             PRISM_ERROR("Script C++: excecao em OnClick: ", error.what());
+            it->second.Faulted = true;
+        }
+    }
+
+    void NativeScripting::DispatchAnimationEvent(Entity self, const std::string& name) {
+        if (s_Instances.empty())
+            return;
+        auto it = s_Instances.find(InstanceKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_Instances.end() || it->second.Faulted)
+            return;
+        try {
+            it->second.Object->OnAnimationEvent(name.c_str());
+        }
+        catch (const std::exception& error) {
+            PRISM_ERROR("Script C++: excecao em OnAnimationEvent: ", error.what());
             it->second.Faulted = true;
         }
     }

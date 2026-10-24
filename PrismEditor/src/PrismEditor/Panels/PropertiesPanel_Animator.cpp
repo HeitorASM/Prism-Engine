@@ -96,6 +96,59 @@ namespace PrismEditor {
                 animator.Speed = std::clamp(animator.Speed, 0.0f, 20.0f);
             TrackContinuousEdit(m_Ctx, m_AnimatorBeforeEdit, animator, "Animator");
 
+            if (ImGui::Checkbox("Root motion", &animator.RootMotion))
+                CommitComponentEdit(m_Ctx, before, animator, "Animator");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("O movimento horizontal (XZ) do osso raiz do clipe move a ENTIDADE do Animator\n(e some da pose, para o personagem nao escorregar). Nao use junto de um Rigidbody\ndinamico na mesma entidade: a fisica sobrescreve a posicao. So vale em jogo.");
+
+            DrawAnimatorGraphUI(animator, clips);
+
+            // Eventos de animacao.
+            if (ImGui::TreeNode("Eventos de animacao")) {
+                ImGui::TextDisabled("No script da entidade: function OnAnimationEvent(name) (Lua) / OnAnimationEvent(const char*) (C++).");
+                int removeEvent = -1;
+                for (int i = 0; i < (int)animator.Events.size(); i++) {
+                    ImGui::PushID(i);
+                    auto& ev = animator.Events[i];
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::BeginCombo("##c", ev.Clip.empty() ? "(clipe)" : ev.Clip.c_str())) {
+                        for (const std::string& clip : clips)
+                            if (ImGui::Selectable(clip.c_str(), clip == ev.Clip)) {
+                                ev.Clip = clip;
+                                CommitComponentEdit(m_Ctx, before, animator, "Animator");
+                            }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(70);
+                    ImGui::DragFloat("##t", &ev.Time, 0.01f, 0.0f, 3600.0f, "%.2f s");
+                    TrackContinuousEdit(m_Ctx, m_AnimatorBeforeEdit, animator, "Animator");
+                    ImGui::SameLine();
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf), "%s", ev.Name.c_str());
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::InputText("##n", buf, sizeof(buf)))
+                        ev.Name = buf;
+                    TrackContinuousEdit(m_Ctx, m_AnimatorBeforeEdit, animator, "Animator");
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X"))
+                        removeEvent = i;
+                    ImGui::PopID();
+                }
+                if (removeEvent >= 0) {
+                    animator.Events.erase(animator.Events.begin() + removeEvent);
+                    CommitComponentEdit(m_Ctx, before, animator, "Animator");
+                }
+                if (ImGui::SmallButton("+ Evento")) {
+                    Prism::AnimEvent ev;
+                    ev.Clip = animator.Clip.empty() && !clips.empty() ? clips[0] : animator.Clip;
+                    ev.Name = "evento";
+                    animator.Events.push_back(ev);
+                    CommitComponentEdit(m_Ctx, before, animator, "Animator");
+                }
+                ImGui::TreePop();
+            }
+
             // Previa no editor (cena parada).
             if (!m_Ctx.ActiveScene->IsRunning()) {
                 ImGui::BeginDisabled(animator.Clip.empty() || clips.empty());

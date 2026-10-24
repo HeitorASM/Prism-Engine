@@ -61,12 +61,60 @@ end
 
 `PlayAnimation` devolve `false` (e avisa no log) se a entidade não tem `Animator`, o modelo não tem esqueleto ou o clipe não existe. A busca do nome ignora maiúsculas se não houver coincidência exata. Chamar com o clipe que já está tocando **não reinicia** — pode ser chamado todo frame.
 
-API nativa **v5**: módulos C++ do projeto precisam ser **recompilados**.
+API nativa **v5** (clipes) e **v7** (máquina de estados): módulos C++ do projeto precisam ser **recompilados**.
+
+## Máquina de estados
+
+No Inspector do `Animator`, a seção **Máquina de estados** monta um grafo (estilo Unity):
+
+- **Parâmetros**: `Float`, `Bool` ou `Trigger` (um trigger fica ligado até uma transição usá-lo).
+- **Estados**: cada um toca um clipe (com loop e velocidade próprios). Arraste as caixas para organizar; a borda verde é o estado de entrada.
+- **Transições**: setas entre estados. A caixa fixa **Qualquer estado** cria saídas válidas de qualquer estado (bom para "pular" ou "morrer"). Cada transição tem *crossfade*, *tempo de saída* opcional (fração 0–1 do clipe de origem) e **condições** (todas precisam valer). Uma transição sem condições e sem tempo de saída nunca dispara.
+- As transições do estado atual são testadas antes das de "Qualquer estado". O trigger usado por uma transição é consumido.
+- Com estados no grafo, o campo "Clipe" do Animator não vale mais: *Tocar ao iniciar* entra no estado de entrada. Chamar `PlayAnimation` direto **suspende** o grafo; `SetAnimState` ou o início do Play o retomam.
+- A seção **Teste** tem os parâmetros ao vivo: no editor use *Tocar grafo (previa)* e mexa nos valores; em jogo os scripts os controlam.
+
+```lua
+function OnUpdate(dt)
+    entity:SetAnimFloat("speed", moveSpeed)        -- Float
+    entity:SetAnimBool("grounded", isGrounded)     -- Bool
+    if Input.IsKeyPressed(Key.Space) then
+        entity:SetAnimTrigger("jump")              -- Trigger
+    end
+end
+```
+
+| Lua | C++ (`ScriptableEntity`) |
+|---|---|
+| `entity:SetAnimFloat(nome, v)` | `SetAnimFloat(nome, v)` |
+| `entity:SetAnimBool(nome, b)` | `SetAnimBool(nome, b)` |
+| `entity:SetAnimTrigger(nome)` | `SetAnimTrigger(nome)` |
+| `entity:GetAnimFloat(nome)` | — |
+| `entity:SetAnimState(estado [, fade])` | `SetAnimState(estado, fade = 0)` |
+| `entity:GetAnimState()` | `GetAnimState()` |
+
+Todas devolvem `false` (e avisam no log) se não há Animator, grafo ou o nome não existe.
+
+## Eventos de animação
+
+Em **Eventos de animação** (Inspector do `Animator`) escolha o clipe, o tempo em segundos e um nome. Quando o clipe passa por esse tempo (também a cada volta do loop), o script da entidade recebe o evento — útil para passos, golpes que acertam, projéteis:
+
+```lua
+function OnAnimationEvent(name)
+    if name == "passo" then entity:PlaySound("passo.wav") end
+end
+```
+
+C++: `void OnAnimationEvent(const char* name) override { ... }`. Eventos só disparam em jogo (não na prévia do editor) e são entregues depois que todos os Animators avançaram no frame.
+
+## Root motion
+
+Marque **Root motion** no `Animator`: o movimento horizontal (XZ) do osso raiz do clipe (o osso de menor profundidade, normalmente `Hips`) passa a mover a **entidade do Animator**, e some da pose (o personagem não escorrega). A altura (Y) continua na pose. Só vale em jogo. Não combine com um Rigidbody dinâmico na mesma entidade — a física sobrescreve a posição; use root motion em personagens sem física ou cinemáticos.
 
 ## Formato de arquivo
 
-Bloco `Animator` (versão 1): `AssetID` do modelo, nome do clipe (string), `PlayOnStart`, `Loop`, `Speed`. O estado de execução (tempo, crossfade, paleta) não é salvo nem copiado (Play, desfazer, duplicar começam do zero).
+Bloco `Animator` (versão 2): `AssetID` do modelo, nome do clipe, `PlayOnStart`, `Loop`, `Speed` (v1); `RootMotion`, grafo (parâmetros, estados com posição no editor, transições com condições) e eventos (v2). Cenas antigas abrem normalmente (sem grafo). O estado de execução (tempo, crossfade, paleta, valores dos parâmetros) não é salvo nem copiado.
 
 ## Limites atuais
 
-Sem *morph targets* (blend shapes), sem máquina de estados visual, sem editor de keyframes, sem retargeting nem IK, sem root motion (a entidade não se move sozinha com o clipe) e sem eventos de animação.
+Sem *morph targets* (blend shapes), sem *blend trees* (mistura por parâmetro), sem camadas/máscaras de ossos, sem editor de keyframes, sem retargeting nem IK, e o root motion só usa translação XZ (a rotação do osso raiz continua na pose).

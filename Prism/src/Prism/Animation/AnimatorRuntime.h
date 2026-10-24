@@ -12,6 +12,7 @@
 // ============================================================================
 
 #include "ModelRig.h"
+#include "AnimationGraph.h"
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
@@ -47,6 +48,17 @@ namespace Prism {
         bool PrevLoop = true;
         float FadeDuration = 0.0f;
         float FadeElapsed = 0.0f;
+
+        // --- Maquina de estados ---
+        std::vector<float> ParamValues;      // por AnimGraph::Parameters (Bool 0/1; Trigger 0/1)
+        int State = -1;                      // estado atual do grafo (-1 = grafo inativo / clipe avulso)
+        float StateSpeed = 1.0f;             // AnimState::Speed do estado atual
+        size_t GraphParamCount = 0;          // detecta mudanca do grafo (reinicia)
+        bool WarnedMissingClip = false;
+
+        // --- Eventos / root motion ---
+        float EventPrevTime = -1.0f;         // tempo do clipe no passo anterior (-1 = acabou de comecar)
+        int RootNode = -1;                   // no do osso raiz (root motion), -1 = nenhum
 
         std::vector<glm::mat4> Palette;      // Rig->Bones.size() matrizes (a que vai para o shader)
         std::vector<NodeTRS> PoseA, PoseB;   // buffers de trabalho

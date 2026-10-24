@@ -586,7 +586,7 @@ namespace Prism {
         );
         s_Registry.back().AddedInSceneFormat = 20; // nao existe em mapas v19 / prefabs v7
 
-        // --- AnimatorComponent (bloco v1) ------------------------------------
+        // --- AnimatorComponent (bloco v2: v1 = clipe; v2 = grafo/eventos/root motion) ------------------------------------
         // Animacao esqueletica / de nos de um modelo importado. O estado de
         // execucao (AnimatorComponent::Runtime) nao e salvo.
         Register<AnimatorComponent>(
@@ -598,6 +598,43 @@ namespace Prism {
                 WriteRaw(out, c.PlayOnStart);
                 WriteRaw(out, c.Loop);
                 WriteRaw(out, c.Speed);
+                // v2: maquina de estados, eventos, root motion
+                WriteRaw(out, c.RootMotion);
+                WriteRaw(out, c.Graph.EntryState);
+                WriteRaw(out, (uint32_t)c.Graph.Parameters.size());
+                for (const AnimParameter& p : c.Graph.Parameters) {
+                    WriteString(out, p.Name);
+                    WriteRaw(out, (uint8_t)p.Type);
+                    WriteRaw(out, p.Default);
+                }
+                WriteRaw(out, (uint32_t)c.Graph.States.size());
+                for (const AnimState& st : c.Graph.States) {
+                    WriteString(out, st.Name);
+                    WriteString(out, st.Clip);
+                    WriteRaw(out, st.Loop);
+                    WriteRaw(out, st.Speed);
+                    WriteRaw(out, st.EditorPos);
+                }
+                WriteRaw(out, (uint32_t)c.Graph.Transitions.size());
+                for (const AnimTransition& t : c.Graph.Transitions) {
+                    WriteRaw(out, t.From);
+                    WriteRaw(out, t.To);
+                    WriteRaw(out, t.Fade);
+                    WriteRaw(out, t.HasExitTime);
+                    WriteRaw(out, t.ExitTime);
+                    WriteRaw(out, (uint32_t)t.Conditions.size());
+                    for (const AnimCondition& cond : t.Conditions) {
+                        WriteString(out, cond.Param);
+                        WriteRaw(out, (uint8_t)cond.Op);
+                        WriteRaw(out, cond.Value);
+                    }
+                }
+                WriteRaw(out, (uint32_t)c.Events.size());
+                for (const AnimEvent& ev : c.Events) {
+                    WriteString(out, ev.Clip);
+                    WriteRaw(out, ev.Time);
+                    WriteString(out, ev.Name);
+                }
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<AnimatorComponent>();
@@ -610,9 +647,70 @@ namespace Prism {
                 if (!std::isfinite(c.Speed))
                     c.Speed = 1.0f;
                 c.Speed = std::clamp(c.Speed, 0.0f, 20.0f);
+                if (ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    constexpr uint32_t kMax = 4096;
+                    auto fail = [&]() {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (grafo do animator da entidade ", entityIndex, ").");
+                        return false;
+                    };
+                    uint32_t n = 0;
+                    uint8_t b = 0;
+                    if (!ReadRaw(in, c.RootMotion) || !ReadRaw(in, c.Graph.EntryState) || !ReadRaw(in, n) || n > kMax)
+                        return fail();
+                    c.Graph.Parameters.resize(n);
+                    for (AnimParameter& p : c.Graph.Parameters) {
+                        if (!ReadString(in, p.Name) || !ReadRaw(in, b) || b > 2 || !ReadRaw(in, p.Default))
+                            return fail();
+                        p.Type = (AnimParamType)b;
+                    }
+                    if (!ReadRaw(in, n) || n > kMax)
+                        return fail();
+                    c.Graph.States.resize(n);
+                    for (AnimState& st : c.Graph.States)
+                        if (!ReadString(in, st.Name) || !ReadString(in, st.Clip) || !ReadRaw(in, st.Loop)
+                            || !ReadRaw(in, st.Speed) || !ReadRaw(in, st.EditorPos))
+                            return fail();
+                    if (!ReadRaw(in, n) || n > kMax)
+                        return fail();
+                    c.Graph.Transitions.resize(n);
+                    for (AnimTransition& t : c.Graph.Transitions) {
+                        uint32_t cn = 0;
+                        if (!ReadRaw(in, t.From) || !ReadRaw(in, t.To) || !ReadRaw(in, t.Fade) || !ReadRaw(in, t.HasExitTime)
+                            || !ReadRaw(in, t.ExitTime) || !ReadRaw(in, cn) || cn > kMax)
+                            return fail();
+                        t.Conditions.resize(cn);
+                        for (AnimCondition& cond : t.Conditions) {
+                            if (!ReadString(in, cond.Param) || !ReadRaw(in, b) || b > 6 || !ReadRaw(in, cond.Value))
+                                return fail();
+                            cond.Op = (AnimCompare)b;
+                        }
+                    }
+                    if (!ReadRaw(in, n) || n > kMax)
+                        return fail();
+                    c.Events.resize(n);
+                    for (AnimEvent& ev : c.Events)
+                        if (!ReadString(in, ev.Clip) || !ReadRaw(in, ev.Time) || !ReadString(in, ev.Name))
+                            return fail();
+                    // Sanidade: indices e floats.
+                    const int stateCount = (int)c.Graph.States.size();
+                    if (c.Graph.EntryState < 0 || c.Graph.EntryState >= std::max(stateCount, 1))
+                        c.Graph.EntryState = 0;
+                    for (AnimTransition& t : c.Graph.Transitions) {
+                        if (t.From < -1 || t.From >= stateCount) t.From = -1;
+                        if (t.To < 0 || t.To >= stateCount) t.To = 0;
+                        if (!std::isfinite(t.Fade)) t.Fade = 0.2f;
+                        t.Fade = std::clamp(t.Fade, 0.0f, 10.0f);
+                        if (!std::isfinite(t.ExitTime)) t.ExitTime = 0.9f;
+                    }
+                    for (AnimState& st : c.Graph.States)
+                        if (!std::isfinite(st.Speed)) st.Speed = 1.0f;
+                    for (AnimEvent& ev : c.Events)
+                        if (!std::isfinite(ev.Time) || ev.Time < 0.0f) ev.Time = 0.0f;
+                }
                 return true;
             }
         );
+        s_Registry.back().Version = 2;
         s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
     }
 

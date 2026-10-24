@@ -91,6 +91,13 @@ namespace Prism {
         // (global do osso * bind inversa) - 'palette' ganha Bones.size() itens.
         void ComputePalette(const std::vector<NodeTRS>& pose, std::vector<glm::mat4>& palette) const;
 
+        // Translacao do no 'node' no clipe em 'time' (so o canal desse no; sem canal = bind).
+        glm::vec3 SampleNodeTranslation(int clip, float time, int node) const;
+
+        // No do osso mais proximo da raiz (menor profundidade; empate = primeiro) - usado
+        // pelo root motion (normalmente o "Hips"/"Pelvis"). -1 se nao ha ossos.
+        int FindRootBoneNode() const;
+
         // Decompoe uma matriz em T/R/S (sem cisalhamento).
         static NodeTRS Decompose(const glm::mat4& m);
         static glm::mat4 Compose(const NodeTRS& trs);

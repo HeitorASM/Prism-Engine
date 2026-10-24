@@ -39,6 +39,18 @@ namespace Prism {
         // Animator, sem modelo/rig ou clipe inexistente (avisa no log).
         static bool Play(Entity entity, const std::string& clip, float fadeSeconds = 0.0f, int loop = -1);
 
+        // --- Maquina de estados (AnimatorComponent::Graph) ---
+        // Entra no estado de entrada do grafo (retoma o grafo). false = sem grafo/modelo.
+        static bool StartGraph(Entity entity);
+        // Parametros por nome. false = sem Animator/grafo ou parametro inexistente (avisa 1x).
+        static bool SetFloat(Entity entity, const std::string& param, float value);
+        static bool SetBool(Entity entity, const std::string& param, bool value);
+        static bool SetTrigger(Entity entity, const std::string& param);
+        static float GetFloat(Entity entity, const std::string& param); // Float/Bool/Trigger como numero
+        // Vai direto para o estado (por nome), com crossfade 'fadeSeconds'. Retoma o grafo.
+        static bool SetState(Entity entity, const std::string& state, float fadeSeconds = 0.0f);
+        static std::string GetState(Entity entity); // "" se o grafo nao esta ativo
+
         // Volta a pose de bind e para.
         static void Stop(Entity entity);
 

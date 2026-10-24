@@ -18,6 +18,7 @@
 #include "../Assets/AssetID.h"
 #include "../Audio/AudioBus.h"
 #include "../Animation/AnimatorRuntime.h"
+#include "../Animation/AnimationGraph.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -772,6 +773,17 @@ namespace Prism {
         bool PlayOnStart = true;      // tocar 'Clip' ao iniciar o Play
         bool Loop = true;             // repetir o clipe
         float Speed = 1.0f;           // 0 = congelado, 1 = normal, 2 = dobro...
+
+        // Maquina de estados (vazia = so o clipe 'Clip'). Com estados, o Play entra no
+        // estado de entrada e as transicoes decidem o resto (ver AnimationGraph.h).
+        AnimGraph Graph;
+
+        // Eventos de animacao (clipe + tempo -> OnAnimationEvent no script da entidade).
+        std::vector<AnimEvent> Events;
+
+        // Root motion: o movimento horizontal (XZ) do osso raiz do clipe vira movimento
+        // da ENTIDADE do Animator (e some da pose, para o personagem nao "escorregar").
+        bool RootMotion = false;
 
         ResetOnCopy<AnimatorRuntime> Runtime; // so execucao - ver AnimationSystem
 

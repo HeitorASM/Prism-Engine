@@ -402,6 +402,17 @@ namespace Prism {
             "PauseAnimation", [](Entity& e, sol::optional<bool> paused) { AnimationSystem::SetPaused(e, paused.value_or(true)); },
             "SetAnimationSpeed", [](Entity& e, float speed) { AnimationSystem::SetSpeed(e, speed); },
             "IsAnimationPlaying", [](Entity& e) -> bool { return AnimationSystem::IsPlaying(e); },
+            // Maquina de estados do Animator (grafo montado no editor):
+            // entity:SetAnimFloat("speed", 3.5)   entity:SetAnimBool("grounded", true)
+            // entity:SetAnimTrigger("jump")       entity:SetAnimState("Idle", 0.2)  (forca um estado)
+            // entity:GetAnimState() -> nome do estado atual ("" = grafo inativo)
+            // Eventos: defina a funcao global OnAnimationEvent(name) no script da entidade.
+            "SetAnimFloat", [](Entity& e, std::string name, float value) -> bool { return AnimationSystem::SetFloat(e, name, value); },
+            "SetAnimBool", [](Entity& e, std::string name, bool value) -> bool { return AnimationSystem::SetBool(e, name, value); },
+            "SetAnimTrigger", [](Entity& e, std::string name) -> bool { return AnimationSystem::SetTrigger(e, name); },
+            "GetAnimFloat", [](Entity& e, std::string name) -> float { return AnimationSystem::GetFloat(e, name); },
+            "SetAnimState", [](Entity& e, std::string state, sol::optional<float> fade) -> bool { return AnimationSystem::SetState(e, state, fade.value_or(0.0f)); },
+            "GetAnimState", [](Entity& e) -> std::string { return AnimationSystem::GetState(e); },
             "GetAnimation", [](Entity& e) -> std::string { return AnimationSystem::GetCurrentClip(e); },
             "GetAnimationTime", [](Entity& e) -> float { return AnimationSystem::GetTime(e); },
             "GetAnimationDuration", [](Entity& e) -> float { return AnimationSystem::GetDuration(e); },
@@ -843,6 +854,7 @@ namespace Prism {
         out.OnTriggerEnter = env["OnTriggerEnter"];
         out.OnTriggerExit = env["OnTriggerExit"];
         out.OnClick = env["OnClick"];
+        out.OnAnimationEvent = env["OnAnimationEvent"];
         out.SourcePath = scriptAbsolutePath;
         std::error_code timeError;
         out.WriteTime = std::filesystem::last_write_time(scriptAbsolutePath, timeError);
@@ -1171,6 +1183,23 @@ namespace Prism {
         if (!result.valid()) {
             sol::error err = result;
             PRISM_CORE_ERROR("ScriptEngine: erro em OnClick: ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::DispatchAnimationEvent(Entity self, const std::string& name) {
+        NativeScripting::DispatchAnimationEvent(self, name);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError || !script.OnAnimationEvent.valid())
+            return;
+        sol::protected_function_result result = script.OnAnimationEvent(name);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em OnAnimationEvent: ", err.what());
             script.HasRuntimeError = true;
         }
     }

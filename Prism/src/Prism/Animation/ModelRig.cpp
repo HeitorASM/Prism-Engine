@@ -78,6 +78,34 @@ namespace Prism {
         }
     }
 
+    glm::vec3 ModelRig::SampleNodeTranslation(int clip, float time, int node) const {
+        if (node < 0 || node >= (int)BindTRS.size())
+            return glm::vec3(0.0f);
+        glm::vec3 bind = BindTRS[node].Translation;
+        if (clip < 0 || clip >= (int)Clips.size())
+            return bind;
+        const AnimClip& c = Clips[clip];
+        time = std::clamp(time, 0.0f, std::max(c.Duration, 0.0f));
+        for (const AnimChannel& ch : c.Channels)
+            if (ch.Node == node)
+                return SampleVec3(ch.Position, time, bind);
+        return bind;
+    }
+
+    int ModelRig::FindRootBoneNode() const {
+        int best = -1, bestDepth = 1 << 30;
+        for (const RigBone& bone : Bones) {
+            int depth = 0;
+            for (int n = bone.Node; n >= 0 && n < (int)Nodes.size() && depth < 256; n = Nodes[n].Parent)
+                depth++;
+            if (depth < bestDepth) {
+                bestDepth = depth;
+                best = bone.Node;
+            }
+        }
+        return best;
+    }
+
     void ModelRig::BlendPoses(const std::vector<NodeTRS>& a, const std::vector<NodeTRS>& b, float w, std::vector<NodeTRS>& out) {
         const size_t count = std::min(a.size(), b.size());
         if (&out != &a && &out != &b)

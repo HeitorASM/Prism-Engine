@@ -55,6 +55,7 @@ namespace Prism {
         sol::protected_function OnTriggerEnter;
         sol::protected_function OnTriggerExit;
         sol::protected_function OnClick; // botao de UI desta entidade clicado
+        sol::protected_function OnAnimationEvent; // evento de animacao (AnimatorComponent::Events): recebe o nome
         // Passo FIXO (1/60 s, o mesmo da fisica): chamado ZERO ou mais vezes por frame,
         // ANTES de cada passo da fisica - o lugar certo para ApplyForce/SetVelocity.
         sol::protected_function OnFixedUpdate;
@@ -149,6 +150,9 @@ namespace Prism {
         // Clique em botao de UI: chama OnClick() do script Lua e do script C++
         // de 'self' (se existirem). Chamado pelo UISystem na thread principal.
         static void DispatchUIClick(Entity self);
+
+        // Evento de animacao: chama OnAnimationEvent(nome) do script Lua e do C++ de 'self'.
+        static void DispatchAnimationEvent(Entity self, const std::string& name);
 
         // Destruicao ADIADA (entity:Destroy()/Scene.Destroy em Lua): destruir
         // uma entidade no meio de Scene::OnUpdate invalidaria a iteracao

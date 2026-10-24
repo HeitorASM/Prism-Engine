@@ -69,6 +69,7 @@ namespace PrismEditor {
         void DrawUIElementUI();
         void DrawAudioListenerUI();
         void DrawAnimatorUI();
+        void DrawAnimatorGraphUI(Prism::AnimatorComponent& animator, const std::vector<std::string>& clips);
         void DrawEnvironmentUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
@@ -160,6 +161,8 @@ namespace PrismEditor {
         Prism::RaycastComponent m_RaycastBeforeEdit;
         Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
         Prism::AnimatorComponent m_AnimatorBeforeEdit;
+        int m_AnimSelState = -1;       // editor de estados: estado selecionado (-2 = "Qualquer estado", -1 = nada)
+        int m_AnimSelTransition = -1;  // transicao selecionada (-1 = nada)
         Prism::ScriptComponent m_ScriptBeforeEdit;
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;

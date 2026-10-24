@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 6;
+    constexpr uint32_t kNativeApiVersion = 7;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -130,6 +130,13 @@ namespace Prism {
         // v6 - troca de cena (aplicada pela engine DEPOIS do frame atual).
         void (*LoadScene)(Scene* scene, const char* mapPath); // relativo a pasta de mapas, com ou sem .prismmap
         void (*ReloadScene)(Scene* scene);
+
+        // v7 - maquina de estados do Animator.
+        bool (*SetAnimFloat)(Scene* scene, entt::entity entity, const char* name, float value);
+        bool (*SetAnimBool)(Scene* scene, entt::entity entity, const char* name, bool value);
+        bool (*SetAnimTrigger)(Scene* scene, entt::entity entity, const char* name);
+        bool (*SetAnimState)(Scene* scene, entt::entity entity, const char* state, float fadeSeconds);
+        const char* (*GetAnimState)(Scene* scene, entt::entity entity); // valido ate a proxima chamada
     };
 
     // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
@@ -185,6 +192,8 @@ namespace Prism {
         virtual void OnTriggerExit(Entity other) { (void)other; }
         // Botao de UI (UIElementComponent::Button) desta entidade foi clicado.
         virtual void OnClick() {}
+        // Evento de animacao (AnimatorComponent::Events): 'name' e o nome do evento.
+        virtual void OnAnimationEvent(const char* name) { (void)name; }
         // Declara as variaveis publicas (ver NativeProperties). Opcional.
         virtual void OnProperties(NativeProperties& properties) { (void)properties; }
 
@@ -312,6 +321,13 @@ namespace Prism {
         void PauseAnimation(bool paused = true) { Api().SetAnimationPaused(m_Entity.GetScene(), m_Entity.GetHandle(), paused); }
         void SetAnimationSpeed(float speed) { Api().SetAnimationSpeed(m_Entity.GetScene(), m_Entity.GetHandle(), speed); }
         bool IsAnimationPlaying() { return Api().IsAnimationPlaying(m_Entity.GetScene(), m_Entity.GetHandle()); }
+
+        // Maquina de estados do Animator (grafo montado no editor). Parametros por nome.
+        bool SetAnimFloat(const std::string& name, float value) { return Api().SetAnimFloat(m_Entity.GetScene(), m_Entity.GetHandle(), name.c_str(), value); }
+        bool SetAnimBool(const std::string& name, bool value) { return Api().SetAnimBool(m_Entity.GetScene(), m_Entity.GetHandle(), name.c_str(), value); }
+        bool SetAnimTrigger(const std::string& name) { return Api().SetAnimTrigger(m_Entity.GetScene(), m_Entity.GetHandle(), name.c_str()); }
+        bool SetAnimState(const std::string& state, float fadeSeconds = 0.0f) { return Api().SetAnimState(m_Entity.GetScene(), m_Entity.GetHandle(), state.c_str(), fadeSeconds); }
+        std::string GetAnimState() { return Api().GetAnimState(m_Entity.GetScene(), m_Entity.GetHandle()); }
 
         // Troca de cena: carrega o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
         // Todos os scripts e entidades da cena atual sao destruidos.
