@@ -101,7 +101,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] PrismRuntime: executável que roda um projeto sem o editor
 - [x] Exportar/empacotar o jogo (Arquivo → Exportar Jogo: pasta distribuível com o Runtime + projeto; ver [docs/exportacao.md](docs/exportacao.md))
 - [x] Módulo C++: `CMakeLists.txt` do usuário nunca sobrescrito, para usar bibliotecas de terceiros
-- [ ] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload
+- [x] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload (ver `docs/ui-prismui.md`)
 - [ ] Camadas de visibilidade: máscara de camadas na malha/luz e "Culling Mask" na câmera (estilo Godot)
 - [ ] Frustum culling e instancing no renderer
 - [ ] Física: camadas/máscaras configuráveis, juntas e character controller

@@ -67,6 +67,7 @@ namespace PrismEditor {
         void DrawNativeScriptUI();
         void DrawParticleEmitterUI();
         void DrawUIElementUI();
+        void DrawUIDocumentUI();
         void DrawAudioListenerUI();
         void DrawAnimatorUI();
         void DrawAnimatorGraphUI(Prism::AnimatorComponent& animator, const std::vector<std::string>& clips);
@@ -167,6 +168,7 @@ namespace PrismEditor {
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
         Prism::UIElementComponent m_UIBeforeEdit;
+        Prism::UIDocumentComponent m_UIDocBeforeEdit;
 
         // Cache das variaveis publicas (tabela `Properties`) do script
         // selecionado: relido so quando o arquivo ou o caminho mudam.

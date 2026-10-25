@@ -4,6 +4,8 @@
 #include "../Physics/PhysicsEngine.h"
 #include "../Audio/AudioEngine.h"
 #include "../Animation/AnimationSystem.h"
+#include "../UI/UISystem.h"
+#include "../UI/UIDocument.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Core/Input.h"
 #include "../Core/Log.h"
@@ -261,6 +263,49 @@ namespace Prism {
             return buffer.c_str();
         }
 
+        // --- UI em documento (.prismui) ---------------------------------------------
+        Ui::Node* UINode(Scene* scene, entt::entity entity, const char* nodeId) {
+            if (!scene || !nodeId || !scene->GetRegistry().valid(entity))
+                return nullptr;
+            return UISystem::FindDocumentNode(Entity(entity, scene), nodeId);
+        }
+        bool ApiUISetText(Scene* scene, entt::entity entity, const char* nodeId, const char* text) {
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            if (!n || !text) return false;
+            n->Text = text;
+            return true;
+        }
+        const char* ApiUIGetText(Scene* scene, entt::entity entity, const char* nodeId) {
+            static thread_local std::string buffer;
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            buffer = n ? n->Text : std::string();
+            return buffer.c_str();
+        }
+        bool ApiUISetVisible(Scene* scene, entt::entity entity, const char* nodeId, bool visible) {
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            if (!n) return false;
+            n->Visible = visible;
+            return true;
+        }
+        bool ApiUISetInteractable(Scene* scene, entt::entity entity, const char* nodeId, bool interactable) {
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            if (!n) return false;
+            n->Interactable = interactable;
+            return true;
+        }
+        bool ApiUISetColor(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a) {
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            if (!n) return false;
+            n->Tint = Ui::Color(r, g, b, a);
+            return true;
+        }
+        bool ApiUISetTextColor(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a) {
+            Ui::Node* n = UINode(scene, entity, nodeId);
+            if (!n) return false;
+            n->TextColor = Ui::Color(r, g, b, a);
+            return true;
+        }
+
         void ApiLoadScene(Scene* scene, const char* mapPath) {
             if (scene && mapPath)
                 scene->RequestLoadScene(mapPath);
@@ -370,7 +415,9 @@ namespace Prism {
                 // v6
                 &ApiLoadScene, &ApiReloadScene,
                 // v7
-                &ApiSetAnimFloat, &ApiSetAnimBool, &ApiSetAnimTrigger, &ApiSetAnimState, &ApiGetAnimState
+                &ApiSetAnimFloat, &ApiSetAnimBool, &ApiSetAnimTrigger, &ApiSetAnimState, &ApiGetAnimState,
+                // v8
+                &ApiUISetText, &ApiUIGetText, &ApiUISetVisible, &ApiUISetInteractable, &ApiUISetColor, &ApiUISetTextColor
             };
             return api;
         }
@@ -793,6 +840,21 @@ namespace Prism {
         }
         catch (const std::exception& error) {
             PRISM_ERROR("Script C++: excecao em OnClick: ", error.what());
+            it->second.Faulted = true;
+        }
+    }
+
+    void NativeScripting::DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId) {
+        if (s_Instances.empty())
+            return;
+        auto it = s_Instances.find(InstanceKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_Instances.end() || it->second.Faulted)
+            return;
+        try {
+            it->second.Object->OnUIClick(handler.c_str(), nodeId.c_str());
+        }
+        catch (const std::exception& error) {
+            PRISM_ERROR("Script C++: excecao em OnUIClick: ", error.what());
             it->second.Faulted = true;
         }
     }

@@ -78,6 +78,8 @@ namespace Prism {
         static void DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger);
         // Chama ScriptableEntity::OnClick da entidade (clique em botao de UI).
         static void DispatchUIClick(Entity self);
+        // Clique em botao de documento .prismui: chama ScriptableEntity::OnUIClick(handler, nodeId).
+        static void DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId);
         // Chama ScriptableEntity::OnAnimationEvent(nome) da entidade.
         static void DispatchAnimationEvent(Entity self, const std::string& name);
         static bool HasInstances() { return !s_Instances.empty(); }

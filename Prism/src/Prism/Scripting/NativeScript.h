@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 7;
+    constexpr uint32_t kNativeApiVersion = 8;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -137,6 +137,15 @@ namespace Prism {
         bool (*SetAnimTrigger)(Scene* scene, entt::entity entity, const char* name);
         bool (*SetAnimState)(Scene* scene, entt::entity entity, const char* state, float fadeSeconds);
         const char* (*GetAnimState)(Scene* scene, entt::entity entity); // valido ate a proxima chamada
+
+        // v8 - documentos de UI (.prismui, UIDocumentComponent). 'nodeId' e o atributo id do elemento.
+        // Todas devolvem false se a entidade nao tem documento ou o id nao existe.
+        bool (*UISetText)(Scene* scene, entt::entity entity, const char* nodeId, const char* text);
+        const char* (*UIGetText)(Scene* scene, entt::entity entity, const char* nodeId); // valido ate a proxima chamada; "" se nao achou
+        bool (*UISetVisible)(Scene* scene, entt::entity entity, const char* nodeId, bool visible);
+        bool (*UISetInteractable)(Scene* scene, entt::entity entity, const char* nodeId, bool interactable);
+        bool (*UISetColor)(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a);
+        bool (*UISetTextColor)(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a);
     };
 
     // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
@@ -192,6 +201,14 @@ namespace Prism {
         virtual void OnTriggerExit(Entity other) { (void)other; }
         // Botao de UI (UIElementComponent::Button) desta entidade foi clicado.
         virtual void OnClick() {}
+        // Botao de um documento .prismui (UIDocumentComponent) desta entidade clicado. 'handler' e o
+        // atributo onClick do botao ("" se nao tem) e 'nodeId' o id dele. O padrao chama OnClick()
+        // quando o botao nao tem onClick; sobrescreva para tratar por nome.
+        virtual void OnUIClick(const char* handler, const char* nodeId) {
+            (void)nodeId;
+            if (!handler || !*handler)
+                OnClick();
+        }
         // Evento de animacao (AnimatorComponent::Events): 'name' e o nome do evento.
         virtual void OnAnimationEvent(const char* name) { (void)name; }
         // Declara as variaveis publicas (ver NativeProperties). Opcional.
@@ -328,6 +345,14 @@ namespace Prism {
         bool SetAnimTrigger(const std::string& name) { return Api().SetAnimTrigger(m_Entity.GetScene(), m_Entity.GetHandle(), name.c_str()); }
         bool SetAnimState(const std::string& state, float fadeSeconds = 0.0f) { return Api().SetAnimState(m_Entity.GetScene(), m_Entity.GetHandle(), state.c_str(), fadeSeconds); }
         std::string GetAnimState() { return Api().GetAnimState(m_Entity.GetScene(), m_Entity.GetHandle()); }
+
+        // UI em documento (.prismui): elementos por id. Retornam false se nao achar.
+        bool UISetText(const std::string& nodeId, const std::string& text) { return Api().UISetText(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), text.c_str()); }
+        std::string UIGetText(const std::string& nodeId) { return Api().UIGetText(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str()); }
+        bool UISetVisible(const std::string& nodeId, bool visible) { return Api().UISetVisible(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), visible); }
+        bool UISetInteractable(const std::string& nodeId, bool interactable) { return Api().UISetInteractable(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), interactable); }
+        bool UISetColor(const std::string& nodeId, float r, float g, float b, float a = 1.0f) { return Api().UISetColor(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), r, g, b, a); }
+        bool UISetTextColor(const std::string& nodeId, float r, float g, float b, float a = 1.0f) { return Api().UISetTextColor(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), r, g, b, a); }
 
         // Troca de cena: carrega o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
         // Todos os scripts e entidades da cena atual sao destruidos.

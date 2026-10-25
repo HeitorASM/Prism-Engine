@@ -19,6 +19,7 @@
 #include "../Audio/AudioBus.h"
 #include "../Animation/AnimatorRuntime.h"
 #include "../Animation/AnimationGraph.h"
+#include "../UI/UIDocumentRuntime.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -727,6 +728,23 @@ namespace Prism {
 
         UIElementComponent() = default;
         UIElementComponent(const UIElementComponent&) = default;
+    };
+
+    // Documento de UI em texto (.prismui, XML - ver docs/ui-prismui.md): UMA
+    // entidade carrega uma arvore inteira de paineis/textos/botoes/imagens,
+    // em vez de uma entidade por elemento (UIElementComponent). Layout
+    // flexivel (row/column/ancoras), escala por resolucao e hot reload do
+    // arquivo. 'Runtime' NAO e salvo nem copiado (ver UI/UIDocumentRuntime.h).
+    struct UIDocumentComponent {
+        std::string Path;      // .prismui relativo ao projeto, ex: "UI/hud.prismui"
+        bool Visible = true;
+        int Layer = 0;         // ordem entre documentos: maior = por cima (documentos ficam acima da UI antiga)
+
+        ResetOnCopy<UIDocumentRuntime> Runtime;
+
+        UIDocumentComponent() = default;
+        UIDocumentComponent(const UIDocumentComponent&) = default;
+        UIDocumentComponent& operator=(const UIDocumentComponent&) = default;
     };
 
     // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver

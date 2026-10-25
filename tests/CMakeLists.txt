@@ -2,7 +2,7 @@
 # Testes automatizados. OPT-IN: nao entram no build normal.
 #
 #   cmake -B build -S . -DPRISM_BUILD_TESTS=ON
-#   cmake --build build --target PrismAssetTests PrismShaderTests PrismExportTests
+#   cmake --build build --target PrismAssetTests PrismShaderTests PrismExportTests PrismUITests
 #   ctest --test-dir build --output-on-failure
 #
 # PrismAssetTests compila SO as fontes de que precisa (Assets/ + Project/) em
@@ -69,3 +69,18 @@ if(MSVC)
     target_compile_options(PrismExportTests PRIVATE /utf-8)
 endif()
 add_test(NAME ExportTests COMMAND PrismExportTests)
+
+# PrismUITests: nucleo da UI em texto (.prismui) - parser XML, layout e hover/clique.
+# So std (sem GPU, GLFW, EnTT nem GLM): UI/UIMarkup, UILayout e UIInput.
+add_executable(PrismUITests
+    UITests.cpp
+    ${PRISM_SRC}/Prism/UI/UIMarkup.cpp
+    ${PRISM_SRC}/Prism/UI/UILayout.cpp
+    ${PRISM_SRC}/Prism/UI/UIInput.cpp
+)
+target_include_directories(PrismUITests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismUITests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismUITests PRIVATE /utf-8)
+endif()
+add_test(NAME UITests COMMAND PrismUITests)

@@ -15,9 +15,13 @@
 //   stb_truetype num atlas (Latin-1).
 // ============================================================================
 
+#include <string>
+
 namespace Prism {
 
     class Scene;
+    class Entity;
+    namespace Ui { struct Node; }
 
     class UISystem {
     public:
@@ -31,6 +35,11 @@ namespace Prism {
 
         // Esquece botao apertado/hover (ao iniciar ou parar o Play).
         static void ResetInput();
+
+        // Elemento (por id) do UIDocumentComponent de 'entity', ou nullptr (sem componente,
+        // documento invalido ou id inexistente). Carrega o arquivo se ainda nao foi lido.
+        // O ponteiro vale ate o proximo Render/recarga: use na hora, nao guarde.
+        static Ui::Node* FindDocumentNode(Entity entity, const std::string& id);
 
         // Libera a textura da fonte. Chamar antes de Renderer::Shutdown.
         static void Shutdown();

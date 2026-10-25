@@ -11,16 +11,41 @@
 #include "NativeScripting.h"
 #include "../Particles/ParticleSystem.h"
 #include "../UI/UISystem.h"
+#include "../UI/UIDocument.h"
 #include "../Core/Log.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <system_error>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <vector>
 
 namespace Prism {
+
+    // Referencias Lua para documentos .prismui: guardam (cena, entidade[, id]) e resolvem a cada
+    // acesso, entao continuam validas se o arquivo for recarregado (hot reload).
+    struct UINodeRef {
+        Scene* Scene_ = nullptr;
+        entt::entity Handle = entt::null;
+        std::string Id;
+        Ui::Node* Resolve() const {
+            if (!Scene_ || !Scene_->GetRegistry().valid(Handle))
+                return nullptr;
+            return UISystem::FindDocumentNode(Entity(Handle, Scene_), Id);
+        }
+    };
+    struct UIDocRef {
+        Scene* Scene_ = nullptr;
+        entt::entity Handle = entt::null;
+        UIDocumentComponent* Get() const {
+            if (!Scene_ || !Scene_->GetRegistry().valid(Handle))
+                return nullptr;
+            return Scene_->GetRegistry().try_get<UIDocumentComponent>(Handle);
+        }
+    };
+
 
     namespace {
         // Poe "em jogo" uma entidade criada durante o Play (Scene.Instantiate):
@@ -209,6 +234,45 @@ namespace Prism {
             "SetColor", [](UIElementComponent& c, float r, float g, float b, float a) { c.Color = { r, g, b, a }; },
             "SetTextColor", [](UIElementComponent& c, float r, float g, float b, float a) { c.TextColor = { r, g, b, a }; }
         );
+        // Documento de UI .prismui (entity:GetUIDocument()): doc:Find("id") devolve um elemento
+        // (ou nil). Elemento = referencia por id, segura mesmo se o arquivo for recarregado.
+        lua.new_usertype<UINodeRef>("UINode",
+            "Text", sol::property(
+                [](UINodeRef& r) -> std::string { Ui::Node* n = r.Resolve(); return n ? n->Text : std::string(); },
+                [](UINodeRef& r, const std::string& v) { if (Ui::Node* n = r.Resolve()) n->Text = v; }),
+            "Visible", sol::property(
+                [](UINodeRef& r) -> bool { Ui::Node* n = r.Resolve(); return n && n->Visible; },
+                [](UINodeRef& r, bool v) { if (Ui::Node* n = r.Resolve()) n->Visible = v; }),
+            "Interactable", sol::property(
+                [](UINodeRef& r) -> bool { Ui::Node* n = r.Resolve(); return n && n->Interactable; },
+                [](UINodeRef& r, bool v) { if (Ui::Node* n = r.Resolve()) n->Interactable = v; }),
+            "FontSize", sol::property(
+                [](UINodeRef& r) -> float { Ui::Node* n = r.Resolve(); return n ? n->FontSize : 0.0f; },
+                [](UINodeRef& r, float v) { if (Ui::Node* n = r.Resolve()) n->FontSize = v; }),
+            "Id", sol::property([](UINodeRef& r) -> std::string { return r.Id; }),
+            "Exists", [](UINodeRef& r) -> bool { return r.Resolve() != nullptr; },
+            "SetColor", [](UINodeRef& r, float R, float G, float B, float A) { if (Ui::Node* n = r.Resolve()) n->Tint = Ui::Color(R, G, B, A); },
+            "SetTextColor", [](UINodeRef& r, float R, float G, float B, float A) { if (Ui::Node* n = r.Resolve()) n->TextColor = Ui::Color(R, G, B, A); },
+            "SetTexture", [](UINodeRef& r, const std::string& path) { if (Ui::Node* n = r.Resolve()) n->Src = path; }
+        );
+        lua.new_usertype<UIDocRef>("UIDocument",
+            "Visible", sol::property(
+                [](UIDocRef& r) -> bool { UIDocumentComponent* c = r.Get(); return c && c->Visible; },
+                [](UIDocRef& r, bool v) { if (UIDocumentComponent* c = r.Get()) c->Visible = v; }),
+            "Layer", sol::property(
+                [](UIDocRef& r) -> int { UIDocumentComponent* c = r.Get(); return c ? c->Layer : 0; },
+                [](UIDocRef& r, int v) { if (UIDocumentComponent* c = r.Get()) c->Layer = v; }),
+            "Path", sol::property(
+                [](UIDocRef& r) -> std::string { UIDocumentComponent* c = r.Get(); return c ? c->Path : std::string(); },
+                [](UIDocRef& r, const std::string& v) { if (UIDocumentComponent* c = r.Get()) c->Path = v; }),
+            // doc:Find("id") -> elemento, ou nil se o documento/id nao existe.
+            "Find", [](UIDocRef& r, const std::string& id) -> std::optional<UINodeRef> {
+                UINodeRef ref{ r.Scene_, r.Handle, id };
+                if (!ref.Resolve())
+                    return std::nullopt;
+                return ref;
+            }
+        );
         lua.new_usertype<AudioSourceComponent>("AudioSource",
             "Volume", &AudioSourceComponent::Volume,
             "Pitch", &AudioSourceComponent::Pitch,
@@ -356,6 +420,11 @@ namespace Prism {
             "GetCamera", [](Entity& e) -> CameraComponent* { return e.HasComponent<CameraComponent>() ? &e.GetComponent<CameraComponent>() : nullptr; },
             "GetEnvironment", [](Entity& e) -> EnvironmentComponent* { return e.HasComponent<EnvironmentComponent>() ? &e.GetComponent<EnvironmentComponent>() : nullptr; },
             "GetAudioSource", [](Entity& e) -> AudioSourceComponent* { return e.HasComponent<AudioSourceComponent>() ? &e.GetComponent<AudioSourceComponent>() : nullptr; },
+            "GetUIDocument", [](Entity& e) -> std::optional<UIDocRef> {
+                if (!e.HasComponent<UIDocumentComponent>())
+                    return std::nullopt;
+                return UIDocRef{ e.GetScene(), e.GetHandle() };
+            },
             "GetUI", [](Entity& e) -> UIElementComponent* { return e.HasComponent<UIElementComponent>() ? &e.GetComponent<UIElementComponent>() : nullptr; },
             "GetParticleEmitter", [](Entity& e) -> ParticleEmitterComponent* { return e.HasComponent<ParticleEmitterComponent>() ? &e.GetComponent<ParticleEmitterComponent>() : nullptr; },
             // Particulas: PlayParticles reinicia (e solta o burst); StopParticles
@@ -1183,6 +1252,36 @@ namespace Prism {
         if (!result.valid()) {
             sol::error err = result;
             PRISM_CORE_ERROR("ScriptEngine: erro em OnClick: ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId) {
+        NativeScripting::DispatchUIDocumentClick(self, handler, nodeId);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError)
+            return;
+        sol::protected_function callback = script.OnClick;
+        if (!handler.empty()) {
+            sol::object candidate = script.Instance[handler];
+            if (candidate.get_type() == sol::type::function) {
+                callback = candidate.as<sol::protected_function>();
+            }
+            else {
+                PRISM_CORE_WARN("UI: onClick=\"", handler, "\" nao e uma funcao do script Lua desta entidade.");
+                return; // com handler nomeado nunca cai no OnClick (evita chamada dupla)
+            }
+        }
+        if (!callback.valid())
+            return;
+        sol::protected_function_result result = callback(nodeId);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em ", handler.empty() ? std::string("OnClick") : handler, ": ", err.what());
             script.HasRuntimeError = true;
         }
     }

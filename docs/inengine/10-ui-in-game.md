@@ -2,6 +2,8 @@
 
 A interface do **jogo** (placar, menus, barra de vida) é feita de entidades com o component **UI Element**. Ela é desenhada por cima da cena, na janela de Play, e aparece (só para visualizar) na viewport do editor.
 
+> Formato novo em texto: [ui-prismui.md](../ui-prismui.md).
+
 Crie pelo menu **Entidade → Criar UI**: **Panel**, **Texto**, **Botão** ou **Imagem**.
 
 ## Tipos

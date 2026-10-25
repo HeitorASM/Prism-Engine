@@ -151,6 +151,11 @@ namespace Prism {
         // de 'self' (se existirem). Chamado pelo UISystem na thread principal.
         static void DispatchUIClick(Entity self);
 
+        // Clique em botao de um UIDocumentComponent (.prismui): chama no script Lua e no C++
+        // de 'self' a funcao 'handler' (atributo onClick do botao) com o id do botao; sem
+        // 'handler', chama OnClick() como na UI antiga.
+        static void DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId);
+
         // Evento de animacao: chama OnAnimationEvent(nome) do script Lua e do C++ de 'self'.
         static void DispatchAnimationEvent(Entity self, const std::string& name);
 

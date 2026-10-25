@@ -15,6 +15,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 #include <string>
 
@@ -544,26 +546,66 @@ namespace PrismEditor {
                         m_Ctx.History.Execute(std::move(command));
                         m_Ctx.SelectedEntity = raw->GetCreatedEntity();
                     };
-                    if (ImGui::MenuItem("Panel"))
+                    if (ImGui::MenuItem("Documento de UI (.prismui)")) {
+                        // Cria Assets/UI/<nome>.prismui com um modelo e uma entidade que aponta para ele.
+                        auto project = Prism::Project::GetActive();
+                        if (project) {
+                            namespace fs = std::filesystem;
+                            fs::path directory = project->GetAssetDirectory() / "UI";
+                            std::error_code ec;
+                            fs::create_directories(directory, ec);
+                            fs::path file;
+                            for (int n = 0; n < 1000; n++) {
+                                file = directory / (n == 0 ? std::string("NovaUI.prismui") : "NovaUI" + std::to_string(n) + ".prismui");
+                                if (!fs::exists(file, ec))
+                                    break;
+                            }
+                            static const char* kTemplate =
+                                "<UI scale=\"height\" reference=\"1920x1080\">\n"
+                                "  <!-- Painel no canto superior direito. Salve o arquivo e a UI atualiza sozinha. -->\n"
+                                "  <Panel id=\"hud\" anchor=\"top-right\" margin=\"24\" padding=\"16\" layout=\"column\" gap=\"12\" color=\"#000000AA\">\n"
+                                "    <Text id=\"score\" size=\"36\" color=\"#FFCC00\">Pontos: 0</Text>\n"
+                                "    <Button id=\"pause\" onClick=\"OnPause\" width=\"220\" color=\"#3F73D9\">Pausar</Button>\n"
+                                "  </Panel>\n"
+                                "</UI>\n";
+                            bool written = false;
+                            {
+                                std::ofstream out(file, std::ios::binary);
+                                if (out) { out << kTemplate; written = out.good(); }
+                            }
+                            if (written) {
+                                std::string relative = fs::relative(file, project->GetProjectDirectory(), ec).generic_string();
+                                auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, "UI Documento", "UI Documento",
+                                    [relative](Prism::Entity entity) { entity.AddComponent<Prism::UIDocumentComponent>().Path = relative; });
+                                CreatePresetEntityCommand* raw = command.get();
+                                m_Ctx.History.Execute(std::move(command));
+                                m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                            }
+                            else {
+                                PRISM_CORE_ERROR("Nao foi possivel criar '", file.generic_string(), "'.");
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Panel (antigo)"))
                         createUI("UI Panel", [](Prism::UIElementComponent& ui) {
                             ui.Type = Prism::UIElementType::Panel;
                             ui.Size = { 300.0f, 200.0f };
                             ui.Color = { 0.1f, 0.1f, 0.12f, 0.8f };
                         });
-                    if (ImGui::MenuItem("Texto"))
+                    if (ImGui::MenuItem("Texto (antigo)"))
                         createUI("UI Texto", [](Prism::UIElementComponent& ui) {
                             ui.Type = Prism::UIElementType::Text;
                             ui.Size = { 300.0f, 40.0f };
                             ui.BlocksPointer = false;
                         });
-                    if (ImGui::MenuItem("Botao"))
+                    if (ImGui::MenuItem("Botao (antigo)"))
                         createUI("UI Botao", [](Prism::UIElementComponent& ui) {
                             ui.Type = Prism::UIElementType::Button;
                             ui.Size = { 200.0f, 50.0f };
                             ui.Color = { 0.25f, 0.45f, 0.85f, 1.0f };
                             ui.Text = "Botao";
                         });
-                    if (ImGui::MenuItem("Imagem"))
+                    if (ImGui::MenuItem("Imagem (antigo)"))
                         createUI("UI Imagem", [](Prism::UIElementComponent& ui) {
                             ui.Type = Prism::UIElementType::Image;
                             ui.Size = { 128.0f, 128.0f };

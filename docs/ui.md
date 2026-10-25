@@ -1,5 +1,7 @@
 # UI in-game
 
+> **Novo:** prefira o formato em texto `.prismui` (um arquivo + uma entidade, layout flexível, escala por resolução, hot reload) — veja [ui-prismui.md](ui-prismui.md). O component `UI Element` descrito aqui continua funcionando, mas é o formato antigo.
+
 A UI in-game é feita de entidades com o component **UI Element** (menu *Entidade → Criar UI*, ou *+ Add Component*). Ela é desenhada por cima da cena, na janela de Play e (só para visualização) no viewport do editor.
 
 ## Tipos

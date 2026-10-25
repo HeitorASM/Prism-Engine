@@ -712,6 +712,27 @@ namespace Prism {
         );
         s_Registry.back().Version = 2;
         s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
+
+        // --- UIDocumentComponent (.prismui) ----------------------------------------
+        Register<UIDocumentComponent>(
+            "UI Document",
+            [](std::ostream& out, Entity e) {
+                auto& c = e.GetComponent<UIDocumentComponent>();
+                WriteString(out, c.Path);
+                WriteRaw(out, c.Visible);
+                WriteRaw(out, c.Layer);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<UIDocumentComponent>();
+                if (!(ReadString(in, c.Path) && ReadRaw(in, c.Visible) && ReadRaw(in, c.Layer))) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (documento de UI da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+        s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
+
     }
 
 }
