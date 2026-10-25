@@ -2,7 +2,7 @@
 # Testes automatizados. OPT-IN: nao entram no build normal.
 #
 #   cmake -B build -S . -DPRISM_BUILD_TESTS=ON
-#   cmake --build build --target PrismAssetTests PrismShaderTests
+#   cmake --build build --target PrismAssetTests PrismShaderTests PrismExportTests
 #   ctest --test-dir build --output-on-failure
 #
 # PrismAssetTests compila SO as fontes de que precisa (Assets/ + Project/) em
@@ -56,3 +56,16 @@ if(MSVC)
     target_compile_options(PrismShaderTests PRIVATE /utf-8)
 endif()
 add_test(NAME ShaderTests COMMAND PrismShaderTests)
+
+# PrismExportTests: exportador de jogos (Project/GameExporter) - so std::filesystem,
+# usa pastas temporarias com arquivos de mentira. Sem GPU nem a engine inteira.
+add_executable(PrismExportTests
+    ExportTests.cpp
+    ${PRISM_SRC}/Prism/Project/GameExporter.cpp
+)
+target_include_directories(PrismExportTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismExportTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismExportTests PRIVATE /utf-8)
+endif()
+add_test(NAME ExportTests COMMAND PrismExportTests)

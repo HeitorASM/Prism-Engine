@@ -54,6 +54,14 @@ namespace PrismEditor {
         else if (Contains(text, "CMake Warning"))
             entry.Level = Severity::Warning;
 
+        // Exportacao de jogo (Prism::ExportGame): "ERRO: ..." e "AVISO: ...".
+        if (entry.Level == Severity::Normal) {
+            if (text.rfind("ERRO:", 0) == 0)
+                entry.Level = Severity::Error;
+            else if (text.rfind("AVISO:", 0) == 0)
+                entry.Level = Severity::Warning;
+        }
+
         return entry;
     }
 

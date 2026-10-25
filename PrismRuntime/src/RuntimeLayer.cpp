@@ -39,6 +39,7 @@ namespace PrismRuntime {
         // 1o argumento (pasta ou .prismproj); sem argumento, procura ao lado
         // do executavel e em "Game/" (layout de um jogo distribuido).
         fs::path projectFile;
+        bool distributed = false; // layout de jogo exportado: projeto em Game/ ao lado do executavel
         const auto& args = Prism::GetLaunchArguments();
         if (!args.empty()) {
             projectFile = FindProjectFile(fs::path(args[0]));
@@ -56,6 +57,19 @@ namespace PrismRuntime {
                 Fail("nenhum projeto informado. Uso: PrismRuntime <pasta-do-projeto | arquivo.prismproj>");
                 return;
             }
+            distributed = true;
+        }
+
+        // Jogo exportado (Arquivo > Exportar Jogo no editor): nada recompila shaders, scripts nem o
+        // modulo C++ no disco do jogador - desliga o hot reload (que consultaria o disco varias vezes
+        // por segundo a toa) e abre o modulo direto de Binaries/, sem copiar para Cache/ (a pasta de
+        // instalacao pode ser somente leitura). Com um projeto passado na linha de comando (desenvolvimento)
+        // tudo continua como antes.
+        if (distributed) {
+            Prism::Renderer::SetShaderHotReload(false);
+            Prism::ScriptEngine::SetHotReloadEnabled(false);
+            Prism::NativeScripting::SetHotReloadEnabled(false);
+            Prism::NativeScripting::SetDirectLoad(true);
         }
 
         Prism::Ref<Prism::Project> project = Prism::Project::Load(projectFile);

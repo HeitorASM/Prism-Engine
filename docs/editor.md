@@ -103,6 +103,7 @@ Botão direito num node da Hierarquia abre **Duplicar**, **Criar Prefab...** e *
 
 - **Novo Mapa**: cena vazia sem arquivo associado.
 - **Salvar Mapa** (Ctrl+S): grava em cima do arquivo atual; se não houver, funciona como Salvar Como.
+- **Exportar Jogo...**: empacota o projeto e o Runtime numa pasta distribuível (ver [exportacao.md](exportacao.md)); roda em segundo plano e escreve na aba Saída de Build.
 - **Salvar Como** (Ctrl+Shift+S): pede um nome, mostra o caminho final e avisa se um mapa com esse nome já existe. Nunca sobrescreve sem avisar. O mapa salvo vira o mapa inicial do projeto.
 
 ### Alterações não salvas

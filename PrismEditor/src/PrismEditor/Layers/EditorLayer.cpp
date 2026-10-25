@@ -2,6 +2,7 @@
 #include "ProjectManagerLayer.h"
 #include <PrismVersion.h>
 #include "../Core/EntityOps.h"
+#include "../Core/FileDialog.h"
 #include "../Core/EditorIcons.h"
 #include "../Core/EditorTheme.h"
 #include "../Commands/EditorCommands.h"
@@ -9,6 +10,7 @@
 #include <imgui_internal.h> // DockBuilder (layout padrao dos paineis)
 #include <ImGuizmo.h>
 #include <GLFW/glfw3.h>
+#include <Prism/Core/Paths.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -145,6 +147,7 @@ namespace PrismEditor {
     void EditorLayer::OnUpdate(float deltaTime) {
         m_Viewport.ResizeIfNeeded();
         PollNativeBuild();
+        PollGameExport();
 
         // EditorContext::ActiveScene->OnUpdate() aqui NAO roda scripts/fisica na pratica
         // (Scene::OnUpdate so simula quando IsRunning() e true - ver
@@ -438,6 +441,12 @@ namespace PrismEditor {
                     m_Document.SaveActiveSceneAs();
                 }
                 ImGui::Separator();
+                {
+                    const bool canExport = Prism::Project::GetActive() != nullptr && !m_GameExporter.IsRunning() && !m_NativeBuilder.IsRunning();
+                    if (ImGui::MenuItem("Exportar Jogo...", nullptr, false, canExport))
+                        StartGameExport();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Fechar Projeto"))
                     m_Document.RunAfterUnsavedCheck([this]() { CloseProject(); });
                 if (ImGui::MenuItem("Sair do Editor")) {
@@ -679,6 +688,75 @@ namespace PrismEditor {
         }
     }
 
+    // Arquivo > Exportar Jogo...: o exportador copia ARQUIVOS DO DISCO, entao um mapa com
+    // alteracoes nao salvas ficaria de fora - pergunta antes (Salvar / Nao salvar / Cancelar).
+    void EditorLayer::StartGameExport() {
+        if (!Prism::Project::GetActive() || m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+        m_Document.RunAfterUnsavedCheck([this]() { BeginGameExport(); });
+    }
+
+    void EditorLayer::BeginGameExport() {
+        auto project = Prism::Project::GetActive();
+        if (!project || m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+
+        // Onde exportar: dialogo de pasta (abre na ultima usada, ou ao lado do projeto).
+        std::filesystem::path startIn = m_LastExportParent.empty() ? project->GetProjectDirectory().parent_path() : m_LastExportParent;
+        std::filesystem::path chosen = FileDialog::PickFolder(startIn);
+        if (chosen.empty())
+            return; // cancelou
+        m_LastExportParent = chosen.parent_path();
+
+        Prism::GameExportOptions options;
+        options.ProjectDirectory = project->GetProjectDirectory();
+        options.StartMap = project->GetConfig().StartMap;
+        options.MapDirectory = project->GetConfig().MapDirectory;
+        options.RuntimeDirectory = Prism::GetExecutableDirectory() / "Runtime";
+        options.GameName = project->GetConfig().Name;
+        options.EngineVersion = std::string(Prism::Version::Number);
+
+        // Pasta escolhida ja tem outras coisas (ex: Documentos) e nao e uma exportacao anterior:
+        // exporta numa subpasta com o nome do jogo, em vez de recusar ou misturar.
+        std::error_code ec;
+        std::filesystem::path target = chosen;
+        if (std::filesystem::exists(target, ec) && !std::filesystem::is_empty(target, ec)
+            && !std::filesystem::exists(target / ".prism-export", ec))
+            target = chosen / FileDialog::FromUtf8(Prism::SanitizeGameName(options.GameName));
+        options.OutputDirectory = target;
+
+        m_BuildOutput.BeginBuild();
+        m_BuildOutput.AddLine("Exportando '" + options.GameName + "' para " + FileDialog::ToUtf8(target));
+        std::string error;
+        if (m_GameExporter.Start(std::move(options), error)) {
+            PRISM_INFO("Exportando o jogo para ", FileDialog::ToUtf8(target), "...");
+        }
+        else {
+            m_BuildOutput.AddLine("ERRO: " + error);
+            m_BuildOutput.EndBuild(false);
+            PRISM_ERROR(error);
+        }
+    }
+
+    void EditorLayer::PollGameExport() {
+        std::vector<GameExportRunner::Line> lines;
+        bool justFinished = false;
+        bool success = false;
+        std::filesystem::path outputDirectory;
+        m_GameExporter.Poll(lines, justFinished, success, outputDirectory);
+
+        for (const auto& line : lines)
+            m_BuildOutput.AddLine(line.Text);
+
+        if (justFinished) {
+            m_BuildOutput.EndBuild(success);
+            if (success)
+                PRISM_INFO("Jogo exportado em ", FileDialog::ToUtf8(outputDirectory), ".");
+            else
+                PRISM_ERROR("Falha ao exportar o jogo (veja a aba Saida de Build).");
+        }
+    }
+
     // Botao "Compilar" + estado dos scripts C++, na barra de ferramentas.
     void EditorLayer::RenderBuildToolbarGroup() {
         const bool building = m_NativeBuilder.IsRunning();
@@ -686,7 +764,7 @@ namespace PrismEditor {
         const bool hasProject = Prism::Project::GetActive() != nullptr;
 
         // Compilar tambem com o Play rodando: o modulo novo entra por hot reload (NativeScripting::PollHotReload).
-        ImGui::BeginDisabled(!hasProject || building);
+        ImGui::BeginDisabled(!hasProject || building || m_GameExporter.IsRunning()); // a aba Saida de Build e compartilhada com a exportacao
         if (ImGui::Button(building ? "Compilando..." : "Compilar"))
             StartNativeBuild();
         ImGui::EndDisabled();

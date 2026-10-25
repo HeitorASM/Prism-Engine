@@ -51,6 +51,11 @@ namespace Prism {
         // Se o modulo novo for invalido, o antigo segue rodando.
         static void PollHotReload(Scene& scene);
         static void SetHotReloadEnabled(bool enabled) { s_HotReload = enabled; }
+        // Jogo distribuido (PrismRuntime): abre Binaries/NativeScripts.* direto, sem copiar para
+        // Cache/NativeModule. A copia existe so para o compilador do editor poder sobrescrever o
+        // arquivo com o jogo aberto; num jogo instalado a pasta pode ser somente leitura
+        // (ex: Program Files) e nada recompila o modulo. Desligado por padrao (editor).
+        static void SetDirectLoad(bool enabled) { s_DirectLoad = enabled; }
 
         static std::filesystem::path GetModulePath(const Project& project);
         static std::filesystem::path GetSourceDirectory(const Project& project) { return project.GetProjectDirectory() / "Source"; }
@@ -119,6 +124,7 @@ namespace Prism {
         static std::filesystem::file_time_type s_PendingWriteTime;
         static std::chrono::steady_clock::time_point s_LastHotReloadPoll;
         static bool s_HotReload;
+        static bool s_DirectLoad;
         static std::vector<std::string> s_ClassNames;
         static std::unordered_map<std::string, ClassInfo> s_Classes;
         static std::unordered_map<InstanceKey, Instance, InstanceKeyHash> s_Instances;

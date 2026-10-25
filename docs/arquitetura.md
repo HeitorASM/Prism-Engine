@@ -22,7 +22,7 @@ O projeto tem três alvos CMake:
 | `Physics/` | `PhysicsEngine` (Jolt) |
 | `Audio/` | `AudioEngine` (miniaudio) |
 | `ImGui/` | `ImGuiLayer` |
-| `Project/` | `Project`, `ProjectSerializer` |
+| `Project/` | `Project`, `ProjectSerializer`, `GameExporter` (Arquivo → Exportar Jogo) |
 | `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry`, `ModelLoader` |
 
 ## Cena e ECS
@@ -96,6 +96,8 @@ cmake --build build --target PrismAssetTests
 ctest --test-dir build --output-on-failure
 ```
 
+`PrismExportTests` compila só `Project/GameExporter.cpp` (o exportador de jogos, ver [exportacao.md](exportacao.md)) e roda sobre pastas temporárias com arquivos de mentira.
+
 `PrismAssetTests` compila só `Assets/` e `Project/`, sem GPU, GLFW ou Jolt. Cobre `AssetID`, o formato do `.meta`, todos os casos de reconciliação do `AssetRegistry` e um ciclo real `Project::New` → `Project::Load` com assets movidos entre as duas etapas.
 
 ## Undo/redo
@@ -111,6 +113,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | Arquivo | Responsabilidade |
 |---|---|
 | `Core/EditorContext.h` | Estado **compartilhado** entre painéis: cena ativa, entidade selecionada, histórico de undo, caminho do mapa, câmera do editor, vínculo de material |
+| `Core/GameExportRunner` | Roda `Prism::ExportGame` numa thread de fundo e entrega as linhas à aba Saída de Build (Arquivo → Exportar Jogo) |
 | `Core/SceneDocument` | Ciclo de vida do mapa: novo, carregar, salvar, salvar como; aviso de alterações não salvas |
 | `Core/EntityOps` | Duplicar, excluir, instanciar prefab, câmera primária (funções livres sobre o `EditorContext`) |
 | `Core/MaterialLinkSync` | Vínculo vivo de material no lado do editor (debounce, gravação, reconciliação) |

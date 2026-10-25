@@ -56,6 +56,7 @@ A viewport usa sempre a câmera livre do editor. O que a câmera do jogo enxerga
 - **Novo Mapa**: cena vazia.
 - **Salvar Mapa** (Ctrl+S): grava no arquivo atual; se não houver, pede um nome.
 - **Salvar Como**: nunca sobrescreve sem avisar.
+- **Exportar Jogo...**: gera uma pasta com o jogo e o Runtime, pronta para distribuir (o progresso aparece na aba Saída de Build).
 - Trocar de mapa, criar um novo ou fechar o editor com alterações não salvas abre uma pergunta: **Salvar**, **Não salvar** ou **Cancelar**.
 
 ## Prefabs

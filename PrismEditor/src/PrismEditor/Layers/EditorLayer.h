@@ -30,6 +30,7 @@
 #include "../Core/EditorContext.h"
 #include "../Core/SceneDocument.h"
 #include "../Core/NativeBuilder.h"
+#include "../Core/GameExportRunner.h"
 #include "../Panels/ViewportPanel.h"
 #include "../Panels/HierarchyPanel.h"
 #include "../Panels/PropertiesPanel.h"
@@ -73,6 +74,13 @@ namespace PrismEditor {
         void RenderBuildToolbarGroup();
         void StartNativeBuild();
         void PollNativeBuild();
+
+        // Arquivo > Exportar Jogo...: empacota o projeto + PrismRuntime numa pasta (ver
+        // Prism/Project/GameExporter.h). A copia roda numa thread de fundo; a saida vai
+        // para a aba "Saida de Build".
+        void StartGameExport();
+        void BeginGameExport();   // depois do aviso de "alteracoes nao salvas"
+        void PollGameExport();
 
         // Arquivo > Fechar Projeto: volta para a tela de projetos (ProjectManagerLayer).
         void CloseProject();
@@ -155,6 +163,10 @@ namespace PrismEditor {
 
         // Aba "Game" (jogo rodando dentro do editor, ver Panels/GamePanel.h).
         GamePanel m_Game;
+
+        // Exportacao do jogo (thread de fundo, ver Core/GameExportRunner.h).
+        GameExportRunner m_GameExporter;
+        std::filesystem::path m_LastExportParent; // pasta onde o dialogo "Exportar" abre da proxima vez
     };
 
 }

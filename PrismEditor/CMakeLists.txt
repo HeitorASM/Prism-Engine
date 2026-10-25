@@ -94,6 +94,19 @@ add_custom_command(TARGET PrismEditor POST_BUILD
         $<TARGET_FILE_DIR:PrismEditor>
 )
 
+# Runtime para "Arquivo > Exportar Jogo": copia a pasta do PrismRuntime (executavel + DLLs +
+# shaders + fontes, ver PrismRuntime/CMakeLists.txt) para <editor>/Runtime. Sai da MESMA
+# configuracao (Debug/Release) do editor, que e a do modulo C++ do projeto (o ABI da STL
+# difere entre elas no MSVC). O add_dependencies fica no CMakeLists.txt da raiz, depois de
+# os dois alvos existirem. remove_directory antes evita sobrar arquivos antigos na copia.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        $<TARGET_FILE_DIR:PrismEditor>/Runtime
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        $<TARGET_FILE_DIR:PrismRuntime>
+        $<TARGET_FILE_DIR:PrismEditor>/Runtime
+)
+
 # Assimp builda como biblioteca DINAMICA por padrao (assimp-vc***.dll no
 # Windows) - sem copiar essa DLL para perto do .exe, o editor abre uma
 # janela de erro "assimp-vc***.dll nao encontrada" ao iniciar, mesmo com o

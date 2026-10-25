@@ -38,6 +38,10 @@ add_subdirectory(Prism)
 add_subdirectory(PrismEditor)
 add_subdirectory(PrismRuntime)
 
+# O editor exporta jogos usando o PrismRuntime (ver PrismEditor/CMakeLists.txt):
+# o Runtime precisa estar compilado antes do passo final do editor.
+add_dependencies(PrismEditor PrismRuntime)
+
 # Testes automatizados: opt-in (nao afetam o build normal). Ver tests/CMakeLists.txt.
 option(PRISM_BUILD_TESTS "Compila os testes automatizados" OFF)
 if(PRISM_BUILD_TESTS)

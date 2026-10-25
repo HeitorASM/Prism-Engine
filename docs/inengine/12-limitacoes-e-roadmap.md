@@ -25,12 +25,12 @@ A Prism é um projeto de hobby em desenvolvimento: o que está aqui pode mudar o
 - **Áudio**: sem efeitos (reverb, filtros).
 - **UI**: sem escala por resolução, sem quebra automática de texto, só letras latinas.
 - **Editor**: sem copiar/colar subárvores; janela de Play com tamanho fixo (1280×720); a aba Game precisa ficar docada na janela do editor para o mouse bater com a imagem.
-- **Exportação**: ainda não dá para gerar o jogo como um programa independente do editor.
+- **Exportação**: **Arquivo → Exportar Jogo** gera uma pasta com o jogo e o Runtime (sem instalador, sem ícone próprio, assets sem empacotar). Para distribuir, use um build Release do editor.
 
 ## Ideias para o futuro
 
 - Máquina de estados de animação, *morph targets*, retargeting/IK e root motion (a animação esquelética em si já existe).
-- Exportar o jogo sem o editor.
+- Exportação: ícone do executável, empacotar assets em um arquivo, só levar o que o jogo usa.
 - `Scene.Load`, gamepad.
 
 A lista técnica e atualizada está no roadmap da documentação do GitHub (botão **Ver docs do GitHub**).

@@ -40,6 +40,7 @@ namespace Prism {
     std::filesystem::file_time_type NativeScripting::s_PendingWriteTime{};
     std::chrono::steady_clock::time_point NativeScripting::s_LastHotReloadPoll{};
     bool NativeScripting::s_HotReload = true;
+    bool NativeScripting::s_DirectLoad = false;
 
     namespace {
 
@@ -471,17 +472,21 @@ namespace Prism {
         out.SourceWriteTime = std::filesystem::last_write_time(source, ec);
 
         // Copia para Cache/NativeModule: o original fica livre para o compilador.
-        std::filesystem::path cacheDirectory = project.GetProjectDirectory() / "Cache" / "NativeModule";
-        std::filesystem::create_directories(cacheDirectory, ec);
-        for (auto& entry : std::filesystem::directory_iterator(cacheDirectory, ec)) {
-            std::error_code ignored;
-            std::filesystem::remove(entry.path(), ignored); // copias antigas (as travadas ficam)
-        }
-        std::filesystem::path copy = cacheDirectory / ("NativeScripts_" + std::to_string(++s_LoadCounter) + ModuleExtension());
-        std::filesystem::copy_file(source, copy, std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) {
-            PRISM_CORE_ERROR("NativeScripting: falha ao copiar o modulo: ", ec.message());
-            return false;
+        // (Jogo distribuido: abre o original direto - ver SetDirectLoad.)
+        std::filesystem::path copy = source;
+        if (!s_DirectLoad) {
+            std::filesystem::path cacheDirectory = project.GetProjectDirectory() / "Cache" / "NativeModule";
+            std::filesystem::create_directories(cacheDirectory, ec);
+            for (auto& entry : std::filesystem::directory_iterator(cacheDirectory, ec)) {
+                std::error_code ignored;
+                std::filesystem::remove(entry.path(), ignored); // copias antigas (as travadas ficam)
+            }
+            copy = cacheDirectory / ("NativeScripts_" + std::to_string(++s_LoadCounter) + ModuleExtension());
+            std::filesystem::copy_file(source, copy, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                PRISM_CORE_ERROR("NativeScripting: falha ao copiar o modulo: ", ec.message());
+                return false;
+            }
         }
 
         void* handle = OpenLibrary(copy);

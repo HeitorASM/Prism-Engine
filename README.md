@@ -72,6 +72,7 @@ docs/             documentação técnica (GitHub)
 - [Áudio](docs/audio.md)
 - [Animação](docs/animacao.md)
 - [Formatos de arquivo](docs/formatos-de-arquivo.md)
+- [Exportar o jogo](docs/exportacao.md)
 
 ## Licença
 
@@ -98,7 +99,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Vínculo vivo entre instâncias e seus prefabs/materiais
 - [x] Aviso de alterações não salvas (dirty flag)
 - [x] PrismRuntime: executável que roda um projeto sem o editor
-- [ ] Exportar/empacotar o jogo (pasta distribuível com o Runtime + projeto)
+- [x] Exportar/empacotar o jogo (Arquivo → Exportar Jogo: pasta distribuível com o Runtime + projeto; ver [docs/exportacao.md](docs/exportacao.md))
 - [x] Módulo C++: `CMakeLists.txt` do usuário nunca sobrescrito, para usar bibliotecas de terceiros
 - [ ] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload
 - [ ] Camadas de visibilidade: máscara de camadas na malha/luz e "Culling Mask" na câmera (estilo Godot)
