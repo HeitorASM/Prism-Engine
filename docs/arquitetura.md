@@ -56,7 +56,7 @@ Para adicionar um component novo:
 
 ## Identidade de assets
 
-`Assets/` dá a cada arquivo de asset uma identidade estável, independente do caminho. É a base do "vínculo vivo" entre instâncias e seus prefabs/materiais (ver o roadmap): uma referência gravada como `AssetID` continua válida depois de mover ou renomear o arquivo, o que um caminho de texto não garante.
+`Assets/` dá a cada arquivo de asset uma identidade estável, independente do caminho. É a base do "vínculo vivo" entre instâncias e seus prefabs/materiais: uma referência gravada como `AssetID` continua válida depois de mover ou renomear o arquivo, o que um caminho de texto não garante.
 
 - `AssetID`: 64 bits aleatórios; o valor `0` significa "sem asset".
 - `AssetMeta`/`AssetMetaFile`: lê e grava o `.meta` ao lado de cada asset (formato em [formatos-de-arquivo.md](formatos-de-arquivo.md#meta)).

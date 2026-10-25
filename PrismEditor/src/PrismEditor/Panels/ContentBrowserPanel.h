@@ -9,7 +9,7 @@
 // Navega a partir de Project::GetProjectDirectory() (a raiz do projeto
 // inteiro, nao so a pasta Assets) porque o usuario tambem precisa ver Maps/
 // e Scripts/ - e exatamente o motivo deste painel existir agora, antes do
-// sistema de "Salvar Como"/multiplos mapas (proximo passo do roadmap), que
+// sistema de "Salvar Como"/multiplos mapas, que
 // vai precisar de um jeito de mostrar/escolher arquivos .prismmap.
 //
 // Escopo desta primeira versao, deliberadamente:

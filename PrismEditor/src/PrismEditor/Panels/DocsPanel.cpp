@@ -373,7 +373,7 @@ namespace PrismEditor {
         // Docs do GitHub: ordem de leitura sugerida abaixo; o que nao estiver na
         // lista vem depois, em ordem alfabetica.
         static const char* kOrder[] = { "arquitetura.md", "editor.md", "renderizacao.md", "fisica.md", "audio.md",
-                                        "scripting-lua.md", "scripting-cpp.md", "ui.md", "formatos-de-arquivo.md", "roadmap.md" };
+                                        "scripting-lua.md", "scripting-cpp.md", "ui.md", "formatos-de-arquivo.md" };
         auto rank = [&](const std::filesystem::path& p) {
             if (m_Source == Source::InEngine)
                 return 0;

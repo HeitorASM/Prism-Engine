@@ -91,11 +91,11 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Skybox visível (cor, gradiente ou panorama HDR)
 
 - [x] UI in-game (painéis, texto, imagens e botões com `OnClick`; ver `docs/ui.md`)
-- [ ] Reflexão de ambiente com IBL de verdade (irradiance/prefiltered maps a partir do panorama)
+- [x] Reflexão de ambiente com IBL de verdade (irradiance/prefiltered maps a partir do panorama)
 - [x] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
-- [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
+- [x] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger
-- [ ] Vínculo vivo entre instâncias e seus prefabs/materiais
+- [x] Vínculo vivo entre instâncias e seus prefabs/materiais
 - [x] Aviso de alterações não salvas (dirty flag)
 - [x] PrismRuntime: executável que roda um projeto sem o editor
 - [ ] Exportar/empacotar o jogo (pasta distribuível com o Runtime + projeto)
