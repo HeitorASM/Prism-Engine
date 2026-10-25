@@ -2,7 +2,7 @@
 
 Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking), EnTT, Lua (sol2) e Jolt Physics.
 
-> Ainda em fase incial de desenvolvimento
+> Ainda em fase inicial de desenvolvimento
 
 ## Recursos
 
@@ -99,3 +99,9 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Aviso de alterações não salvas (dirty flag)
 - [x] PrismRuntime: executável que roda um projeto sem o editor
 - [ ] Exportar/empacotar o jogo (pasta distribuível com o Runtime + projeto)
+- [x] Módulo C++: `CMakeLists.txt` do usuário nunca sobrescrito, para usar bibliotecas de terceiros
+- [ ] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload
+- [ ] Camadas de visibilidade: máscara de camadas na malha/luz e "Culling Mask" na câmera (estilo Godot)
+- [ ] Frustum culling e instancing no renderer
+- [ ] Física: camadas/máscaras configuráveis, juntas e character controller
+- [ ] Testes de serialização e do ComponentRegistry

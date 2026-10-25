@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <exception>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -824,40 +825,70 @@ namespace Prism {
 
         std::string sdkPath = sdk.generic_string(); // barras normais: CMake aceita em todas as plataformas
 
-        std::string cmake =
-            "# Gerado pela Prism Engine (Scripts C++ > Gerar projeto). Pode editar.\n"
-            "cmake_minimum_required(VERSION 3.20)\n"
-            "project(PrismNativeScripts LANGUAGES CXX)\n"
+        // PrismGenerated.cmake: tudo que e DA ENGINE (caminho do SDK, saida, flags). Sempre
+        // regravado - o caminho do SDK muda se a engine mudar de pasta. O usuario nao edita.
+        std::string generated =
+            "# Gerado pela Prism Engine - NAO EDITE (e regravado toda vez que o projeto abre/compila).\n"
+            "# Para usar bibliotecas ou mudar opcoes, edite o CMakeLists.txt desta pasta.\n"
             "\n"
             "# Caminhos de include da engine/GLM/EnTT (gerado no build da engine).\n"
             "include(\"" + sdkPath + "\")\n"
+            "\n"
+            "# Configura 'target' como modulo de scripts da Prism: includes do SDK, C++20,\n"
+            "# saida em <Projeto>/Binaries/NativeScripts.(dll|so|dylib).\n"
+            "function(prism_configure_module target)\n"
+            "    target_include_directories(${target} PRIVATE ${PRISM_SDK_INCLUDE_DIRS})\n"
+            "    target_compile_features(${target} PRIVATE cxx_std_20)\n"
+            "    set(OUT_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/../Binaries\")\n"
+            "    set_target_properties(${target} PROPERTIES\n"
+            "        PREFIX \"\"\n"
+            "        OUTPUT_NAME \"NativeScripts\"\n"
+            "        CXX_VISIBILITY_PRESET hidden\n"
+            "        VISIBILITY_INLINES_HIDDEN ON\n"
+            "        LIBRARY_OUTPUT_DIRECTORY \"${OUT_DIR}\"\n"
+            "        RUNTIME_OUTPUT_DIRECTORY \"${OUT_DIR}\")\n"
+            "    foreach(CONFIG_NAME ${CMAKE_CONFIGURATION_TYPES})\n"
+            "        string(TOUPPER ${CONFIG_NAME} CONFIG_UPPER)\n"
+            "        set_target_properties(${target} PROPERTIES\n"
+            "            LIBRARY_OUTPUT_DIRECTORY_${CONFIG_UPPER} \"${OUT_DIR}\"\n"
+            "            RUNTIME_OUTPUT_DIRECTORY_${CONFIG_UPPER} \"${OUT_DIR}\")\n"
+            "    endforeach()\n"
+            "    if(MSVC)\n"
+            "        target_compile_options(${target} PRIVATE /utf-8)\n"
+            "    endif()\n"
+            "endfunction()\n";
+
+        // CMakeLists.txt do USUARIO: so e criado se nao existir (nunca sobrescrito).
+        std::string cmake =
+            "# CMakeLists.txt do modulo de scripts C++ (Prism Engine).\n"
+            "# Este arquivo e SEU: a engine so o cria se ele nao existir e nunca o sobrescreve.\n"
+            "# As configuracoes da engine ficam em PrismGenerated.cmake (nao edite aquele).\n"
+            "cmake_minimum_required(VERSION 3.20)\n"
+            "project(PrismNativeScripts LANGUAGES CXX)\n"
+            "\n"
+            "include(${CMAKE_CURRENT_LIST_DIR}/PrismGenerated.cmake)\n"
             "\n"
             "file(GLOB_RECURSE SCRIPT_SOURCES CONFIGURE_DEPENDS\n"
             "    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp\n"
             "    ${CMAKE_CURRENT_SOURCE_DIR}/*.h)\n"
             "\n"
             "add_library(NativeScripts SHARED ${SCRIPT_SOURCES})\n"
-            "target_include_directories(NativeScripts PRIVATE ${PRISM_SDK_INCLUDE_DIRS})\n"
-            "target_compile_features(NativeScripts PRIVATE cxx_std_20)\n"
+            "prism_configure_module(NativeScripts)\n"
             "\n"
-            "# Saida: <Projeto>/Binaries/NativeScripts.(dll|so|dylib)\n"
-            "set(OUT_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/../Binaries\")\n"
-            "set_target_properties(NativeScripts PROPERTIES\n"
-            "    PREFIX \"\"\n"
-            "    CXX_VISIBILITY_PRESET hidden\n"
-            "    VISIBILITY_INLINES_HIDDEN ON\n"
-            "    LIBRARY_OUTPUT_DIRECTORY \"${OUT_DIR}\"\n"
-            "    RUNTIME_OUTPUT_DIRECTORY \"${OUT_DIR}\")\n"
-            "foreach(CONFIG_NAME ${CMAKE_CONFIGURATION_TYPES})\n"
-            "    string(TOUPPER ${CONFIG_NAME} CONFIG_UPPER)\n"
-            "    set_target_properties(NativeScripts PROPERTIES\n"
-            "        LIBRARY_OUTPUT_DIRECTORY_${CONFIG_UPPER} \"${OUT_DIR}\"\n"
-            "        RUNTIME_OUTPUT_DIRECTORY_${CONFIG_UPPER} \"${OUT_DIR}\")\n"
-            "endforeach()\n"
-            "\n"
-            "if(MSVC)\n"
-            "    target_compile_options(NativeScripts PRIVATE /utf-8)\n"
-            "endif()\n";
+            "# --- Bibliotecas de terceiros -------------------------------------------------\n"
+            "# Exemplo com FetchContent (baixa e compila junto, como a engine faz):\n"
+            "#\n"
+            "#   include(FetchContent)\n"
+            "#   FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3 GIT_SHALLOW TRUE)\n"
+            "#   FetchContent_MakeAvailable(json)\n"
+            "#   target_link_libraries(NativeScripts PRIVATE nlohmann_json::nlohmann_json)\n"
+            "#\n"
+            "# Ou uma lib instalada no sistema / vcpkg:\n"
+            "#   find_package(fmt CONFIG REQUIRED)\n"
+            "#   target_link_libraries(NativeScripts PRIVATE fmt::fmt)\n"
+            "#\n"
+            "# Dicas: prefira libs ESTATICAS (ficam dentro do NativeScripts) ou coloque as DLLs ao\n"
+            "# lado do executavel; a lib deve usar o mesmo compilador/configuracao da engine.\n";
 
         std::string entry =
             "// Pontos de entrada do modulo - nao precisa editar.\n"
@@ -887,16 +918,38 @@ namespace Prism {
             "};\n"
             "PRISM_REGISTER_SCRIPT(Spinner)\n";
 
-        // CMakeLists sempre regravado (o caminho do SDK muda se a engine mudar de pasta);
-        // os demais so se nao existirem, para nunca apagar codigo do usuario.
+        // PrismGenerated.cmake: sempre regravado (caminho do SDK). O CMakeLists.txt do usuario
+        // e criado so se faltar; os demais arquivos tambem, para nunca apagar codigo do usuario.
         {
-            std::ofstream file(directory / "CMakeLists.txt", std::ios::binary);
+            std::ofstream file(directory / "PrismGenerated.cmake", std::ios::binary);
+            file << generated;
+        }
+
+        std::filesystem::path userCmake = directory / "CMakeLists.txt";
+        std::string migrationNote;
+        if (std::filesystem::exists(userCmake, ec)) {
+            // Projeto criado por uma versao antiga: o CMakeLists.txt era gerado pela engine e
+            // regravado sempre (nao tem include de PrismGenerated.cmake). Migra uma vez, com backup.
+            std::ifstream in(userCmake, std::ios::binary);
+            std::string existing((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            in.close();
+            const bool usesGenerated = existing.find("PrismGenerated.cmake") != std::string::npos;
+            const bool isOldGenerated = existing.find("Gerado pela Prism Engine (Scripts C++ > Gerar projeto)") != std::string::npos;
+            if (!usesGenerated && isOldGenerated) {
+                std::filesystem::path backup = directory / "CMakeLists.txt.bak";
+                std::filesystem::copy_file(userCmake, backup, std::filesystem::copy_options::overwrite_existing, ec);
+                std::ofstream file(userCmake, std::ios::binary | std::ios::trunc);
+                file << cmake;
+                migrationNote = " CMakeLists.txt antigo migrado para o novo formato (copia em CMakeLists.txt.bak).";
+            }
+        } else {
+            std::ofstream file(userCmake, std::ios::binary);
             file << cmake;
         }
         WriteIfMissing(directory / "PrismModuleEntry.cpp", entry);
         bool createdExample = WriteIfMissing(directory / "Spinner.cpp", example);
 
-        message = "Projeto de scripts C++ pronto em " + directory.string() + (createdExample ? " (com o exemplo Spinner)." : ".");
+        message = "Projeto de scripts C++ pronto em " + directory.string() + (createdExample ? " (com o exemplo Spinner)." : ".") + migrationNote;
         return true;
     }
 

@@ -4,7 +4,7 @@ Referência única das duas linguagens. Cada tabela mostra a mesma função em *
 
 > **Nota:** o C++ está se tornando a linguagem principal da Prism, e o Lua passa a ser uma opção. Por isso os "—" na coluna C++ devem sumir aos poucos, à medida que o scripting em C++ ganha o que o Lua já tem. Guias: [Scripting em Lua](04-scripting-lua.md) e [Scripting em C++](05-scripting-cpp.md).
 
-Convenções: em Lua, `entity` é a entidade dona do script e as funções usam `entity:Funcao()`. Em C++, as funções são métodos da sua classe (derivada de `ScriptableEntity`) e `GetEntity()` devolve a entidade dona. A versão atual da API nativa é a **3**.
+Convenções: em Lua, `entity` é a entidade dona do script e as funções usam `entity:Funcao()`. Em C++, as funções são métodos da sua classe (derivada de `ScriptableEntity`) e `GetEntity()` devolve a entidade dona. A versão atual da API nativa é a **7** (módulos compilados com uma versão anterior precisam ser recompilados).
 
 ## Ciclo de vida
 

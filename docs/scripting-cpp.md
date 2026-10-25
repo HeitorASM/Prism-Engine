@@ -6,7 +6,7 @@ Scripts de gameplay em C++ ao lado dos scripts Lua. O código do projeto vira um
 
 ## Fluxo
 
-1. `<Projeto>/Source/` (`CMakeLists.txt`, `PrismModuleEntry.cpp` e o exemplo `Spinner.cpp`) é gerado por `NativeScripting::GenerateProjectFiles` na criação do projeto (`ProjectManagerLayer::CreateAndOpenProject`) e, para projetos antigos, ao abri-los (`OpenProject`). O botão **Compilar** também gera se `Source/CMakeLists.txt` não existir. Arquivos que já existem nunca são sobrescritos.
+1. `<Projeto>/Source/` (`CMakeLists.txt`, `PrismGenerated.cmake`, `PrismModuleEntry.cpp` e o exemplo `Spinner.cpp`) é gerado por `NativeScripting::GenerateProjectFiles` na criação do projeto (`ProjectManagerLayer::CreateAndOpenProject`) e, para projetos antigos, ao abri-los (`OpenProject`). O botão **Compilar** também gera se `Source/CMakeLists.txt` não existir. Só o `PrismGenerated.cmake` é regravado sempre (ele guarda o caminho do SDK da engine); o resto **nunca é sobrescrito**, então o `CMakeLists.txt` é seu (ver [Usando bibliotecas](#usando-bibliotecas-de-terceiros)).
 2. Escreva seus scripts em `Source/*.cpp`.
 3. Botão **Compilar** da barra superior: roda o CMake numa thread de fundo (`PrismEditor/Core/NativeBuilder`); a saída vai para a aba **Saída de Build** (`Panels/BuildOutputPanel`), com erros/avisos clicáveis, e o Console recebe só o resumo. Se compilar, o módulo é recarregado sozinho. A preferência "compilar ao abrir o projeto" fica em `recent_projects.txt` (`@build=`).
 4. Adicione o component **Native Script** a uma entidade e escolha a classe no combo.
@@ -44,7 +44,7 @@ Ajudantes de `ScriptableEntity`: `GetEntity`, `GetScene`, `GetComponent<T>`, `Ha
 
 Adicionados na **API v4** (paridade com o Lua): `GetFixedDeltaTime`, `GetFrameCount`, `ApplyForce`, `GetWorldTransform`/`GetWorldPosition`/`GetWorldForward`/`GetWorldRight`, `SetParent` (e `GetParent`/`GetChildCount`/`GetChildAt` da própria `Entity`), `FindAllEntities`, `CreateMeshEntity`, `GetMouseX/Y`, `SetCursorMode`/`GetCursorMode`, `IsPointerOverUI`, e o áudio: `PlayAudio`, `PlayAudio3D`, `PreloadAudio`, `SetBusVolume`/`GetBusVolume`/`SetBusMuted`/`IsBusMuted` (canais `AudioBus::SFX/Music/UI/Ambient`), `SetMasterVolume`/`GetMasterVolume`.
 
-> Módulos compilados com uma API mais antiga (a atual é a **v6**) são recusados ao carregar: faça **Compilar** de novo (o `Source/` do projeto não muda).
+> Módulos compilados com uma API mais antiga (a atual é a **v7**) são recusados ao carregar: faça **Compilar** de novo (o `Source/` do projeto não muda).
 
 ## Variáveis públicas (`OnProperties`)
 
@@ -84,6 +84,26 @@ PRISM_REGISTER_SCRIPT(Inimigo)
 - Um módulo compilado para outra versão da API é recusado no carregamento, com mensagem no Console.
 - Exceções C++ lançadas em callbacks são capturadas: o erro vai para o Console e o script daquela entidade para de ser chamado. Falhas graves (acesso inválido, crash) derrubam o editor, como qualquer código nativo.
 - O módulo é copiado para `Cache/NativeModule/` antes de carregar, para o compilador poder sobrescrever `Binaries/NativeScripts.*` sem o sistema operacional travar o arquivo.
+
+## Usando bibliotecas de terceiros
+
+O módulo é um projeto CMake comum. O `Source/CMakeLists.txt` é **seu**: a engine só o cria quando falta e nunca o sobrescreve. O que é da engine (includes do SDK, C++20, pasta de saída `Binaries/`) fica em `Source/PrismGenerated.cmake`, que é regravado a cada abertura/compilação e não deve ser editado. O `CMakeLists.txt` chama `prism_configure_module(NativeScripts)`, definida lá.
+
+Para usar uma lib, adicione ao seu `CMakeLists.txt`:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.11.3 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(json)
+target_link_libraries(NativeScripts PRIVATE nlohmann_json::nlohmann_json)
+```
+
+(`find_package` e vcpkg também funcionam.) Cuidados:
+
+- Prefira libs **estáticas**: ficam dentro do `NativeScripts`. Uma lib dinâmica precisa ter a DLL/.so ao lado do executável.
+- A lib deve ser compilada com o mesmo compilador e a mesma configuração (Debug/Release) da engine.
+- Libs que guardam estado global (ex.: ImGui) terão **uma cópia dentro do módulo**, separada da cópia da engine. Para desenhar UI ou gráficos, o caminho previsto é a engine expor uma API de desenho pela `NativeEngineAPI`, em vez de a lib falar direto com o OpenGL.
+- Projetos criados antes desta mudança têm o `CMakeLists.txt` migrado uma vez para o formato novo; o antigo fica em `CMakeLists.txt.bak`.
 
 ## Limitações
 
