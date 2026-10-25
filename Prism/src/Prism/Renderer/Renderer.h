@@ -24,6 +24,7 @@
 #include "Shader.h"
 #include "Mesh.h"
 #include "GPULight.h"
+#include "Culling.h"
 #include "ShadowSystem.h"
 #include "EnvironmentIBL.h"
 #include "GeometryBuffer.h"
@@ -64,6 +65,8 @@ namespace Prism {
         bool FXAA = true;
         float Saturation = 1.0f;
         float Contrast = 1.0f;
+        // Camadas enxergadas (Culling.h / CameraComponent::CullMask). Padrao: todas.
+        uint32_t CullMask = Culling::kAllLayers;
 
         // GUARDA DE LAYOUT (sempre o ULTIMO campo). Esta struct e passada por
         // referencia entre arquivos .cpp; se algum .cpp ficou compilado com uma
@@ -88,6 +91,7 @@ namespace Prism {
             r.FXAA = camera.FXAA;
             r.Saturation = camera.Saturation;
             r.Contrast = camera.Contrast;
+            r.CullMask = camera.CullMask;
             return r;
         }
     };
@@ -310,6 +314,11 @@ namespace Prism {
         // component). Chamadores sem CameraComponent (viewport livre do
         // editor) usam o argumento padrao. NAO precisa de Clear() antes: DrawScene
         // limpa cor e profundidade do destino e o fundo cobre a tela inteira.
+        // Estatistica do ULTIMO DrawScene (passe principal): quantas malhas foram desenhadas,
+        // descartadas pelo frustum e escondidas pela camada da camera.
+        struct CullStats { uint32_t Drawn = 0, FrustumCulled = 0, LayerHidden = 0; };
+        static const CullStats& GetCullStats();
+
         static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera = CameraRenderSettings{});
 
         // Desenha as particulas de todos os emissores da cena (billboards com
@@ -359,7 +368,7 @@ namespace Prism {
         // Publicas pelo mesmo motivo de RenderShadowPass/CollectGPULights:
         // permitir que ferramentas de editor (ex: um futuro "AO buffer
         // viewer" de debug) reusem o resultado sem duplicar logica.
-        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height);
+        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, uint32_t cullMask = Culling::kAllLayers);
         static SSAO* RenderSSAOPass(GeometryBuffer& gBuffer, const float* projection, uint32_t width, uint32_t height);
         static void RenderSSAOBlurPass(SSAO& ssao);
 

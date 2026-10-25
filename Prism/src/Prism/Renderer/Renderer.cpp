@@ -898,7 +898,27 @@ namespace Prism {
     // geometria -> SSAO bruto -> blur.
     // ========================================================================
 
-    GeometryBuffer* Renderer::RenderGeometryPrePass(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height) {
+    namespace {
+        Renderer::CullStats s_CullStats;
+
+        // Esta malha entra na imagem desta camera? Camadas primeiro, depois frustum.
+        // Malha com esqueleto (a pose pode sair da caixa local) nunca e descartada pelo frustum.
+        enum class Visibility { Visible, LayerHidden, OutsideFrustum };
+        Visibility TestVisibility(const MeshRendererComponent& renderer, const Mesh* mesh, const glm::mat4& model,
+                                  const Culling::Frustum& frustum, uint32_t cullMask) {
+            if (!Culling::LayerVisible(renderer.Layers, cullMask))
+                return Visibility::LayerHidden;
+            if (!mesh || mesh->IsSkinned())
+                return Visibility::Visible;
+            const glm::vec3 lo = mesh->GetLocalBoundsMin(), hi = mesh->GetLocalBoundsMax();
+            const float localMin[3] = { lo.x, lo.y, lo.z }, localMax[3] = { hi.x, hi.y, hi.z };
+            return frustum.IntersectsLocalBox(localMin, localMax, glm::value_ptr(model)) ? Visibility::Visible : Visibility::OutsideFrustum;
+        }
+    }
+
+    const Renderer::CullStats& Renderer::GetCullStats() { return s_CullStats; }
+
+    GeometryBuffer* Renderer::RenderGeometryPrePass(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, uint32_t cullMask) {
         // Aloca sob demanda (mesma logica de s_ShadowMap, ver comentario
         // em Renderer.h) - so na primeira vez que DrawScene decide usar
         // SSAO (ver flag em DrawScene). Redimensiona se a resolucao da
@@ -916,10 +936,14 @@ namespace Prism {
         s_GeometryPrePassShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
         s_GeometryPrePassShader->SetMat4("u_View", view);
 
+        const Culling::Frustum frustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
         auto meshView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
         for (auto entityHandle : meshView) {
             auto& meshRenderer = meshView.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
+            Mesh* prePassMesh = ResolveMesh(meshRenderer);
+            if (!prePassMesh || TestVisibility(meshRenderer, prePassMesh, model, frustum, cullMask) != Visibility::Visible)
+                continue; // fora da imagem (camada ou frustum): nao ocupa o SSAO
             s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(model));
             {
                 // View-space: a matriz normal e a de (view * model), nao so
@@ -928,8 +952,7 @@ namespace Prism {
                 s_GeometryPrePassShader->SetMat3("u_ViewNormalMatrix", glm::value_ptr(viewNormalMatrix));
             }
 
-            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
-            if (!mesh) continue;
+            Mesh* mesh = prePassMesh;
             BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
             UploadBones(*s_GeometryPrePassShader, palette.Data, palette.Count);
             mesh->BindForCurrentContext();
@@ -1029,6 +1052,12 @@ namespace Prism {
 
         glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
 
+        // Camadas e frustum DESTA camera. Com layout de CameraRenderSettings antigo
+        // (build desatualizada, ver LayoutMagic) a mascara e lixo: enxerga tudo.
+        const uint32_t cullMask = (camera.LayoutMagic == CameraRenderSettings::kLayoutMagic) ? camera.CullMask : Culling::kAllLayers;
+        const Culling::Frustum cameraFrustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
+        s_CullStats = CullStats{};
+
         // Coleta todas as luzes da cena UMA VEZ por frame (nao por
         // entidade desenhada) - reusada em todo DrawMesh abaixo, ja que a
         // lista de luzes ativas nao muda entre um mesh e outro do mesmo
@@ -1085,7 +1114,7 @@ namespace Prism {
         // nullptr e o DrawMesh usa oclusao neutra (ver u_HasSSAO).
         SSAO* ssao = nullptr;
         if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0) {
-            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight);
+            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight, cullMask);
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
 
@@ -1146,6 +1175,12 @@ namespace Prism {
             const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
+            switch (TestVisibility(meshRenderer, mesh, model, cameraFrustum, cullMask)) {
+                case Visibility::LayerHidden:     s_CullStats.LayerHidden++;     continue;
+                case Visibility::OutsideFrustum:  s_CullStats.FrustumCulled++;   continue;
+                case Visibility::Visible:         break;
+            }
+            s_CullStats.Drawn++;
             BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
             DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadows, ssao, material, palette.Data, palette.Count);
         }

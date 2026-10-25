@@ -25,6 +25,8 @@ EngineVersion=0.1.0
 
 `StartMap` é o mapa aberto automaticamente ao carregar o projeto.
 
+`Layer0=` … `Layer31=` (opcionais) são os nomes das camadas de visibilidade 1 a 32; sem a chave, o nome é "Camada N".
+
 `EngineVersion` é a versão da engine (`Version.py`) que criou o projeto. Só serve para o editor avisar quando difere da atual; projetos sem a chave abrem normalmente. O arquivo é gravado de forma atômica (arquivo temporário + rename), então um crash no meio do save não o corrompe. Um projeto novo também recebe um `.gitignore` com `Cache/` e `Binaries/`.
 
 > As opções de render **não ficam mais no projeto**: o ambiente e o skybox são do `EnvironmentComponent` da cena (gravado no `.prismmap`) e exposição, fundo e SSAO são do `CameraComponent`. Chaves antigas (`Exposure`, `Ambient`, `Env*`, `Sky*`) em um `.prismproj` existente são ignoradas ao ler e desaparecem no próximo save.
@@ -64,6 +66,8 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v19 | `UIElement` (elemento de UI in-game) |
 | v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
 | (bloco Camera v3) | `Camera` ganha `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast` no fim do bloco; **sem** subir a versão do mapa |
+| (bloco Camera v4) | `Camera` ganha `CullMask` (camadas que enxerga) no fim do bloco; **sem** subir a versão do mapa |
+| (bloco MeshRenderer v2) | `MeshRenderer` ganha `Layers` (camadas em que está) no fim do bloco; **sem** subir a versão do mapa |
 | v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion` (só quando a estrutura **fora** dos blocos muda), atualize "Versão atual" acima e esta tabela.

@@ -57,6 +57,9 @@ namespace Prism {
         out << "MapDirectory=" << config.MapDirectory.generic_string() << "\n";
         out << "StartMap=" << config.StartMap.generic_string() << "\n";
         out << "EngineVersion=" << config.EngineVersion << "\n";
+        for (int i = 0; i < 32; i++)
+            if (m_Project->HasCustomLayerName(i))
+                out << "Layer" << i << "=" << m_Project->GetLayerName(i) << "\n";
 
         if (!WriteFileAtomic(filepath, out.str())) {
             PRISM_CORE_ERROR("Nao foi possivel gravar o arquivo de projeto: ", filepath.string());
@@ -93,6 +96,11 @@ namespace Prism {
             else if (key == "MapDirectory") config.MapDirectory = value;
             else if (key == "StartMap") config.StartMap = value;
             else if (key == "EngineVersion") config.EngineVersion = value;
+            else if (key.size() > 5 && key.compare(0, 5, "Layer") == 0 && key.find_first_not_of("0123456789", 5) == std::string::npos && key.size() <= 7) {
+                int layerIndex = std::stoi(key.substr(5));
+                if (layerIndex >= 0 && layerIndex < 32)
+                    m_Project->m_LayerNames[(size_t)layerIndex] = value;
+            }
             // Chaves de render antigas (Exposure, Ambient, Env*, Sky*) sao
             // ignoradas: o visual agora vive na cena (EnvironmentComponent)
             // e na camera (CameraComponent). Projetos antigos abrem normal.

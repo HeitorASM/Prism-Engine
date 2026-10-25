@@ -7,6 +7,7 @@
 #include "../Commands/EditorCommands.h"
 #include "../Core/EntityOps.h"
 #include "ComponentEditUtils.h"
+#include "LayerMaskWidget.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -106,6 +107,13 @@ namespace PrismEditor {
             TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
             ImGui::DragFloat("Contraste##Cam", &camera.Contrast, 0.01f, 0.1f, 3.0f);
             TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+
+            // Camadas que esta camera enxerga (Mesh Renderer > Camadas).
+            {
+                auto beforeMask = camera;
+                if (DrawLayerMask("Enxerga camadas##Cam", camera.CullMask))
+                    CommitComponentEdit(m_Ctx, beforeMask, camera, "Camera");
+            }
 
             // --- Pre-visualizacao da camera (integrada) ---
             ImGui::Separator();

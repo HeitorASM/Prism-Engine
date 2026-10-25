@@ -15,6 +15,7 @@
 
 #include "../Core/Base.h"
 #include "../Assets/AssetRegistry.h"
+#include <array>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -149,6 +150,13 @@ namespace Prism {
         // cena nova, para que o editor saiba qual mapa reabrir da proxima vez.
         static bool SetStartMap(const std::filesystem::path& relativeMapPath);
 
+        // Nomes das 32 camadas de visibilidade (MeshRendererComponent::Layers / CameraComponent::CullMask).
+        // 'index' 0..31 = camada 1..32. Sem nome definido: "Camada N". Fora do intervalo: "".
+        std::string GetLayerName(int index) const;
+        bool HasCustomLayerName(int index) const;
+        // Define o nome (vazio = volta ao padrao) e grava o .prismproj imediatamente.
+        static bool SetLayerName(int index, const std::string& name);
+
     private:
         ProjectConfig m_Config;
         std::filesystem::path m_ProjectDirectory;
@@ -161,6 +169,9 @@ namespace Prism {
         // (O antigo RenderSettings foi removido: o visual agora vive no
         // EnvironmentComponent da cena e no CameraComponent.)
         AssetRegistry m_AssetRegistry;
+
+        // Nomes das camadas (so os personalizados; vazio = padrao). Tambem NO FIM (ver acima).
+        std::array<std::string, 32> m_LayerNames;
 
         inline static Ref<Project> s_ActiveProject;
 

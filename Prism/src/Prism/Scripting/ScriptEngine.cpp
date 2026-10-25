@@ -150,7 +150,14 @@ namespace Prism {
         // (RigidBody de proposito fora: o corpo Jolt so le esses campos ao
         // ser criado, mudar em runtime nao faria nada.)
         lua.new_usertype<MeshRendererComponent>("MeshRenderer",
-            "Color", &MeshRendererComponent::Color
+            "Color", &MeshRendererComponent::Color,
+            // Camadas de visibilidade (mascara de bits; bit 0 = camada 1). Ex: mesh.Layers = 2 (so a camada 2).
+            "Layers", &MeshRendererComponent::Layers,
+            "SetLayer", [](MeshRendererComponent& c, int index, bool on) {
+                const uint32_t bit = Culling::LayerBit(index - 1); // index de 1 a 32, como no editor
+                c.Layers = on ? (c.Layers | bit) : (c.Layers & ~bit);
+            },
+            "IsInLayer", [](MeshRendererComponent& c, int index) -> bool { return (c.Layers & Culling::LayerBit(index - 1)) != 0u; }
         );
         lua.new_usertype<MaterialComponent>("Material",
             "AlbedoTint", &MaterialComponent::AlbedoTint,
@@ -169,6 +176,12 @@ namespace Prism {
         );
         lua.new_usertype<CameraComponent>("Camera",
             "FOV", &CameraComponent::FOV,
+            // Camadas que a camera enxerga (mascara de bits, padrao = todas).
+            "CullMask", &CameraComponent::CullMask,
+            "SetCullLayer", [](CameraComponent& c, int index, bool on) {
+                const uint32_t bit = Culling::LayerBit(index - 1);
+                c.CullMask = on ? (c.CullMask | bit) : (c.CullMask & ~bit);
+            },
             "OrthoSize", &CameraComponent::OrthoSize,
             "NearClip", &CameraComponent::NearClip,
             "FarClip", &CameraComponent::FarClip,

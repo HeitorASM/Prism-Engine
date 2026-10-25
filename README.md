@@ -102,7 +102,8 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Exportar/empacotar o jogo (Arquivo → Exportar Jogo: pasta distribuível com o Runtime + projeto; ver [docs/exportacao.md](docs/exportacao.md))
 - [x] Módulo C++: `CMakeLists.txt` do usuário nunca sobrescrito, para usar bibliotecas de terceiros
 - [x] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload (ver `docs/ui-prismui.md`)
-- [ ] Camadas de visibilidade: máscara de camadas na malha/luz e "Culling Mask" na câmera (estilo Godot)
-- [ ] Frustum culling e instancing no renderer
+- [x] Camadas de visibilidade na malha e "Culling Mask" na câmera (estilo Godot; ver `docs/renderizacao.md`) — camadas por luz ainda não
+- [x] Frustum culling no renderer
+- [ ] Instancing no renderer
 - [ ] Física: camadas/máscaras configuráveis, juntas e character controller
 - [ ] Testes de serialização e do ComponentRegistry

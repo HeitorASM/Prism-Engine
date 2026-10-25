@@ -19,6 +19,7 @@
 #include "../Audio/AudioBus.h"
 #include "../Animation/AnimatorRuntime.h"
 #include "../Animation/AnimationGraph.h"
+#include "../Renderer/Culling.h"
 #include "../UI/UIDocumentRuntime.h"
 #include <string>
 #include <vector>
@@ -111,6 +112,12 @@ namespace Prism {
         // por submesh, cada uma com o seu MaterialComponent. Ignorado se
         // ModelAsset for invalido; fora do intervalo cai na malha mesclada.
         int32_t SubmeshIndex = -1;
+
+        // Camadas de visibilidade (estilo Godot): mascara de bits dizendo em QUAIS camadas
+        // este objeto esta (bit 0 = camada 1, padrao). Uma camera so desenha o objeto se a
+        // sua CullMask tiver algum bit em comum. Camadas tem nome no projeto (Project::GetLayerName).
+        // Sombras: o objeto continua projetando sombra mesmo escondido de uma camera.
+        uint32_t Layers = Culling::kDefaultLayer;
 
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;
@@ -232,6 +239,9 @@ namespace Prism {
         bool FXAA = true;             // suaviza serrilhado de bordas
         float Saturation = 1.0f;      // 0 = preto e branco, 1 = neutro
         float Contrast = 1.0f;        // 1 = neutro
+
+        // Camadas que esta camera ENXERGA (mascara de bits; padrao = todas). Ver MeshRendererComponent::Layers.
+        uint32_t CullMask = Culling::kAllLayers;
 
         CameraComponent() = default;
         CameraComponent(const CameraComponent&) = default;

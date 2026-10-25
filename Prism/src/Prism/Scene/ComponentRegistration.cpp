@@ -55,6 +55,7 @@ namespace Prism {
                 WriteRaw(out, c.Color);
                 WriteRaw(out, c.ModelAsset); // AssetID e so um uint64_t (trivialmente copiavel) - mesmo padrao de MaterialComponent::LinkedAsset
                 WriteRaw(out, c.SubmeshIndex); // v14
+                WriteRaw(out, c.Layers);       // v2 do bloco
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MeshRendererComponent>();
@@ -93,9 +94,13 @@ namespace Prism {
                 // Valor invalido (< -1) vira -1 = malha mesclada.
                 if (!ReadRaw(in, c.SubmeshIndex) || c.SubmeshIndex < -1)
                     c.SubmeshIndex = -1;
+                // Bloco v2: camadas de visibilidade (blocos v1 e arquivos antigos: camada 1).
+                if (ComponentRegistry::CurrentBlockVersion() >= 2 && !ReadRaw(in, c.Layers))
+                    c.Layers = Culling::kDefaultLayer;
                 return true;
             }
         );
+        s_Registry.back().Version = 2;
 
         // --- MaterialComponent -------------------------------------------------
         Register<MaterialComponent>(
@@ -400,6 +405,8 @@ namespace Prism {
                 WriteRaw(out, c.FXAA);
                 WriteRaw(out, c.Saturation);
                 WriteRaw(out, c.Contrast);
+                // v4 do bloco: camadas que a camera enxerga (sempre NO FIM).
+                WriteRaw(out, c.CullMask);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<CameraComponent>();
@@ -417,6 +424,10 @@ namespace Prism {
                     ok = ReadRaw(in, c.Bloom) && ReadRaw(in, c.BloomThreshold)
                       && ReadRaw(in, c.BloomIntensity) && ReadRaw(in, c.FXAA)
                       && ReadRaw(in, c.Saturation) && ReadRaw(in, c.Contrast);
+                }
+                // Bloco v4: mascara de camadas (blocos antigos: enxerga todas).
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 4) {
+                    ok = ReadRaw(in, c.CullMask);
                 }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (camera da entidade ", entityIndex, ").");
@@ -466,7 +477,7 @@ namespace Prism {
         // processamento (Bloom.../Contrast). Em arquivos LEGADOS (v19-v20, sem
         // blocos) o layout v2 vale a partir do formato equivalente 20 e a v3
         // nunca existiu neles.
-        s_Registry.back().Version = 3;
+        s_Registry.back().Version = 4;
         s_Registry.back().LegacyVersion = [](uint32_t sceneFormat) -> uint32_t { return sceneFormat >= 20 ? 2u : 1u; };
 
         // --- RaycastComponent ----------------------------------------------------

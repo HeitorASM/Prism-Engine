@@ -210,6 +210,29 @@ namespace Prism {
         return serializer.Serialize(s_ActiveProject->m_ProjectFilePath);
     }
 
+    std::string Project::GetLayerName(int index) const {
+        if (index < 0 || index >= 32)
+            return {};
+        if (!m_LayerNames[(size_t)index].empty())
+            return m_LayerNames[(size_t)index];
+        return "Camada " + std::to_string(index + 1);
+    }
+
+    bool Project::HasCustomLayerName(int index) const {
+        return index >= 0 && index < 32 && !m_LayerNames[(size_t)index].empty();
+    }
+
+    bool Project::SetLayerName(int index, const std::string& name) {
+        if (!s_ActiveProject || index < 0 || index >= 32)
+            return false;
+        std::string clean;
+        for (char c : name)
+            if (c != '\r' && c != '\n')
+                clean.push_back(c);
+        s_ActiveProject->m_LayerNames[(size_t)index] = clean;
+        return SaveActive();
+    }
+
     bool Project::SetStartMap(const std::filesystem::path& relativeMapPath) {
         if (!s_ActiveProject)
             return false;

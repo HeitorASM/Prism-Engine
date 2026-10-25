@@ -84,3 +84,14 @@ if(MSVC)
     target_compile_options(PrismUITests PRIVATE /utf-8)
 endif()
 add_test(NAME UITests COMMAND PrismUITests)
+
+# PrismCullingTests: frustum culling e camadas de visibilidade (Renderer/Culling.h, so std).
+add_executable(PrismCullingTests
+    CullingTests.cpp
+)
+target_include_directories(PrismCullingTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismCullingTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismCullingTests PRIVATE /utf-8)
+endif()
+add_test(NAME CullingTests COMMAND PrismCullingTests)

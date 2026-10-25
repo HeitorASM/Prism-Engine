@@ -77,6 +77,16 @@ A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, 
 
 As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast`; chegam por `CameraRenderSettings::From`) e limitadas no Renderer. Com bloom, saturação e contraste neutros e FXAA desligado, a imagem é a de antes, exceto partículas sobre geometria, que agora são misturadas em espaço linear. Se os shaders `post_*.frag` não compilarem ou o FBO falhar, a cena é desenhada direto, sem pós-processamento.
 
+## Camadas de visibilidade e frustum culling
+
+**Camadas** (estilo Godot, 32): cada `MeshRendererComponent` tem `Layers` (máscara de bits; bit 0 = camada 1, padrão) e cada `CameraComponent` tem `CullMask` (as camadas que ela enxerga; padrão = todas). Uma malha só é desenhada por uma câmera se as duas máscaras têm algum bit em comum. No editor: *Mesh Renderer → Camadas* e *Camera → Enxerga camadas* (botão com a lista; "Renomear camadas" muda os nomes, que ficam no `.prismproj` como `Layer0=...`..`Layer31=...`). A viewport livre do editor enxerga todas.
+
+Em Lua: `mesh.Layers = 2`, `mesh:SetLayer(3, true)`, `mesh:IsInLayer(3)`, `camera.CullMask = 1`, `camera:SetCullLayer(2, false)` (índices de 1 a 32, como no editor).
+
+**Frustum culling**: no passe principal e no pré-passe do SSAO, malhas totalmente fora do volume de visão da câmera não são desenhadas (`Renderer/Culling.h`, testado em `PrismCullingTests`). O teste é conservador (caixa local da malha transformada pelo model) e **não** vale para malhas com esqueleto, cuja pose pode sair da caixa. `Renderer::GetCullStats()` devolve, do último `DrawScene`, quantas malhas foram desenhadas, descartadas pelo frustum e escondidas pela camada.
+
+Sombras **não** usam camadas nem o frustum da câmera: um objeto escondido de uma câmera, ou fora da tela, continua projetando sombra. Camadas por **luz** ainda não existem.
+
 ## Sombras
 
 - **Directional** (1 por cena, a primeira marcada): *Cascaded Shadow Maps* com 4 cascatas de 2048×2048. A divisão mistura escala logarítmica e uniforme (λ = 0,75) até 120 unidades de distância; cada cascata é encaixada numa esfera (não "respira" ao girar a câmera) e alinhada à grade de texels (não treme ao mover). Além de 120 unidades não há sombra direcional.
