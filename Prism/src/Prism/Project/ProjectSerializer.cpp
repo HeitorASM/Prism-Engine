@@ -57,6 +57,12 @@ namespace Prism {
         out << "MapDirectory=" << config.MapDirectory.generic_string() << "\n";
         out << "StartMap=" << config.StartMap.generic_string() << "\n";
         out << "EngineVersion=" << config.EngineVersion << "\n";
+        for (int i = 0; i < 32; i++) {
+            if (m_Project->HasCustomPhysicsLayerName(i))
+                out << "PhysicsLayer" << i << "=" << m_Project->GetPhysicsLayerName(i) << "\n";
+            if (m_Project->GetPhysicsMatrix().RawMask(i) != Physics::kAllLayers)
+                out << "PhysicsMask" << i << "=" << m_Project->GetPhysicsMatrix().RawMask(i) << "\n";
+        }
         for (int i = 0; i < 32; i++)
             if (m_Project->HasCustomLayerName(i))
                 out << "Layer" << i << "=" << m_Project->GetLayerName(i) << "\n";
@@ -96,6 +102,18 @@ namespace Prism {
             else if (key == "MapDirectory") config.MapDirectory = value;
             else if (key == "StartMap") config.StartMap = value;
             else if (key == "EngineVersion") config.EngineVersion = value;
+            else if (key.size() > 12 && key.compare(0, 12, "PhysicsLayer") == 0 && key.size() <= 14 && key.find_first_not_of("0123456789", 12) == std::string::npos) {
+                int layerIndex = std::stoi(key.substr(12));
+                if (layerIndex >= 0 && layerIndex < 32)
+                    m_Project->m_PhysicsLayerNames[(size_t)layerIndex] = value;
+            }
+            else if (key.size() > 11 && key.compare(0, 11, "PhysicsMask") == 0 && key.size() <= 13 && key.find_first_not_of("0123456789", 11) == std::string::npos) {
+                int layerIndex = std::stoi(key.substr(11));
+                unsigned long long mask = 0;
+                try { mask = std::stoull(value); } catch (...) { mask = Physics::kAllLayers; }
+                if (layerIndex >= 0 && layerIndex < 32)
+                    m_Project->m_PhysicsMatrix.SetRawMask(layerIndex, (uint32_t)mask);
+            }
             else if (key.size() > 5 && key.compare(0, 5, "Layer") == 0 && key.find_first_not_of("0123456789", 5) == std::string::npos && key.size() <= 7) {
                 int layerIndex = std::stoi(key.substr(5));
                 if (layerIndex >= 0 && layerIndex < 32)

@@ -105,5 +105,5 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Camadas de visibilidade na malha e "Culling Mask" na câmera (estilo Godot; ver `docs/renderizacao.md`) — camadas por luz ainda não
 - [x] Frustum culling no renderer
 - [ ] Instancing no renderer
-- [ ] Física: camadas/máscaras configuráveis, juntas e character controller
+- [x] Física: camadas/máscaras configuráveis, juntas e character controller
 - [ ] Testes de serialização e do ComponentRegistry

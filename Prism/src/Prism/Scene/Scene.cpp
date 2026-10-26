@@ -263,6 +263,10 @@ namespace Prism {
         // com o padrao acima e para proteger contra mudancas futuras).
         if (m_IsRunning && m_Registry.all_of<RigidBodyComponent, ColliderComponent>(handle))
             PhysicsEngine::DestroyBodyForEntity(*this, entity);
+        if (m_IsRunning && m_Registry.all_of<CharacterControllerComponent>(handle))
+            PhysicsEngine::DestroyCharacterForEntity(*this, entity);
+        if (m_IsRunning && m_Registry.all_of<JointComponent>(handle))
+            PhysicsEngine::DestroyJointForEntity(*this, entity);
 
         // Se a entidade tem um pai, tira ela da lista de Children dele
         // primeiro - senao o pai ficaria com um entt::entity morto na
@@ -596,7 +600,7 @@ namespace Prism {
             }
 
             RaycastHit hit = (maxDistance > 0.0001f)
-                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance, ignoreEntities)
+                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance, ignoreEntities, raycast.LayerMask)
                 : RaycastHit{}; // TargetPosition na origem (raio de comprimento zero) - nunca acerta nada
 
             raycast.Hit = hit.Hit;

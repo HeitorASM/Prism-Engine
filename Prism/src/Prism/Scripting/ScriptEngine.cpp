@@ -54,6 +54,8 @@ namespace Prism {
         // toda a sua subarvore.
         void ActivateRuntimeEntity(Scene& scene, Entity entity) {
             PhysicsEngine::CreateBodyForEntity(scene, entity);
+            PhysicsEngine::CreateCharacterForEntity(scene, entity);
+            PhysicsEngine::CreateJointForEntity(scene, entity);
             if (entity.HasComponent<AudioSourceComponent>() && entity.GetComponent<AudioSourceComponent>().PlayOnStart)
                 AudioEngine::PlayEntity(entity);
             if (entity.HasComponent<NativeScriptComponent>())
@@ -410,6 +412,20 @@ namespace Prism {
             "SetVelocity", [](Entity& e, float x, float y, float z) {
                 PhysicsEngine::SetLinearVelocity(*e.GetScene(), e, glm::vec3(x, y, z));
             },
+            // --- Personagem (CharacterController) ----------------------
+            // entity:CharacterMove(x, y, z): velocidade horizontal desejada (m/s).
+            "CharacterMove", [](Entity& e, float x, float y, float z) {
+                PhysicsEngine::CharacterMove(*e.GetScene(), e, glm::vec3(x, y, z));
+            },
+            "CharacterJump", [](Entity& e, float speed) {
+                PhysicsEngine::CharacterJump(*e.GetScene(), e, speed);
+            },
+            "IsGrounded", [](Entity& e) -> bool {
+                return PhysicsEngine::CharacterIsGrounded(*e.GetScene(), e);
+            },
+            "GetCharacterVelocity", [](Entity& e) -> glm::vec3 {
+                return PhysicsEngine::CharacterGetVelocity(*e.GetScene(), e);
+            },
             // --- Hierarquia (pai/filhos) -------------------------------
             // Ver comentario grande em Entity::GetParent/GetChild
             // (Entity.h) - motivado por example_player_input_raycast.lua
@@ -538,7 +554,7 @@ namespace Prism {
         // PhysicsEngine::Raycast no C++) - sol2 resolve isso via
         // sol::optional aqui.
         sol::table physicsTable = lua.create_table();
-        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance, sol::optional<Entity> ignoreEntity) -> sol::table {
+        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance, sol::optional<Entity> ignoreEntity, sol::optional<uint32_t> layerMask) -> sol::table {
             // sol::this_environment injeta o sol::environment de QUEM
             // CHAMOU esta funcao (o environment isolado do script, ver
             // LoadScript - "entity" e uma variavel local a ELE, nunca uma
@@ -572,7 +588,7 @@ namespace Prism {
             if (ignoreEntity.has_value() && ignoreEntity->IsValid())
                 ignoreEntities.push_back(ignoreEntity->GetHandle());
 
-            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f), ignoreEntities);
+            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f), ignoreEntities, layerMask.value_or(Physics::kAllLayers));
             result["Hit"] = hit.Hit;
             result["Point"] = hit.Point;
             result["Normal"] = hit.Normal;

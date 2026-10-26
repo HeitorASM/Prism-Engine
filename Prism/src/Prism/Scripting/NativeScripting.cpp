@@ -299,6 +299,18 @@ namespace Prism {
             n->Tint = Ui::Color(r, g, b, a);
             return true;
         }
+        void ApiCharacterMove(Scene* scene, entt::entity entity, glm::vec3 v) { if (scene) PhysicsEngine::CharacterMove(*scene, Entity(entity, scene), v); }
+        void ApiCharacterJump(Scene* scene, entt::entity entity, float speed) { if (scene) PhysicsEngine::CharacterJump(*scene, Entity(entity, scene), speed); }
+        bool ApiCharacterIsGrounded(Scene* scene, entt::entity entity) { return scene && PhysicsEngine::CharacterIsGrounded(*scene, Entity(entity, scene)); }
+        glm::vec3 ApiCharacterGetVelocity(Scene* scene, entt::entity entity) { return scene ? PhysicsEngine::CharacterGetVelocity(*scene, Entity(entity, scene)) : glm::vec3(0.0f); }
+        bool ApiRaycastMasked(Scene* scene, glm::vec3 origin, glm::vec3 direction, float maxDistance, entt::entity ignore, uint32_t layerMask, NativeRayHit* outHit) {
+            if (!scene || !outHit) return false;
+            std::vector<entt::entity> ignored;
+            if (ignore != entt::null) ignored.push_back(ignore);
+            RaycastHit h = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance, ignored, layerMask);
+            outHit->Hit = h.Hit; outHit->Point = h.Point; outHit->Normal = h.Normal; outHit->Distance = h.Distance; outHit->Entity = h.Entity;
+            return h.Hit;
+        }
         bool ApiUISetTextColor(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a) {
             Ui::Node* n = UINode(scene, entity, nodeId);
             if (!n) return false;
@@ -417,7 +429,9 @@ namespace Prism {
                 // v7
                 &ApiSetAnimFloat, &ApiSetAnimBool, &ApiSetAnimTrigger, &ApiSetAnimState, &ApiGetAnimState,
                 // v8
-                &ApiUISetText, &ApiUIGetText, &ApiUISetVisible, &ApiUISetInteractable, &ApiUISetColor, &ApiUISetTextColor
+                &ApiUISetText, &ApiUIGetText, &ApiUISetVisible, &ApiUISetInteractable, &ApiUISetColor, &ApiUISetTextColor,
+                // v9
+                &ApiCharacterMove, &ApiCharacterJump, &ApiCharacterIsGrounded, &ApiCharacterGetVelocity, &ApiRaycastMasked
             };
             return api;
         }

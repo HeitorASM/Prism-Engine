@@ -137,3 +137,10 @@ Mover ou renomear um asset **sempre junto com o seu `.meta`** preserva o ID, e p
 - **Mapas e prefabs** (v21 / v9 em diante): component novo, campo novo no fim de um component e component desconhecido **não** quebram arquivos existentes (ver os blocos em `.prismmap`). Os formatos anteriores mais recentes (mapa v19–v20, prefab v7–v8) são lidos e regravados no formato atual ao salvar; formatos mais antigos são recusados com uma mensagem clara. Um arquivo **mais novo** que a engine é recusado.
 - **Mudança que quebra** (reordenar/remover campos, renomear o `DisplayName` de um component): exige subir a versão do component ou escrever uma migração.
 - **`.prismproj` e `.meta`**: texto, chaves desconhecidas são ignoradas.
+
+## Física: camadas, juntas e personagem (formato de cena 22)
+
+- `Collider` bloco v2: acrescenta `Layer` (0..31, fora do intervalo vira 0).
+- `Raycast` bloco v2: acrescenta `LayerMask` (uint32; padrão = todas).
+- Novos blocos `Joint` (tipo, entidade conectada pelo **nome/Tag**, âncora, eixo, limites, mola, colidir entre si) e `Character Controller` (raio, altura, degrau, inclinação máxima, massa, escala da gravidade, colar no chão). Cenas antigas continuam abrindo: os campos novos ficam no valor padrão.
+- `.prismproj`: `PhysicsLayer<i>=nome` e `PhysicsMask<i>=uint32` (máscara de colisão da camada i; só gravadas quando diferentes do padrão).

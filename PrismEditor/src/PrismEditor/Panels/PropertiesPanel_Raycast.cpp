@@ -1,4 +1,5 @@
 #include "PropertiesPanel.h"
+#include "PhysicsLayerWidget.h"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 #include "ContentBrowserPanel.h"
@@ -47,6 +48,9 @@ namespace PrismEditor {
                 CommitComponentEdit(m_Ctx, before, raycast, "Raycast");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Se marcado, o raio ignora a entidade PAI (se houver) e todas as entidades IRMAS (que compartilham o mesmo pai) - util para um sensor filho do corpo do personagem nao acertar o proprio corpo/outros colliders do mesmo personagem.");
+
+            if (DrawPhysicsLayerMask("Camadas atingidas", raycast.LayerMask))
+                CommitComponentEdit(m_Ctx, before, raycast, "Raycast");
 
             ImGui::Separator();
             ImGui::TextDisabled("Resultado (fisico - so atualiza durante o modo Play):");

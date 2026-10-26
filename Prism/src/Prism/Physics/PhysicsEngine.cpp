@@ -6,6 +6,8 @@
 #include "../Scripting/ScriptEngine.h"
 #include "../Renderer/Renderer.h" // ResolveMesh: geometria dos colliders ConvexHull/TriangleMesh
 #include "../Renderer/Mesh.h"
+#include "../Project/Project.h"
+#include "PhysicsLayers.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -30,62 +32,55 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Body/BodyFilter.h> // JPH::IgnoreMultipleBodiesFilter (PhysicsEngine::Raycast, ignoreEntities)
 
 #include <thread>
 #include <mutex>
 
 namespace Prism {
-    namespace ObjectLayers {
-        static constexpr JPH::ObjectLayer Static = 0;
-        static constexpr JPH::ObjectLayer Moving = 1;
-        static constexpr JPH::ObjectLayer NumLayers = 2;
-    }
-
+    // CAMADAS DE FISICA (ver Physics/PhysicsLayers.h): o ObjectLayer do Jolt e
+    // (camada do usuario << 1) | movel. O broad-phase continua com DUAS camadas
+    // (estatico / movel), escolhidas pelo bit baixo; quem colide com quem e decidido
+    // pela matriz do projeto, copiada em OnSceneStart.
     namespace BroadPhaseLayers {
         static constexpr JPH::BroadPhaseLayer Static(0);
         static constexpr JPH::BroadPhaseLayer Moving(1);
         static constexpr uint32_t NumLayers = 2;
     }
 
+    static constexpr JPH::ObjectLayer kNumObjectLayers = (JPH::ObjectLayer)(Physics::kLayerCount * 2);
+
+    // Matriz ativa (copia da do projeto, tirada ao iniciar o Play). Lida pelas threads do Jolt;
+    // so e reescrita em OnSceneStart, quando nenhuma simulacao esta rodando.
+    static Physics::LayerMatrix s_ActiveMatrix;
+
     class PrismObjectLayerPairFilter : public JPH::ObjectLayerPairFilter {
     public:
         bool ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const override {
-            if (inObject1 == ObjectLayers::Static && inObject2 == ObjectLayers::Static)
+            if (!Physics::IsMovingLayer(inObject1) && !Physics::IsMovingLayer(inObject2))
                 return false; // dois estaticos nunca precisam ser testados entre si
-            return true;
+            return s_ActiveMatrix.ShouldCollide(Physics::UserLayerOf(inObject1), Physics::UserLayerOf(inObject2));
         }
     };
 
-    // Mapeia ObjectLayer -> BroadPhaseLayer (1:1 aqui, ja que so temos as
-    // duas camadas). Jolt exige essa interface implementada pelo
-    // consumidor - ver Jolt docs "Broadphase", classe
-    // BroadPhaseLayerInterface.
     class PrismBroadPhaseLayerInterface : public JPH::BroadPhaseLayerInterface {
     public:
-        PrismBroadPhaseLayerInterface() {
-            m_ObjectToBroadPhase[ObjectLayers::Static] = BroadPhaseLayers::Static;
-            m_ObjectToBroadPhase[ObjectLayers::Moving] = BroadPhaseLayers::Moving;
-        }
-
         uint32_t GetNumBroadPhaseLayers() const override {
             return BroadPhaseLayers::NumLayers;
         }
 
         JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer inLayer) const override {
-            return m_ObjectToBroadPhase[inLayer];
+            return Physics::IsMovingLayer(inLayer) ? BroadPhaseLayers::Moving : BroadPhaseLayers::Static;
         }
 
-        // GetBroadPhaseLayerName SO existe como metodo puro-virtual quando
-        // JPH_PROFILE_ENABLED ou JPH_EXTERNAL_PROFILE esta definido (ver
-        // Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h) - o Jolt liga
-        // JPH_PROFILE_ENABLED automaticamente em builds Debug por padrao
-        // (CMake option PROFILER_IN_DEBUG_AND_RELEASE, ON por padrao no
-        // Build/CMakeLists.txt oficial). Sem esta implementacao, a classe
-        // vira abstrata e nao pode ser instanciada em Debug no MSVC (mas
-        // compila normalmente em Release ou em builds sem profiling) - por
-        // isso precisa do #if para acompanhar exatamente a mesma condicao
-        // usada pela declaracao na lib.
+        // GetBroadPhaseLayerName so existe como metodo puro-virtual quando o profiler do Jolt esta ligado.
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
         const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer inLayer) const override {
             switch ((JPH::BroadPhaseLayer::Type)inLayer) {
@@ -95,30 +90,29 @@ namespace Prism {
             }
         }
 #endif
-
-    private:
-        JPH::BroadPhaseLayer m_ObjectToBroadPhase[ObjectLayers::NumLayers];
     };
 
-    // Filtro ObjectLayer vs BroadPhaseLayer (usado durante queries/steps
-    // para saber se vale a pena descer na broad-phase tree de uma
-    // determinada BroadPhaseLayer) - mesma logica de
-    // PrismObjectLayerPairFilter acima, so que cruzando os dois tipos de
-    // layer.
+    // Filtro ObjectLayer vs BroadPhaseLayer: um objeto estatico so precisa olhar a camada movel.
     class PrismObjectVsBroadPhaseLayerFilter : public JPH::ObjectVsBroadPhaseLayerFilter {
     public:
         bool ShouldCollide(JPH::ObjectLayer inLayer1, JPH::BroadPhaseLayer inLayer2) const override {
-            if (inLayer1 == ObjectLayers::Static)
+            if (!Physics::IsMovingLayer(inLayer1))
                 return inLayer2 == BroadPhaseLayers::Moving;
             return true;
         }
     };
 
-    // Estas 3 instancias vivem pelo processo inteiro (nao por-Scene) -
-    // Jolt exige que os ponteiros passados para PhysicsSystem::Init
-    // permanecam validos por toda a vida do PhysicsSystem, entao static
-    // local (inicializado na primeira chamada, destruido no fim do
-    // processo) e o padrao mais simples aqui.
+    // Filtro de CONSULTA (raycast): so objetos cuja camada de fisica esta na mascara.
+    class PrismLayerMaskObjectFilter : public JPH::ObjectLayerFilter {
+    public:
+        explicit PrismLayerMaskObjectFilter(uint32_t mask) : m_Mask(mask) {}
+        bool ShouldCollide(JPH::ObjectLayer inLayer) const override {
+            return (m_Mask & Physics::LayerBit(Physics::UserLayerOf(inLayer))) != 0u;
+        }
+    private:
+        uint32_t m_Mask;
+    };
+
     static PrismBroadPhaseLayerInterface& GetBroadPhaseLayerInterface() {
         static PrismBroadPhaseLayerInterface instance;
         return instance;
@@ -258,6 +252,26 @@ namespace Prism {
     // no .h, entao "= default" so pode viver aqui, depois de
     // <Jolt/Physics/PhysicsSystem.h> (e os outros headers do Jolt) terem
     // sido incluidos de verdade neste arquivo.
+    // Estado de juntas e personagens de UMA cena (fora do header para nao expor tipos do Jolt).
+    struct PhysicsEngine::Extras {
+        struct JointRecord {
+            JPH::Ref<JPH::Constraint> Constraint;
+            uint32_t EntityA = 0;
+            uint32_t EntityB = 0xFFFFFFFFu; // 0xFFFFFFFF = mundo
+        };
+        struct CharacterRecord {
+            JPH::Ref<JPH::CharacterVirtual> Character;
+            glm::vec3 DesiredVelocity{ 0.0f }; // horizontal (m/s); persiste ate o proximo Move
+            float JumpSpeed = 0.0f;            // pedido de pulo pendente (consumido no proximo passo)
+            glm::vec3 LastSynced{ 0.0f };      // ultima posicao escrita no Transform (detecta teleporte por script)
+            uint32_t Layer = 0;
+        };
+        std::vector<JointRecord> Joints;
+        std::unordered_map<uint32_t, CharacterRecord> Characters;
+        JPH::Ref<JPH::GroupFilterTable> JointGroups;                  // pares ligados que NAO colidem
+        std::unordered_map<uint32_t, JPH::CollisionGroup::SubGroupID> SubGroups; // entidade -> subgrupo
+    };
+
     PhysicsEngine::SceneState::SceneState() = default;
     PhysicsEngine::SceneState::~SceneState() = default;
     PhysicsEngine::SceneState::SceneState(SceneState&&) noexcept = default;
@@ -286,8 +300,8 @@ namespace Prism {
         return JPH::EMotionType::Static;
     }
 
-    static JPH::ObjectLayer ToObjectLayer(BodyType type) {
-        return type == BodyType::Static ? ObjectLayers::Static : ObjectLayers::Moving;
+    static JPH::ObjectLayer ToObjectLayer(BodyType type, int userLayer) {
+        return Physics::MakeObjectLayer(userLayer, type != BodyType::Static);
     }
 
     PhysicsEngine::SceneState* PhysicsEngine::GetState(Scene& scene) {
@@ -305,7 +319,14 @@ namespace Prism {
 
         EnsureGlobalInit();
 
+        // Matriz de colisao do projeto (copia: muda so ao iniciar um Play).
+        if (auto project = Project::GetActive())
+            s_ActiveMatrix = project->GetPhysicsMatrix();
+        else
+            s_ActiveMatrix = Physics::LayerMatrix();
+
         SceneState state;
+        state.Ext = std::make_unique<Extras>();
 
         // TempAllocator: bloco de memoria temporaria usado pelo Jolt
         // DURANTE um PhysicsSystem::Update() (alocacoes de curta duracao
@@ -359,6 +380,12 @@ namespace Prism {
         auto view = scene.GetRegistry().view<RigidBodyComponent, ColliderComponent>();
         for (auto entityHandle : view)
             CreateBodyForEntity(scene, Entity(entityHandle, &scene));
+
+        // Personagens e juntas DEPOIS de todos os corpos (uma junta liga dois corpos que ja existem).
+        for (auto entityHandle : scene.GetRegistry().view<CharacterControllerComponent>())
+            CreateCharacterForEntity(scene, Entity(entityHandle, &scene));
+        for (auto entityHandle : scene.GetRegistry().view<JointComponent>())
+            CreateJointForEntity(scene, Entity(entityHandle, &scene));
     }
 
     void PhysicsEngine::OnSceneStop(Scene& scene) {
@@ -370,6 +397,14 @@ namespace Prism {
         // broad-phase (RemoveBody) e destruido (DestroyBody) antes do
         // PhysicsSystem em si ser liberado - ver Jolt docs "Body
         // Lifetime". Iteramos EntityToBody para isso.
+        // Juntas e personagens saem ANTES dos corpos (o Jolt exige remover a junta antes de destruir os corpos).
+        if (state->Ext) {
+            for (auto& joint : state->Ext->Joints)
+                state->PhysicsSystem->RemoveConstraint(joint.Constraint);
+            state->Ext->Joints.clear();
+            state->Ext->Characters.clear(); // o destrutor do CharacterVirtual remove o corpo interno
+        }
+
         JPH::BodyInterface& bodyInterface = state->PhysicsSystem->GetBodyInterface();
         for (auto& [entityHandle, bodyId] : state->EntityToBody) {
             bodyInterface.RemoveBody(bodyId);
@@ -390,6 +425,12 @@ namespace Prism {
 
         if (!entity.HasComponent<RigidBodyComponent>() || !entity.HasComponent<ColliderComponent>())
             return; // ver comentario no .h: precisa dos DOIS components
+
+        if (entity.HasComponent<CharacterControllerComponent>()) {
+            PRISM_CORE_WARN("PhysicsEngine: a entidade '", entity.GetComponent<TagComponent>().Tag,
+                             "' tem Character Controller E Rigid Body - o personagem vence, o Rigid Body e ignorado.");
+            return;
+        }
 
         // Recarregar: se ja existia um corpo para esta entidade (ex:
         // CreateBodyForEntity chamado de novo apos o editor mudar o
@@ -583,7 +624,7 @@ namespace Prism {
             ToJolt(worldPosition),
             ToJolt(worldRotation),
             ToJoltMotionType(rigidBody.Type),
-            ToObjectLayer(rigidBody.Type));
+            ToObjectLayer(rigidBody.Type, collider.Layer));
 
         bodyCreationSettings.mGravityFactor = rigidBody.UseGravity ? 1.0f : 0.0f;
 
@@ -680,6 +721,8 @@ namespace Prism {
         if (it == state->EntityToBody.end())
             return;
 
+        RemoveJointsReferencing(*state, (uint32_t)entity.GetHandle()); // uma junta nao pode sobreviver a um dos corpos
+
         // Jolt exige RemoveBody (tira da simulacao/broad-phase) ANTES de
         // DestroyBody (libera a memoria do corpo). Ver Jolt docs "Body
         // Lifetime".
@@ -721,12 +764,15 @@ namespace Prism {
             // (adiado pelo ScriptEngine) mas nao o mundo fisico, entao 'state' segue valido.
             if (onFixedStep)
                 onFixedStep(kFixedTimeStep);
+            StepCharacters(scene, *state, kFixedTimeStep);
             state->PhysicsSystem->Update(kFixedTimeStep, kCollisionSteps, state->TempAllocator.get(), state->JobSystem.get());
             state->Accumulator -= kFixedTimeStep;
             stepsThisFrame++;
         }
         if (stepsThisFrame == kMaxStepsPerFrame)
             state->Accumulator = 0.0f; // descarta o resto acumulado - preferimos desacelerar a travar ("espiral da morte")
+
+        SyncCharacters(scene, *state);
 
         // --- Sincroniza corpos movidos de volta para TransformComponent ---
         // A API publica estavel do Jolt nao expoe uma lista de "corpos
@@ -852,7 +898,7 @@ namespace Prism {
         state->PhysicsSystem->GetBodyInterface().SetLinearVelocity(it->second, ToJolt(velocity));
     }
 
-    RaycastHit PhysicsEngine::Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance, const std::vector<entt::entity>& ignoreEntities) {
+    RaycastHit PhysicsEngine::Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance, const std::vector<entt::entity>& ignoreEntities, uint32_t layerMask) {
         RaycastHit result; // Hit=false por padrao (ver RaycastHit, PhysicsEngine.h)
 
         SceneState* state = GetState(scene);
@@ -891,12 +937,13 @@ namespace Prism {
         // simplesmente omitidas da lista, sem erro.
         JPH::IgnoreMultipleBodiesFilter ignoreFilter;
         for (entt::entity ignored : ignoreEntities) {
-            auto it = state->EntityToBody.find((uint32_t)ignored);
-            if (it != state->EntityToBody.end())
-                ignoreFilter.IgnoreBody(it->second);
+            JPH::BodyID ignoredId = FindBodyID(*state, (uint32_t)ignored);
+            if (!ignoredId.IsInvalid())
+                ignoreFilter.IgnoreBody(ignoredId);
         }
 
-        bool hit = state->PhysicsSystem->GetNarrowPhaseQuery().CastRay(ray, rayResult, {}, {}, ignoreFilter);
+        PrismLayerMaskObjectFilter layerFilter(layerMask); // so camadas de fisica na mascara
+        bool hit = state->PhysicsSystem->GetNarrowPhaseQuery().CastRay(ray, rayResult, {}, layerFilter, ignoreFilter);
 
         if (!hit)
             return result; // Hit=false - nao acertou nada dentro de maxDistance
@@ -928,6 +975,356 @@ namespace Prism {
         result.Entity = (entt::entity)(uint32_t)userData;
 
         return result;
+    }
+
+    // ========================================================================
+    // Auxiliares, juntas e personagens
+    // ========================================================================
+
+    JPH::BodyID PhysicsEngine::FindBodyID(SceneState& state, uint32_t entity) {
+        auto it = state.EntityToBody.find(entity);
+        if (it != state.EntityToBody.end())
+            return it->second;
+        if (state.Ext) {
+            auto character = state.Ext->Characters.find(entity);
+            if (character != state.Ext->Characters.end() && character->second.Character)
+                return character->second.Character->GetInnerBodyID();
+        }
+        return JPH::BodyID(); // invalido
+    }
+
+    void PhysicsEngine::RemoveJointsReferencing(SceneState& state, uint32_t entity) {
+        if (!state.Ext)
+            return;
+        auto& joints = state.Ext->Joints;
+        for (size_t i = joints.size(); i-- > 0;) {
+            if (joints[i].EntityA == entity || joints[i].EntityB == entity) {
+                state.PhysicsSystem->RemoveConstraint(joints[i].Constraint);
+                joints.erase(joints.begin() + (std::ptrdiff_t)i);
+            }
+        }
+    }
+
+    void PhysicsEngine::DestroyJointForEntity(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return;
+        auto& joints = state->Ext->Joints;
+        const uint32_t id = (uint32_t)entity.GetHandle();
+        for (size_t i = joints.size(); i-- > 0;) {
+            if (joints[i].EntityA == id) { // so a junta que ESTA entidade declara (as de outras que a citam continuam)
+                state->PhysicsSystem->RemoveConstraint(joints[i].Constraint);
+                joints.erase(joints.begin() + (std::ptrdiff_t)i);
+            }
+        }
+    }
+
+    void PhysicsEngine::CreateJointForEntity(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext || !entity.HasComponent<JointComponent>())
+            return;
+        DestroyJointForEntity(scene, entity);
+
+        const JointComponent& joint = entity.GetComponent<JointComponent>();
+        const std::string& name = entity.GetComponent<TagComponent>().Tag;
+        const uint32_t idA = (uint32_t)entity.GetHandle();
+
+        auto bodyA = state->EntityToBody.find(idA);
+        if (bodyA == state->EntityToBody.end()) {
+            PRISM_CORE_WARN("PhysicsEngine: a junta da entidade '", name, "' precisa de Rigid Body + Collider na mesma entidade - ignorada.");
+            return;
+        }
+
+        // Outra ponta: primeira entidade com o nome pedido que tem corpo; vazio = mundo.
+        uint32_t idB = 0xFFFFFFFFu;
+        JPH::BodyID bodyBId;
+        if (!joint.ConnectedEntity.empty()) {
+            for (auto handle : scene.GetRegistry().view<TagComponent>()) {
+                if ((uint32_t)handle == idA || scene.GetRegistry().get<TagComponent>(handle).Tag != joint.ConnectedEntity)
+                    continue;
+                auto found = state->EntityToBody.find((uint32_t)handle);
+                if (found != state->EntityToBody.end()) {
+                    idB = (uint32_t)handle;
+                    bodyBId = found->second;
+                    break;
+                }
+            }
+            if (idB == 0xFFFFFFFFu) {
+                PRISM_CORE_WARN("PhysicsEngine: a junta de '", name, "' aponta para '", joint.ConnectedEntity,
+                                 "', mas nenhuma entidade com esse nome tem Rigid Body + Collider - ignorada.");
+                return;
+            }
+        }
+
+        const JPH::BodyLockInterface& locks = state->PhysicsSystem->GetBodyLockInterfaceNoLock();
+        JPH::Body* body1 = locks.TryGetBody(bodyA->second);
+        JPH::Body* body2 = bodyBId.IsInvalid() ? &JPH::Body::sFixedToWorld : locks.TryGetBody(bodyBId);
+        if (!body1 || !body2)
+            return;
+
+        // Ponto e eixo em espaco de MUNDO, na pose atual (= pose inicial do Play).
+        const glm::mat4 world = scene.GetWorldTransform(entity);
+        const glm::vec3 anchor = glm::vec3(world * glm::vec4(joint.Anchor, 1.0f));
+        glm::vec3 axis = glm::vec3(world * glm::vec4(joint.Axis, 0.0f));
+        axis = (glm::dot(axis, axis) > 1e-8f) ? glm::normalize(axis) : glm::vec3(0.0f, 1.0f, 0.0f);
+        const JPH::RVec3 point = ToJolt(anchor);
+        const JPH::Vec3 jaxis = ToJolt(axis);
+        const JPH::Vec3 normal = jaxis.GetNormalizedPerpendicular();
+
+        JPH::TwoBodyConstraint* constraint = nullptr;
+        switch (joint.Type) {
+            case JointType::Fixed: {
+                JPH::FixedConstraintSettings settings;
+                settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+                settings.mAutoDetectPoint = true;
+                constraint = settings.Create(*body1, *body2);
+                break;
+            }
+            case JointType::Point: {
+                JPH::PointConstraintSettings settings;
+                settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+                settings.mPoint1 = settings.mPoint2 = point;
+                constraint = settings.Create(*body1, *body2);
+                break;
+            }
+            case JointType::Hinge: {
+                JPH::HingeConstraintSettings settings;
+                settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+                settings.mPoint1 = settings.mPoint2 = point;
+                settings.mHingeAxis1 = settings.mHingeAxis2 = jaxis;
+                settings.mNormalAxis1 = settings.mNormalAxis2 = normal;
+                if (joint.UseLimits) { // o Jolt exige min <= 0 <= max, em radianos
+                    settings.mLimitsMin = JPH::DegreesToRadians(std::min(std::max(joint.LimitMin, -180.0f), 0.0f));
+                    settings.mLimitsMax = JPH::DegreesToRadians(std::min(std::max(joint.LimitMax, 0.0f), 180.0f));
+                }
+                constraint = settings.Create(*body1, *body2);
+                break;
+            }
+            case JointType::Slider: {
+                JPH::SliderConstraintSettings settings;
+                settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+                settings.mAutoDetectPoint = true;
+                settings.SetSliderAxis(jaxis);
+                if (joint.UseLimits) {
+                    settings.mLimitsMin = std::min(joint.LimitMin, 0.0f);
+                    settings.mLimitsMax = std::max(joint.LimitMax, 0.0f);
+                }
+                constraint = settings.Create(*body1, *body2);
+                break;
+            }
+            case JointType::Distance: {
+                JPH::DistanceConstraintSettings settings;
+                settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+                settings.mPoint1 = settings.mPoint2 = point;
+                // mMin/mMax < 0 = a distancia atual (haste rigida ou mola em torno dela).
+                if (joint.UseLimits) {
+                    settings.mMinDistance = std::max(joint.LimitMin, 0.0f);
+                    settings.mMaxDistance = std::max(joint.LimitMax, settings.mMinDistance);
+                }
+                if (joint.UseSpring) {
+                    settings.mLimitsSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+                    settings.mLimitsSpringSettings.mFrequency = std::max(joint.SpringFrequency, 0.01f);
+                    settings.mLimitsSpringSettings.mDamping = std::max(joint.SpringDamping, 0.0f);
+                }
+                constraint = settings.Create(*body1, *body2);
+                break;
+            }
+        }
+        if (!constraint) {
+            PRISM_CORE_WARN("PhysicsEngine: o Jolt nao conseguiu criar a junta de '", name, "'.");
+            return;
+        }
+        state->PhysicsSystem->AddConstraint(constraint);
+
+        Extras::JointRecord record;
+        record.Constraint = constraint;
+        record.EntityA = idA;
+        record.EntityB = idB;
+        state->Ext->Joints.push_back(record);
+
+        // Os dois corpos ligados nao colidem entre si (a menos que CollideConnected): grupo de colisao com tabela.
+        if (!joint.CollideConnected && idB != 0xFFFFFFFFu) {
+            constexpr JPH::uint kMaxSubGroups = 256;
+            if (!state->Ext->JointGroups)
+                state->Ext->JointGroups = new JPH::GroupFilterTable(kMaxSubGroups);
+            auto subGroupOf = [&](uint32_t id) -> JPH::CollisionGroup::SubGroupID {
+                auto found = state->Ext->SubGroups.find(id);
+                if (found != state->Ext->SubGroups.end())
+                    return found->second;
+                if (state->Ext->SubGroups.size() >= kMaxSubGroups)
+                    return JPH::CollisionGroup::cInvalidSubGroup;
+                auto sub = (JPH::CollisionGroup::SubGroupID)state->Ext->SubGroups.size();
+                state->Ext->SubGroups[id] = sub;
+                return sub;
+            };
+            JPH::CollisionGroup::SubGroupID subA = subGroupOf(idA), subB = subGroupOf(idB);
+            if (subA != JPH::CollisionGroup::cInvalidSubGroup && subB != JPH::CollisionGroup::cInvalidSubGroup) {
+                state->Ext->JointGroups->DisableCollision(subA, subB);
+                body1->SetCollisionGroup(JPH::CollisionGroup(state->Ext->JointGroups, 1, subA));
+                body2->SetCollisionGroup(JPH::CollisionGroup(state->Ext->JointGroups, 1, subB));
+            }
+            else {
+                PRISM_CORE_WARN("PhysicsEngine: limite de ", kMaxSubGroups, " corpos com junta sem colisao interna atingido - '", name, "' vai colidir com o corpo ligado.");
+            }
+        }
+    }
+
+    void PhysicsEngine::DestroyCharacterForEntity(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return;
+        auto it = state->Ext->Characters.find((uint32_t)entity.GetHandle());
+        if (it == state->Ext->Characters.end())
+            return;
+        RemoveJointsReferencing(*state, (uint32_t)entity.GetHandle());
+        if (state->Contacts && it->second.Character)
+            state->Contacts->UnregisterBody(it->second.Character->GetInnerBodyID());
+        state->Ext->Characters.erase(it); // o destrutor do CharacterVirtual remove o corpo interno
+    }
+
+    void PhysicsEngine::CreateCharacterForEntity(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext || !entity.HasComponent<CharacterControllerComponent>())
+            return;
+        DestroyCharacterForEntity(scene, entity);
+
+        const CharacterControllerComponent& cc = entity.GetComponent<CharacterControllerComponent>();
+        int layer = 0;
+        if (entity.HasComponent<ColliderComponent>())
+            layer = std::min(std::max((int)entity.GetComponent<ColliderComponent>().Layer, 0), Physics::kLayerCount - 1);
+
+        const float radius = std::max(cc.Radius, 0.05f);
+        const float halfCylinder = std::max(cc.Height * 0.5f - radius, 0.05f);
+        JPH::RefConst<JPH::Shape> shape = new JPH::CapsuleShape(halfCylinder, radius);
+
+        JPH::CharacterVirtualSettings settings;
+        settings.mShape = shape;
+        settings.mUp = JPH::Vec3::sAxisY();
+        settings.mMaxSlopeAngle = JPH::DegreesToRadians(cc.MaxSlopeAngle);
+        settings.mMass = std::max(cc.Mass, 0.001f);
+        // A origem e o CENTRO da capsula: o "volume de apoio" e a calota de baixo (abaixo do centro da esfera inferior).
+        settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), halfCylinder);
+        // Corpo cinematico interno: outros corpos esbarram no personagem, raycasts e triggers o enxergam.
+        settings.mInnerBodyShape = shape;
+        settings.mInnerBodyLayer = Physics::MakeObjectLayer(layer, true);
+
+        const glm::vec3 position = glm::vec3(scene.GetWorldTransform(entity)[3]);
+        const uint32_t id = (uint32_t)entity.GetHandle();
+        JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
+            &settings, ToJolt(position), JPH::Quat::sIdentity(), (JPH::uint64)id, state->PhysicsSystem.get());
+
+        Extras::CharacterRecord record;
+        record.Character = character;
+        record.LastSynced = entity.GetComponent<TransformComponent>().Translation;
+        record.Layer = (uint32_t)layer;
+        state->Ext->Characters[id] = record;
+
+        if (state->Contacts)
+            state->Contacts->RegisterBody(character->GetInnerBodyID(), id, false);
+    }
+
+    void PhysicsEngine::CharacterMove(Scene& scene, Entity entity, const glm::vec3& horizontalVelocity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return;
+        auto it = state->Ext->Characters.find((uint32_t)entity.GetHandle());
+        if (it != state->Ext->Characters.end() && std::isfinite(horizontalVelocity.x) && std::isfinite(horizontalVelocity.z))
+            it->second.DesiredVelocity = glm::vec3(horizontalVelocity.x, 0.0f, horizontalVelocity.z);
+    }
+
+    void PhysicsEngine::CharacterJump(Scene& scene, Entity entity, float jumpSpeed) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return;
+        auto it = state->Ext->Characters.find((uint32_t)entity.GetHandle());
+        if (it != state->Ext->Characters.end() && std::isfinite(jumpSpeed))
+            it->second.JumpSpeed = std::max(jumpSpeed, 0.0f);
+    }
+
+    bool PhysicsEngine::CharacterIsGrounded(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return false;
+        auto it = state->Ext->Characters.find((uint32_t)entity.GetHandle());
+        return it != state->Ext->Characters.end() && it->second.Character
+            && it->second.Character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    }
+
+    glm::vec3 PhysicsEngine::CharacterGetVelocity(Scene& scene, Entity entity) {
+        SceneState* state = GetState(scene);
+        if (!state || !state->Ext)
+            return glm::vec3(0.0f);
+        auto it = state->Ext->Characters.find((uint32_t)entity.GetHandle());
+        return (it != state->Ext->Characters.end() && it->second.Character) ? FromJolt(it->second.Character->GetLinearVelocity()) : glm::vec3(0.0f);
+    }
+
+    void PhysicsEngine::StepCharacters(Scene& scene, SceneState& state, float deltaTime) {
+        if (!state.Ext || state.Ext->Characters.empty())
+            return;
+        auto& registry = scene.GetRegistry();
+        for (auto& [id, record] : state.Ext->Characters) {
+            entt::entity handle = (entt::entity)id;
+            if (!registry.valid(handle) || !record.Character)
+                continue;
+            auto* transform = registry.try_get<TransformComponent>(handle);
+            auto* cc = registry.try_get<CharacterControllerComponent>(handle);
+            if (!transform || !cc)
+                continue;
+            JPH::CharacterVirtual& character = *record.Character;
+
+            // Um script moveu o Transform (respawn/teleporte): o personagem vai junto e para.
+            if (glm::length(transform->Translation - record.LastSynced) > 0.001f) {
+                character.SetPosition(ToJolt(transform->Translation));
+                character.SetLinearVelocity(JPH::Vec3::sZero());
+                record.LastSynced = transform->Translation;
+            }
+
+            const JPH::Vec3 gravity = state.PhysicsSystem->GetGravity() * cc->GravityScale;
+            const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+            const JPH::Vec3 groundVelocity = character.GetGroundVelocity();
+            const JPH::Vec3 current = JPH::Vec3(0.0f, character.GetLinearVelocity().GetY(), 0.0f);
+
+            JPH::Vec3 velocity;
+            if (onGround && current.GetY() - groundVelocity.GetY() < 0.1f) {
+                velocity = groundVelocity; // no chao (e nao subindo): acompanha a plataforma
+                if (record.JumpSpeed > 0.0f)
+                    velocity += JPH::Vec3(0.0f, record.JumpSpeed, 0.0f);
+            }
+            else {
+                velocity = current; // no ar: mantem a velocidade vertical
+            }
+            record.JumpSpeed = 0.0f; // o pedido de pulo vale por UM passo
+            velocity += gravity * deltaTime;
+            velocity += ToJolt(record.DesiredVelocity);
+            character.SetLinearVelocity(velocity);
+
+            JPH::CharacterVirtual::ExtendedUpdateSettings update;
+            update.mStickToFloorStepDown = cc->StickToFloor ? JPH::Vec3(0.0f, -0.5f, 0.0f) : JPH::Vec3::sZero();
+            update.mWalkStairsStepUp = JPH::Vec3(0.0f, std::max(cc->StepHeight, 0.0f), 0.0f);
+
+            const JPH::ObjectLayer objectLayer = Physics::MakeObjectLayer((int)record.Layer, true);
+            JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(GetObjectVsBroadPhaseLayerFilter(), objectLayer);
+            JPH::DefaultObjectLayerFilter objectFilter(GetObjectLayerPairFilter(), objectLayer);
+            JPH::IgnoreSingleBodyFilter bodyFilter(character.GetInnerBodyID());
+            JPH::ShapeFilter shapeFilter;
+            character.ExtendedUpdate(deltaTime, gravity, update, broadPhaseFilter, objectFilter, bodyFilter, shapeFilter, *state.TempAllocator);
+        }
+    }
+
+    void PhysicsEngine::SyncCharacters(Scene& scene, SceneState& state) {
+        if (!state.Ext)
+            return;
+        auto& registry = scene.GetRegistry();
+        for (auto& [id, record] : state.Ext->Characters) {
+            entt::entity handle = (entt::entity)id;
+            if (!registry.valid(handle) || !record.Character)
+                continue;
+            if (auto* transform = registry.try_get<TransformComponent>(handle)) {
+                // Mesma limitacao dos corpos (docs/fisica.md): posicao de mundo gravada no Transform LOCAL.
+                transform->Translation = FromJolt(record.Character->GetPosition());
+                record.LastSynced = transform->Translation;
+            }
+        }
     }
 
 }

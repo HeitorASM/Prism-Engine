@@ -30,6 +30,7 @@
 // tocado so por causa de um Component novo, a partir desta mudanca.
 // ============================================================================
 
+#include <algorithm>
 #include <cmath>
 #include "ComponentRegistry.h"
 #include "Components.h"
@@ -167,10 +168,17 @@ namespace Prism {
                 WriteRaw(out, c.Shape);
                 WriteRaw(out, c.Size);
                 WriteRaw(out, c.IsTrigger);
+                WriteRaw(out, c.Layer); // v2 do bloco
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ColliderComponent>();
                 bool ok = ReadRaw(in, c.Shape) && ReadRaw(in, c.Size) && ReadRaw(in, c.IsTrigger);
+                // Bloco v2: camada de fisica (antes: camada 0). Valor fora de 0..31 vira 0.
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    ok = ReadRaw(in, c.Layer);
+                    if (ok && (c.Layer < 0 || c.Layer >= Physics::kLayerCount))
+                        c.Layer = 0;
+                }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (collider da entidade ", entityIndex, ").");
                     return false;
@@ -182,6 +190,7 @@ namespace Prism {
                 return true;
             }
         );
+        s_Registry.back().Version = 2;
 
         // --- RigidBodyComponent ------------------------------------------------
         Register<RigidBodyComponent>(
@@ -496,6 +505,7 @@ namespace Prism {
                 WriteRaw(out, c.TargetPosition);
                 WriteRaw(out, c.Enabled);
                 WriteRaw(out, c.IgnoreParentAndSiblings); // v9+ (ver kSceneFormatVersion, SceneSerializer.cpp)
+                WriteRaw(out, c.LayerMask);               // v2 do bloco
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 // Hit/HitEntity/HitPoint/HitNormal/HitDistance ficam nos
@@ -507,9 +517,13 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (raycast da entidade ", entityIndex, ").");
                     return false;
                 }
+                // Bloco v2: mascara de camadas de fisica (antes: todas).
+                if (ComponentRegistry::CurrentBlockVersion() >= 2 && !ReadRaw(in, c.LayerMask))
+                    c.LayerMask = Physics::kAllLayers;
                 return true;
             }
         );
+        s_Registry.back().Version = 2;
 
         // --- AudioSourceComponent (v15) --------------------------------------
         Register<AudioSourceComponent>(
@@ -744,6 +758,75 @@ namespace Prism {
         );
         s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
 
+        // --- JointComponent --------------------------------------------------------
+        Register<JointComponent>(
+            "Joint",
+            [](std::ostream& out, Entity e) {
+                auto& c = e.GetComponent<JointComponent>();
+                WriteRaw(out, c.Type);
+                WriteString(out, c.ConnectedEntity);
+                WriteRaw(out, c.Anchor);
+                WriteRaw(out, c.Axis);
+                WriteRaw(out, c.UseLimits);
+                WriteRaw(out, c.LimitMin);
+                WriteRaw(out, c.LimitMax);
+                WriteRaw(out, c.UseSpring);
+                WriteRaw(out, c.SpringFrequency);
+                WriteRaw(out, c.SpringDamping);
+                WriteRaw(out, c.CollideConnected);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<JointComponent>();
+                bool ok = ReadRaw(in, c.Type) && ReadString(in, c.ConnectedEntity) && ReadRaw(in, c.Anchor)
+                       && ReadRaw(in, c.Axis) && ReadRaw(in, c.UseLimits) && ReadRaw(in, c.LimitMin)
+                       && ReadRaw(in, c.LimitMax) && ReadRaw(in, c.UseSpring) && ReadRaw(in, c.SpringFrequency)
+                       && ReadRaw(in, c.SpringDamping) && ReadRaw(in, c.CollideConnected);
+                if (!ok || (int)c.Type < (int)JointType::Fixed || (int)c.Type > (int)JointType::Point) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (junta da entidade ", entityIndex, ").");
+                    return false;
+                }
+                auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+                c.LimitMin = finiteOr(c.LimitMin, -45.0f);
+                c.LimitMax = finiteOr(c.LimitMax, 45.0f);
+                c.SpringFrequency = finiteOr(c.SpringFrequency, 2.0f);
+                c.SpringDamping = finiteOr(c.SpringDamping, 0.5f);
+                return true;
+            }
+        );
+        s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
+
+        // --- CharacterControllerComponent -------------------------------------------
+        Register<CharacterControllerComponent>(
+            "Character Controller",
+            [](std::ostream& out, Entity e) {
+                auto& c = e.GetComponent<CharacterControllerComponent>();
+                WriteRaw(out, c.Radius);
+                WriteRaw(out, c.Height);
+                WriteRaw(out, c.StepHeight);
+                WriteRaw(out, c.MaxSlopeAngle);
+                WriteRaw(out, c.Mass);
+                WriteRaw(out, c.GravityScale);
+                WriteRaw(out, c.StickToFloor);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<CharacterControllerComponent>();
+                if (!(ReadRaw(in, c.Radius) && ReadRaw(in, c.Height) && ReadRaw(in, c.StepHeight)
+                      && ReadRaw(in, c.MaxSlopeAngle) && ReadRaw(in, c.Mass) && ReadRaw(in, c.GravityScale)
+                      && ReadRaw(in, c.StickToFloor))) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (character controller da entidade ", entityIndex, ").");
+                    return false;
+                }
+                auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+                c.Radius = std::min(std::max(finiteOr(c.Radius, 0.35f), 0.05f), 50.0f);
+                c.Height = std::min(std::max(finiteOr(c.Height, 1.8f), c.Radius * 2.0f), 200.0f);
+                c.StepHeight = std::min(std::max(finiteOr(c.StepHeight, 0.4f), 0.0f), c.Height);
+                c.MaxSlopeAngle = std::min(std::max(finiteOr(c.MaxSlopeAngle, 50.0f), 0.0f), 89.0f);
+                c.Mass = std::max(finiteOr(c.Mass, 70.0f), 0.001f);
+                c.GravityScale = finiteOr(c.GravityScale, 1.0f);
+                return true;
+            }
+        );
+        s_Registry.back().AddedInSceneFormat = 22;
     }
 
 }

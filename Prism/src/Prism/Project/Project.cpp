@@ -233,6 +233,36 @@ namespace Prism {
         return SaveActive();
     }
 
+    std::string Project::GetPhysicsLayerName(int index) const {
+        if (index < 0 || index >= 32)
+            return {};
+        if (!m_PhysicsLayerNames[(size_t)index].empty())
+            return m_PhysicsLayerNames[(size_t)index];
+        return index == 0 ? std::string("Padrao") : "Camada " + std::to_string(index + 1);
+    }
+
+    bool Project::HasCustomPhysicsLayerName(int index) const {
+        return index >= 0 && index < 32 && !m_PhysicsLayerNames[(size_t)index].empty();
+    }
+
+    bool Project::SetPhysicsLayerName(int index, const std::string& name) {
+        if (!s_ActiveProject || index < 0 || index >= 32)
+            return false;
+        std::string clean;
+        for (char c : name)
+            if (c != '\r' && c != '\n')
+                clean.push_back(c);
+        s_ActiveProject->m_PhysicsLayerNames[(size_t)index] = clean;
+        return SaveActive();
+    }
+
+    bool Project::SetPhysicsCollision(int a, int b, bool collide) {
+        if (!s_ActiveProject || a < 0 || a >= 32 || b < 0 || b >= 32)
+            return false;
+        s_ActiveProject->m_PhysicsMatrix.SetCollision(a, b, collide);
+        return SaveActive();
+    }
+
     bool Project::SetStartMap(const std::filesystem::path& relativeMapPath) {
         if (!s_ActiveProject)
             return false;

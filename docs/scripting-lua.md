@@ -191,3 +191,8 @@ Só `base`, `math`, `string` e `table` estão abertas. `io`, `os`, `package` e `
 `entity:PlayAnimation(nome, fade, loop)`, `entity:StopAnimation()`, `entity:PauseAnimation(p)`, `entity:SetAnimationSpeed(v)`, `entity:IsAnimationPlaying()`, `entity:GetAnimation()`, e para a máquina de estados `entity:SetAnimFloat/SetAnimBool(nome, v)`, `entity:SetAnimTrigger(nome)`, `entity:SetAnimState(estado, fade)`, `entity:GetAnimState()`; evento de animação: função global `OnAnimationEvent(name)` (precisam de um Animator; ver [animacao.md](animacao.md)).
 
 `entity:PlaySound()`, `entity:StopSound()`, `entity:IsSoundPlaying()`, `entity:SetSoundVolume(v)`, `entity:SetSoundPitch(p)` (precisam de um Audio Source) e a tabela global `Audio` (`Play`, `Play3D`, `Preload`, `SetMasterVolume`, `GetMasterVolume`, `SetBusVolume`, `GetBusVolume`, `SetBusMuted`, `IsBusMuted`; canais `"sfx"`, `"music"`, `"ui"`, `"ambient"`). Detalhes em [audio.md](audio.md).
+
+## Física: personagem e máscara de camadas
+
+- `Physics.Raycast(origem, direção, distância, ignorar, máscara)`: o 5º argumento (opcional, inteiro de 32 bits) filtra as camadas de física atingidas.
+- Para entidades com `Character Controller`: `entity:CharacterMove(x, y, z)` (velocidade horizontal desejada, m/s), `entity:CharacterJump(velocidade)`, `entity:IsGrounded()`, `entity:GetCharacterVelocity()`.

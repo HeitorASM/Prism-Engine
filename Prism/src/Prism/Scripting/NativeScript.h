@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 8;
+    constexpr uint32_t kNativeApiVersion = 9;
 
     struct NativeRayHit {
         bool Hit = false;
@@ -146,6 +146,12 @@ namespace Prism {
         bool (*UISetInteractable)(Scene* scene, entt::entity entity, const char* nodeId, bool interactable);
         bool (*UISetColor)(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a);
         bool (*UISetTextColor)(Scene* scene, entt::entity entity, const char* nodeId, float r, float g, float b, float a);
+        // v9: personagem (CharacterControllerComponent) e raycast com mascara de camadas de fisica
+        void (*CharacterMove)(Scene* scene, entt::entity entity, glm::vec3 horizontalVelocity);
+        void (*CharacterJump)(Scene* scene, entt::entity entity, float jumpSpeed);
+        bool (*CharacterIsGrounded)(Scene* scene, entt::entity entity);
+        glm::vec3 (*CharacterGetVelocity)(Scene* scene, entt::entity entity);
+        bool (*RaycastMasked)(Scene* scene, glm::vec3 origin, glm::vec3 direction, float maxDistance, entt::entity ignore, uint32_t layerMask, NativeRayHit* outHit);
     };
 
     // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
@@ -353,6 +359,17 @@ namespace Prism {
         bool UISetInteractable(const std::string& nodeId, bool interactable) { return Api().UISetInteractable(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), interactable); }
         bool UISetColor(const std::string& nodeId, float r, float g, float b, float a = 1.0f) { return Api().UISetColor(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), r, g, b, a); }
         bool UISetTextColor(const std::string& nodeId, float r, float g, float b, float a = 1.0f) { return Api().UISetTextColor(m_Entity.GetScene(), m_Entity.GetHandle(), nodeId.c_str(), r, g, b, a); }
+
+        // --- Personagem / fisica (API v9) ---
+        void CharacterMove(const glm::vec3& horizontalVelocity) { Api().CharacterMove(m_Entity.GetScene(), m_Entity.GetHandle(), horizontalVelocity); }
+        void CharacterJump(float jumpSpeed) { Api().CharacterJump(m_Entity.GetScene(), m_Entity.GetHandle(), jumpSpeed); }
+        bool CharacterIsGrounded() { return Api().CharacterIsGrounded(m_Entity.GetScene(), m_Entity.GetHandle()); }
+        glm::vec3 CharacterGetVelocity() { return Api().CharacterGetVelocity(m_Entity.GetScene(), m_Entity.GetHandle()); }
+        NativeRayHit RaycastMasked(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t layerMask, bool ignoreSelf = true) {
+            NativeRayHit hit{};
+            Api().RaycastMasked(m_Entity.GetScene(), origin, direction, maxDistance, ignoreSelf ? m_Entity.GetHandle() : entt::entity(entt::null), layerMask, &hit);
+            return hit;
+        }
 
         // Troca de cena: carrega o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
         // Todos os scripts e entidades da cena atual sao destruidos.

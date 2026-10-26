@@ -16,6 +16,7 @@
 #include "../Core/Base.h"
 #include "../Assets/AssetRegistry.h"
 #include <array>
+#include "../Physics/PhysicsLayers.h"
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -157,6 +158,14 @@ namespace Prism {
         // Define o nome (vazio = volta ao padrao) e grava o .prismproj imediatamente.
         static bool SetLayerName(int index, const std::string& name);
 
+        // Camadas de FISICA (ColliderComponent::Layer, 0..31): nomes e matriz de colisao do projeto.
+        std::string GetPhysicsLayerName(int index) const; // sem nome: "Camada N" (a 0 = "Padrao")
+        bool HasCustomPhysicsLayerName(int index) const;
+        static bool SetPhysicsLayerName(int index, const std::string& name);
+        const Physics::LayerMatrix& GetPhysicsMatrix() const { return m_PhysicsMatrix; }
+        // Liga/desliga a colisao do par (a, b) e grava o .prismproj.
+        static bool SetPhysicsCollision(int a, int b, bool collide);
+
     private:
         ProjectConfig m_Config;
         std::filesystem::path m_ProjectDirectory;
@@ -172,6 +181,8 @@ namespace Prism {
 
         // Nomes das camadas (so os personalizados; vazio = padrao). Tambem NO FIM (ver acima).
         std::array<std::string, 32> m_LayerNames;
+        std::array<std::string, 32> m_PhysicsLayerNames;
+        Physics::LayerMatrix m_PhysicsMatrix;
 
         inline static Ref<Project> s_ActiveProject;
 

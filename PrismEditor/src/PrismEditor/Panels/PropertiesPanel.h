@@ -61,6 +61,8 @@ namespace PrismEditor {
         void DrawColliderUI();
         void DrawRigidBodyUI();
         void DrawRaycastUI();
+        void DrawJointUI();
+        void DrawCharacterControllerUI();
         void DrawCameraUI();
         void DrawScriptUI();
         void DrawAudioSourceUI();
@@ -160,6 +162,8 @@ namespace PrismEditor {
         Prism::RigidBodyComponent m_RigidBodyBeforeEdit;
         Prism::CameraComponent m_CameraBeforeEdit;
         Prism::RaycastComponent m_RaycastBeforeEdit;
+        Prism::JointComponent m_JointBeforeEdit;
+        Prism::CharacterControllerComponent m_CharacterBeforeEdit;
         Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
         Prism::AnimatorComponent m_AnimatorBeforeEdit;
         int m_AnimSelState = -1;       // editor de estados: estado selecionado (-2 = "Qualquer estado", -1 = nada)

@@ -60,6 +60,12 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::RaycastComponent>())
             DrawRaycastUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::JointComponent>())
+            DrawJointUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::CharacterControllerComponent>())
+            DrawCharacterControllerUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::CameraComponent>())
             DrawCameraUI();
 
@@ -188,6 +194,10 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(entity, displayName));
         else if (displayName == "Raycast")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::RaycastComponent>>(entity, displayName));
+        else if (displayName == "Joint")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::JointComponent>>(entity, displayName));
+        else if (displayName == "Character Controller")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::CharacterControllerComponent>>(entity, displayName));
         else if (displayName == "Script")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(entity, displayName));
         else if (displayName == "Camera")

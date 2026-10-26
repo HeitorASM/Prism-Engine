@@ -95,3 +95,14 @@ if(MSVC)
     target_compile_options(PrismCullingTests PRIVATE /utf-8)
 endif()
 add_test(NAME CullingTests COMMAND PrismCullingTests)
+
+# PrismPhysicsLayersTests: camadas de fisica e matriz de colisao (Physics/PhysicsLayers.h, so std).
+add_executable(PrismPhysicsLayersTests
+    PhysicsLayersTests.cpp
+)
+target_include_directories(PrismPhysicsLayersTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismPhysicsLayersTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismPhysicsLayersTests PRIVATE /utf-8)
+endif()
+add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)

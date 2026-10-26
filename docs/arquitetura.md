@@ -96,7 +96,7 @@ cmake --build build --target PrismAssetTests
 ctest --test-dir build --output-on-failure
 ```
 
-`PrismCullingTests` compila só `Renderer/Culling.h` (frustum e camadas, ver [renderizacao.md](renderizacao.md)). `PrismUITests` compila só o núcleo da UI em texto (`UI/UIMarkup`, `UILayout`, `UIInput`; ver [ui-prismui.md](ui-prismui.md)). `PrismExportTests` compila só `Project/GameExporter.cpp` (o exportador de jogos, ver [exportacao.md](exportacao.md)) e roda sobre pastas temporárias com arquivos de mentira.
+`PrismPhysicsLayersTests` compila só `Physics/PhysicsLayers.h` (camadas de física e matriz de colisão, ver [fisica.md](fisica.md)). `PrismCullingTests` compila só `Renderer/Culling.h` (frustum e camadas, ver [renderizacao.md](renderizacao.md)). `PrismUITests` compila só o núcleo da UI em texto (`UI/UIMarkup`, `UILayout`, `UIInput`; ver [ui-prismui.md](ui-prismui.md)). `PrismExportTests` compila só `Project/GameExporter.cpp` (o exportador de jogos, ver [exportacao.md](exportacao.md)) e roda sobre pastas temporárias com arquivos de mentira.
 
 `PrismAssetTests` compila só `Assets/` e `Project/`, sem GPU, GLFW ou Jolt. Cobre `AssetID`, o formato do `.meta`, todos os casos de reconciliação do `AssetRegistry` e um ciclo real `Project::New` → `Project::Load` com assets movidos entre as duas etapas.
 

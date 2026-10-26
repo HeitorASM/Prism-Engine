@@ -20,6 +20,7 @@
 #include "../Animation/AnimatorRuntime.h"
 #include "../Animation/AnimationGraph.h"
 #include "../Renderer/Culling.h"
+#include "../Physics/PhysicsLayers.h"
 #include "../UI/UIDocumentRuntime.h"
 #include <string>
 #include <vector>
@@ -449,6 +450,10 @@ namespace Prism {
         // dispara um script quando o player entra), nao para colisao solida.
         bool IsTrigger = false;
 
+        // Camada de FISICA (0..31) deste colisor. Quais camadas colidem entre si e
+        // definido pela matriz do projeto (Project::GetPhysicsMatrix); padrao: tudo colide.
+        int32_t Layer = 0;
+
         ColliderComponent() = default;
         ColliderComponent(const ColliderComponent&) = default;
     };
@@ -757,6 +762,64 @@ namespace Prism {
         UIDocumentComponent& operator=(const UIDocumentComponent&) = default;
     };
 
+    // Junta (constraint) fisica entre ESTA entidade e outra (ou o mundo). Precisa de
+    // RigidBody + Collider nesta entidade (e na outra, se houver). O corpo e a outra
+    // entidade sao ligados em 'Anchor' (ponto no espaco local desta entidade, na pose
+    // inicial do Play). So existe durante o Play.
+    enum class JointType : int {
+        Fixed = 0,   // cola os dois corpos (sem movimento relativo)
+        Hinge,       // dobradica: gira em torno de 'Axis' (porta, roda)
+        Slider,      // desliza ao longo de 'Axis' (gaveta, elevador)
+        Distance,    // corda/mola: mantem a distancia entre os dois pontos
+        Point        // junta esferica: so fixa o ponto, gira livre (pendulo, ragdoll)
+    };
+
+    struct JointComponent {
+        JointType Type = JointType::Fixed;
+        // Nome (Tag) da outra entidade; vazio = preso ao MUNDO (parede invisivel).
+        // A primeira entidade com esse nome e que tem corpo fisico. Prefabs funcionam
+        // porque nao ha referencia por indice.
+        std::string ConnectedEntity;
+        glm::vec3 Anchor = { 0.0f, 0.0f, 0.0f }; // ponto de ligacao, espaco LOCAL desta entidade
+        glm::vec3 Axis = { 0.0f, 1.0f, 0.0f };   // Hinge/Slider: eixo, espaco local desta entidade
+
+        // Limites: graus (Hinge, -180..180), metros ao longo do eixo (Slider) ou
+        // distancia minima/maxima (Distance). Sem limites: Hinge gira livre, Slider
+        // sem fim, Distance mantem a distancia inicial.
+        bool UseLimits = false;
+        float LimitMin = -45.0f;
+        float LimitMax = 45.0f;
+
+        // Distance: mola em vez de haste rigida (frequencia em Hz, amortecimento 0..1+).
+        bool UseSpring = false;
+        float SpringFrequency = 2.0f;
+        float SpringDamping = 0.5f;
+
+        // Os dois corpos ligados colidem entre si? (padrao: nao)
+        bool CollideConnected = false;
+
+        JointComponent() = default;
+        JointComponent(const JointComponent&) = default;
+    };
+
+    // Personagem controlado por script (capsula "cinematica" do Jolt - CharacterVirtual): sobe
+    // degraus, anda em rampas e para na borda, sem as brigas de um RigidBody com
+    // FixedRotation. NAO use junto com RigidBody (o personagem vence). A posicao da
+    // entidade e o CENTRO da capsula. Controle por script: Move(vx, vy, vz) define a
+    // velocidade horizontal desejada (m/s), Jump(v), IsGrounded().
+    struct CharacterControllerComponent {
+        float Radius = 0.35f;
+        float Height = 1.8f;          // altura TOTAL da capsula (>= 2 * Radius)
+        float StepHeight = 0.4f;      // degrau maximo que sobe sozinho (0 = desliga)
+        float MaxSlopeAngle = 50.0f;  // graus; mais inclinado que isso nao e chao
+        float Mass = 70.0f;
+        float GravityScale = 1.0f;
+        bool StickToFloor = true;     // gruda no chao ao descer rampas/degraus pequenos
+
+        CharacterControllerComponent() = default;
+        CharacterControllerComponent(const CharacterControllerComponent&) = default;
+    };
+
     // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver
     // Audio/AudioEngine.h): comeca sozinha com PlayOnStart, ou por script
     // (entity:PlaySound()). Espacial (3D): volume cai com a distancia ate o
@@ -866,6 +929,9 @@ namespace Prism {
         // (Entity::GetParent/RelationshipComponent::Children) toda vez
         // que o raio e testado.
         bool IgnoreParentAndSiblings = true;
+
+        // Camadas de fisica que o raio enxerga (mascara de bits; padrao = todas).
+        uint32_t LayerMask = Physics::kAllLayers;
 
         // --- Resultado do ultimo teste (somente leitura pela UI/scripts;
         // escrito exclusivamente por Scene::UpdateRaycastComponents) ---
