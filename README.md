@@ -106,4 +106,4 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Frustum culling no renderer
 - [ ] Instancing no renderer
 - [x] Física: camadas/máscaras configuráveis, juntas e character controller
-- [ ] Testes de serialização e do ComponentRegistry
+- [x] Testes de serialização, do ComponentRegistry e do PrefabSyncer

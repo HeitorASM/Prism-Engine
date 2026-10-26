@@ -106,3 +106,17 @@ if(MSVC)
     target_compile_options(PrismPhysicsLayersTests PRIVATE /utf-8)
 endif()
 add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)
+
+# PrismSceneTests: serializacao de cena, ComponentRegistry e PrefabSyncer. Linka a
+# biblioteca Prism inteira (Scene depende de Fisica/Audio/Scripts), entao so existe
+# num build completo. Sem janela nem GPU.
+add_executable(PrismSceneTests
+    SceneTests.cpp
+)
+target_include_directories(PrismSceneTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismSceneTests PRIVATE cxx_std_20)
+target_link_libraries(PrismSceneTests PRIVATE Prism)
+if(MSVC)
+    target_compile_options(PrismSceneTests PRIVATE /utf-8)
+endif()
+add_test(NAME SceneTests COMMAND PrismSceneTests)
