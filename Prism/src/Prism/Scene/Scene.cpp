@@ -12,6 +12,7 @@
 #include "../Renderer/PrimitiveMeshFactory.h"
 #include "../Renderer/Renderer.h"
 #include "../Core/Log.h"
+#include "../Core/Profiler.h"
 #include <algorithm>
 #include <filesystem>
 #include <limits>
@@ -485,7 +486,10 @@ namespace Prism {
         NativeScripting::PollHotReload(*this); // modulo C++ recompilado durante o Play
 
         // OnFixedUpdate dos scripts roda dentro de Simulate, antes de cada passo fixo.
-        PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });
+        {
+            PRISM_PROFILE_SCOPE("Scene.Physics");
+            PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });
+        }
 
         // RaycastComponent tambem ANTES dos scripts, mesmo motivo: um
         // script que leia o resultado de um sensor de raycast da propria
@@ -499,30 +503,40 @@ namespace Prism {
         std::vector<entt::entity> scriptEntities;
         for (auto entityHandle : m_Registry.view<ScriptComponent>())
             scriptEntities.push_back(entityHandle);
+        Profiler::Scope zLua("Scene.ScriptsLua");
         for (auto entityHandle : scriptEntities) {
             if (!m_Registry.valid(entityHandle))
                 continue; // destruida por um OnCollision/OnUpdate anterior
             ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+        zLua.Stop();
 
         // Scripts em C++ (NativeScriptComponent), mesma regra de snapshot.
         std::vector<entt::entity> nativeEntities;
         for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
             nativeEntities.push_back(entityHandle);
+        Profiler::Scope zNative("Scene.ScriptsCpp");
         for (auto entityHandle : nativeEntities) {
             if (!m_Registry.valid(entityHandle))
                 continue;
             NativeScripting::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+        zNative.Stop();
 
         // Destruicoes pedidas por scripts (entity:Destroy()) - so agora, com a iteracao encerrada.
         ScriptEngine::FlushDestroyQueue(*this);
 
         // Particulas depois dos scripts: ja enxergam posicao/campos alterados neste frame.
-        ParticleSystem::Update(*this, deltaTime);
+        {
+            PRISM_PROFILE_SCOPE("Scene.Particles");
+            ParticleSystem::Update(*this, deltaTime);
+        }
 
         // Animacao depois dos scripts: PlayAnimation() chamado neste frame ja vale nele.
-        AnimationSystem::Update(*this, deltaTime, false);
+        {
+            PRISM_PROFILE_SCOPE("Scene.Animation");
+            AnimationSystem::Update(*this, deltaTime, false);
+        }
 
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.

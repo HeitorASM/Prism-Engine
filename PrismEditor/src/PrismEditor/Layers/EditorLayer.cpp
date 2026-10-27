@@ -299,6 +299,7 @@ namespace PrismEditor {
         m_Hierarchy.OnImGuiRender();
         m_Properties.OnImGuiRender();
         RenderConsolePanel();
+        m_Profiler.OnImGuiRender();
         m_BuildOutput.OnImGuiRender();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
@@ -599,6 +600,8 @@ namespace PrismEditor {
             if (ImGui::BeginMenu("Janela")) {
                 if (ImGui::MenuItem("Restaurar layout padrao"))
                     m_ResetLayoutRequested = true;
+                if (ImGui::MenuItem("Desempenho (profiler)", nullptr, m_Profiler.IsOpen()))
+                    m_Profiler.Toggle();
                 ImGui::TextDisabled("Arraste as abas para reorganizar os paineis.");
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();

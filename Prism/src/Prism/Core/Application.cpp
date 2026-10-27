@@ -6,6 +6,8 @@
 #include "Log.h"
 #include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
+#include "../Renderer/GpuTimer.h"
+#include "Profiler.h"
 #include <PrismVersion.h>
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/NativeScripting.h"
@@ -63,6 +65,7 @@ namespace Prism {
         NativeScripting::Shutdown(); // antes da VM Lua: instancias C++ podem usar a API
         ScriptEngine::Shutdown();
         AudioEngine::Shutdown();
+        GpuTimer::Shutdown();
         UISystem::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
@@ -192,22 +195,35 @@ namespace Prism {
             // deste frame usar o ImGui.
             ProcessPendingLayerOps();
 
+            Profiler::BeginFrame();
+            GpuTimer::BeginFrame(); // depois do Profiler: publica as zonas de GPU de quadros anteriores
+
             if (!m_Minimized) {
                 // Hot reload de shaders (consulta o disco no maximo a cada
                 // 0,5 s). Aqui o contexto da janela principal e o atual - a
                 // janela de Play restaura o do editor ao terminar de desenhar.
                 Renderer::ReloadChangedShaders();
 
-                for (Layer* layer : m_LayerStack)
-                    layer->OnUpdate(deltaTime);
+                {
+                    PRISM_PROFILE_SCOPE("Layers.OnUpdate");
+                    for (Layer* layer : m_LayerStack)
+                        layer->OnUpdate(deltaTime);
+                }
 
-                m_ImGuiLayer->Begin();
-                for (Layer* layer : m_LayerStack)
-                    layer->OnImGuiRender();
-                m_ImGuiLayer->End();
+                {
+                    PRISM_PROFILE_SCOPE("ImGui");
+                    m_ImGuiLayer->Begin();
+                    for (Layer* layer : m_LayerStack)
+                        layer->OnImGuiRender();
+                    m_ImGuiLayer->End();
+                }
             }
 
-            m_Window->OnUpdate();
+            {
+                PRISM_PROFILE_SCOPE("Window.Swap"); // inclui a espera do V-Sync
+                m_Window->OnUpdate();
+            }
+            Profiler::EndFrame();
         }
 
         PRISM_CORE_INFO("Prism Engine - loop principal encerrado.");

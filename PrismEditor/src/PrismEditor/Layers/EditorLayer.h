@@ -38,6 +38,7 @@
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
 #include "../Panels/DocsPanel.h"
+#include "../Panels/ProfilerPanel.h"
 #include "../Panels/BuildOutputPanel.h"
 #include "../Panels/GamePanel.h"
 #include "../Play/PlayWindow.h"
@@ -140,6 +141,7 @@ namespace PrismEditor {
         // um editor com abas ainda - ver ScriptEditorPanel::Open, que troca
         // o arquivo ativo em vez de abrir uma segunda instancia).
         ScriptEditorPanel m_ScriptEditor;
+        ProfilerPanel m_Profiler; // painel "Desempenho" (menu Janela)
         DocsPanel m_Docs; // painel "Documentacao" (botao na barra superior, menu Ajuda e F1)
 
         // Janela de Play (janela separada do SO, ver Play/PlayWindow.h) -

@@ -1,4 +1,5 @@
 // glad sempre antes de qualquer header que toque OpenGL/GLFW.
+#include "../Core/Profiler.h"
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include "ShadowSystem.h"
@@ -98,6 +99,7 @@ namespace Prism {
                     shader.SetMat4Array("u_Bones", glm::value_ptr(caster.Bones[0]), std::min(caster.BoneCount, (uint32_t)kMaxBones));
                 caster.Geometry->BindForCurrentContext();
                 glDrawElements(GL_TRIANGLES, (GLsizei)caster.Geometry->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+                Profiler::CountShadowDraw(caster.Geometry->GetIndexCount());
             }
             glBindVertexArray(0);
         }

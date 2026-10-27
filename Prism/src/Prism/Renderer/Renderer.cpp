@@ -3,6 +3,8 @@
 #include "Renderer.h"
 #include "PrimitiveMeshFactory.h"
 #include "../Core/Log.h"
+#include "../Core/Profiler.h"
+#include "GpuTimer.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
@@ -645,6 +647,7 @@ namespace Prism {
 
         mesh->BindForCurrentContext();
         glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+        Profiler::CountDraw(mesh->GetIndexCount());
         glBindVertexArray(0);
 
         s_BasicShader->Unbind();
@@ -957,6 +960,7 @@ namespace Prism {
             UploadBones(*s_GeometryPrePassShader, palette.Data, palette.Count);
             mesh->BindForCurrentContext();
             glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+            Profiler::CountDraw(mesh->GetIndexCount());
         }
 
         glBindVertexArray(0);
@@ -1037,6 +1041,8 @@ namespace Prism {
     }
 
     void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera) {
+        PRISM_PROFILE_SCOPE("Renderer.DrawScene");
+        GpuTimer::Scope gpuScene("GPU.DrawScene");
         SetCameraPosition(cameraWorldPos);
         ApplyFrameState(scene, camera);
 
@@ -1100,7 +1106,11 @@ namespace Prism {
                 }
             }
         }
+        Profiler::Scope zShadows("Renderer.Shadows");
+        GpuTimer::Scope gShadows("GPU.Shadows");
         const ShadowFrame& shadowFrame = ShadowSystem::Render(casters, lights, view, projection);
+        gShadows.Stop();
+        zShadows.Stop();
         const ShadowFrame* shadows = shadowFrame.Any() ? &shadowFrame : nullptr;
 
         glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
@@ -1112,6 +1122,8 @@ namespace Prism {
         // por um frame quando o painel esta sendo redimensionado/oculto.
         // Desligavel por camera (CameraComponent::SSAO): sem AO, ssao fica
         // nullptr e o DrawMesh usa oclusao neutra (ver u_HasSSAO).
+        Profiler::Scope zSSAO("Renderer.SSAO");
+        GpuTimer::Scope gSSAO("GPU.SSAO");
         SSAO* ssao = nullptr;
         if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0) {
             GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight, cullMask);
@@ -1126,6 +1138,9 @@ namespace Prism {
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         }
+
+        gSSAO.Stop();
+        zSSAO.Stop();
 
         // Limpa cor E PROFUNDIDADE do destino antes de desenhar. O fundo (sky)
         // cobre a cor, mas NAO escreve profundidade: sem limpar a profundidade,
@@ -1187,7 +1202,11 @@ namespace Prism {
 
         // Particulas por ultimo: blend + sem escrita de profundidade, testando
         // contra a profundidade da geometria opaca ja desenhada.
-        DrawParticles(scene, view, projection);
+        {
+            PRISM_PROFILE_SCOPE("Renderer.Particles");
+            GpuTimer::Scope gParticles("GPU.Particles");
+            DrawParticles(scene, view, projection);
+        }
 
         if (postProcess) {
             s_OutputHDR = false;

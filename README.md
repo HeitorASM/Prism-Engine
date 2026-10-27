@@ -68,6 +68,7 @@ docs/             documentação técnica (GitHub)
 - [Scripting Lua](docs/scripting-lua.md)
 - [Scripting C++](docs/scripting-cpp.md)
 - [Física](docs/fisica.md)
+- [Desempenho e profiler](docs/desempenho.md)
 - [Renderização](docs/renderizacao.md)
 - [Áudio](docs/audio.md)
 - [Animação](docs/animacao.md)
@@ -105,5 +106,6 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Camadas de visibilidade na malha e "Culling Mask" na câmera (estilo Godot; ver `docs/renderizacao.md`) — camadas por luz ainda não
 - [x] Frustum culling no renderer
 - [ ] Instancing no renderer
+- [x] Profiler (painel Desempenho: CPU, GPU, desenhos e triângulos; ver `docs/desempenho.md`)
 - [x] Física: camadas/máscaras configuráveis, juntas e character controller
 - [x] Testes de serialização, do ComponentRegistry e do PrefabSyncer

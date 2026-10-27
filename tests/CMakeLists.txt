@@ -120,3 +120,14 @@ if(MSVC)
     target_compile_options(PrismSceneTests PRIVATE /utf-8)
 endif()
 add_test(NAME SceneTests COMMAND PrismSceneTests)
+
+# PrismProfilerTests: medidor de desempenho (Core/Profiler.h, so std, relogio falso).
+add_executable(PrismProfilerTests
+    ProfilerTests.cpp
+)
+target_include_directories(PrismProfilerTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismProfilerTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismProfilerTests PRIVATE /utf-8)
+endif()
+add_test(NAME ProfilerTests COMMAND PrismProfilerTests)
