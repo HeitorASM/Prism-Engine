@@ -12,6 +12,7 @@
 #include <Prism.h>
 #include <Prism/Scripting/NativeScripting.h>
 #include <atomic>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -42,10 +43,13 @@ namespace PrismEditor {
         void Poll(std::vector<Line>& lines, bool& justFinished, bool& success);
 
     private:
-        void Run(std::string command);
+        void Run();
+        std::string MakeCommand() const; // um PRISM_BUILD_ID novo a cada chamada
         void Push(std::string text, bool isError);
 
         std::thread m_Thread;
+        std::string m_SourceDir, m_BuildDir, m_Config;
+        std::filesystem::path m_BinariesDir;
         std::atomic<bool> m_Running{ false };
         std::mutex m_Mutex;
         std::vector<Line> m_Lines;

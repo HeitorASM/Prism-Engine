@@ -142,3 +142,14 @@ if(MSVC)
     target_compile_options(PrismDrawBatchingTests PRIVATE /utf-8)
 endif()
 add_test(NAME DrawBatchingTests COMMAND PrismDrawBatchingTests)
+
+# PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
+add_executable(PrismBuildAnalysisTests
+    BuildOutputAnalysisTests.cpp
+)
+target_include_directories(PrismBuildAnalysisTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../PrismEditor/src)
+target_compile_features(PrismBuildAnalysisTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismBuildAnalysisTests PRIVATE /utf-8)
+endif()
+add_test(NAME BuildAnalysisTests COMMAND PrismBuildAnalysisTests)

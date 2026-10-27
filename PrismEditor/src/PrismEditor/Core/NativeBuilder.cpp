@@ -1,7 +1,10 @@
 #include "NativeBuilder.h"
+#include "BuildOutputAnalysis.h"
 
 #include <cstdio>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 #if defined(_WIN32)
     #define PRISM_POPEN _popen
@@ -40,15 +43,10 @@ namespace PrismEditor {
         const char* config = "Debug";
 #endif
         std::filesystem::path buildDirectory = project.GetProjectDirectory() / "Cache" / "NativeBuild";
-        std::string source = sourceDirectory.generic_string();
-        std::string build = buildDirectory.generic_string();
-
-        std::string command =
-            "cmake -S \"" + source + "\" -B \"" + build + "\" -DCMAKE_BUILD_TYPE=" + config +
-            " 2>&1 && cmake --build \"" + build + "\" --config " + config + " 2>&1";
-#if defined(_WIN32)
-        command = "\"" + command + "\""; // cmd /c remove o primeiro e o ultimo '"'
-#endif
+        m_SourceDir = sourceDirectory.generic_string();
+        m_BuildDir = buildDirectory.generic_string();
+        m_Config = config;
+        m_BinariesDir = project.GetProjectDirectory() / "Binaries";
 
         {
             std::lock_guard<std::mutex> lock(m_Mutex);
@@ -57,7 +55,7 @@ namespace PrismEditor {
             m_Success = false;
         }
         m_Running.store(true);
-        m_Thread = std::thread(&NativeBuilder::Run, this, std::move(command));
+        m_Thread = std::thread(&NativeBuilder::Run, this);
         return true;
     }
 
@@ -66,29 +64,79 @@ namespace PrismEditor {
         m_Lines.push_back({ std::move(text), isError });
     }
 
-    void NativeBuilder::Run(std::string command) {
+    // Cada tentativa recebe um PRISM_BUILD_ID novo (ver prism_configure_module em NativeScripting.cpp):
+    // o .pdb do modulo muda de nome e nao colide com um .pdb antigo ainda travado.
+    std::string NativeBuilder::MakeCommand() const {
+        static uint64_t s_LastId = 0;
+        uint64_t id = (uint64_t)std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (id <= s_LastId)
+            id = s_LastId + 1;
+        s_LastId = id;
+
+        std::string command =
+            "cmake -S \"" + m_SourceDir + "\" -B \"" + m_BuildDir + "\" -DCMAKE_BUILD_TYPE=" + m_Config +
+            " -DPRISM_BUILD_ID=" + std::to_string(id) +
+            " 2>&1 && cmake --build \"" + m_BuildDir + "\" --config " + m_Config + " 2>&1";
+#if defined(_WIN32)
+        command = "\"" + command + "\""; // cmd /c remove o primeiro e o ultimo '"'
+#endif
+        return command;
+    }
+
+    void NativeBuilder::Run() {
+        constexpr int kMaxAttempts = 2; // 1 repeticao automatica se o erro for de arquivo travado
         bool success = false;
-        FILE* pipe = PRISM_POPEN(command.c_str(), "r");
-        if (!pipe) {
-            Push("Nao foi possivel executar o cmake (esta instalado e no PATH?).", true);
-        }
-        else {
-            char buffer[2048];
-            std::string pending;
-            while (std::fgets(buffer, sizeof(buffer), pipe)) {
-                pending += buffer;
-                if (!pending.empty() && pending.back() == '\n') {
-                    while (!pending.empty() && (pending.back() == '\n' || pending.back() == '\r'))
-                        pending.pop_back();
-                    bool isError = pending.find("error") != std::string::npos || pending.find("Error") != std::string::npos
-                        || pending.find("erro") != std::string::npos;
-                    Push(pending, isError);
-                    pending.clear();
+
+        for (int attempt = 1; attempt <= kMaxAttempts && !success; attempt++) {
+            // .pdb de compilacoes anteriores: apaga os que nao estao travados (os travados ficam para a proxima).
+            std::error_code ec;
+            for (auto& entry : std::filesystem::directory_iterator(m_BinariesDir, ec)) {
+                const std::string name = entry.path().filename().string();
+                if (name.rfind("NativeScripts_", 0) == 0 && entry.path().extension() == ".pdb") {
+                    std::error_code ignored;
+                    std::filesystem::remove(entry.path(), ignored);
                 }
             }
+
+            std::vector<std::string> outputLines;
+            FILE* pipe = PRISM_POPEN(MakeCommand().c_str(), "r");
+            if (!pipe) {
+                Push("Nao foi possivel executar o cmake (esta instalado e no PATH?).", true);
+                break;
+            }
+            char buffer[2048];
+            std::string pending;
+            auto flush = [&](bool terminated) {
+                while (!pending.empty() && (pending.back() == '\n' || pending.back() == '\r'))
+                    pending.pop_back();
+                bool isError = pending.find("error") != std::string::npos || pending.find("Error") != std::string::npos
+                    || pending.find("erro") != std::string::npos;
+                outputLines.push_back(pending);
+                Push(pending, isError);
+                pending.clear();
+                (void)terminated;
+            };
+            while (std::fgets(buffer, sizeof(buffer), pipe)) {
+                pending += buffer;
+                if (!pending.empty() && pending.back() == '\n')
+                    flush(true);
+            }
             if (!pending.empty())
-                Push(pending, false);
+                flush(false);
             success = PRISM_PCLOSE(pipe) == 0;
+            if (success)
+                break;
+
+            const BuildAnalysis::Failure failure = BuildAnalysis::Classify(outputLines);
+            if (failure == BuildAnalysis::Failure::FileLocked && attempt < kMaxAttempts) {
+                Push("Arquivo do modulo travado por outro processo; tentando de novo em 2 s (com um .pdb novo)...", false);
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                continue;
+            }
+            const std::string hint = BuildAnalysis::Hint(failure);
+            if (!hint.empty())
+                Push(hint, true);
+            break;
         }
 
         std::lock_guard<std::mutex> lock(m_Mutex);

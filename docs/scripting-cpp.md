@@ -109,3 +109,13 @@ target_link_libraries(NativeScripts PRIVATE nlohmann_json::nlohmann_json)
 
 - **Hot reload no Play**: o botão **Compilar** funciona com o jogo rodando. Quando o `.dll/.so` muda (e estabiliza, para não pegar o arquivo pela metade), a engine troca o módulo sem parar o Play: os scripts C++ recebem `OnDestroy` (código antigo) e são recriados com o código novo (`OnProperties` + `OnCreate`). O **mundo** (entidades, física, posições) continua; o estado dos **membros** dos scripts recomeça. Se o módulo novo for inválido, o antigo segue rodando (erro no Console).
 - A classe é escolhida pelo nome: renomear a classe deixa os components antigos apontando para um nome que não existe (aviso no painel e no Play).
+
+## Erros de arquivo travado ao compilar (LNK1104 / LNK1168 / LNK1201)
+
+A engine nunca carrega o `Binaries/NativeScripts.dll` original: ela carrega uma **cópia** em `Cache/NativeModule`, então o compilador pode sobrescrever o original com o jogo aberto. Mesmo assim, o `.pdb` do módulo carregado pode ficar preso (depurador do Visual Studio anexado ao editor, antivírus, indexador). Para isso:
+
+- cada compilação recebe um `.pdb` com **nome novo** (`NativeScripts_<id>.pdb`, via `PRISM_BUILD_ID`), então nunca colide com o anterior; os antigos são apagados quando não estão mais travados;
+- se o erro for de arquivo travado, a compilação é repetida **uma vez** sozinha, depois de 2 s;
+- se ainda falhar, o painel de saída mostra uma **dica**; o mesmo vale para *símbolo não resolvido* (LNK2019 / `undefined reference`), que indica uso de algo da engine fora da API nativa.
+
+Se um erro de linker continuar acontecendo, copie o texto completo da saída: ele diz qual arquivo está preso.

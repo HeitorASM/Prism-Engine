@@ -921,6 +921,11 @@ namespace Prism {
             "    endforeach()\n"
             "    if(MSVC)\n"
             "        target_compile_options(${target} PRIVATE /utf-8)\n"
+            "        # O editor passa um PRISM_BUILD_ID novo a cada compilacao: o .pdb ganha nome novo e nunca\n"
+            "        # colide com o .pdb do modulo anterior, que um depurador/antivirus pode manter travado.\n"
+            "        if(DEFINED PRISM_BUILD_ID)\n"
+            "            set_target_properties(${target} PROPERTIES PDB_NAME \"NativeScripts_${PRISM_BUILD_ID}\")\n"
+            "        endif()\n"
             "    endif()\n"
             "endfunction()\n";
 
