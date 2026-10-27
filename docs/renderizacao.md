@@ -30,6 +30,13 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 | `NormalPath` | normal map em tangent-space (linear) |
 | `RoughnessMetallicPath`, `RoughnessFactor`, `MetallicFactor` | mapa em convenção glTF (G = roughness, B = metallic, linear); os fatores multiplicam o mapa ou valem sozinhos sem ele |
 
+| `BlendMode`, `Opacity`, `AlphaCutoff` | **Opaco** (ignora o alfa), **Recorte** (descarta pixels com alfa < corte) ou **Translucido** (mistura com o fundo). Alfa final = `Opacity` × alfa da textura de albedo |
+| `UVTiling`, `UVOffset` | `uv * tiling + offset`, para as três texturas |
+| `EmissiveColor`, `EmissiveIntensity` | luz própria somada depois da iluminação (acima de 1 alimenta o Bloom) |
+| `DoubleSided` | desenha a face de trás com a normal invertida; desligado, a face de dentro de uma malha some |
+
+**Translucidos**: desenhados depois dos opacos e antes das partículas, **de trás para frente** pelo centro do objeto (distância à câmera), com mistura e sem escrever profundidade. Não são instanciados, não projetam sombra e não entram no SSAO. Recortes entram nas sombras e no SSAO como se fossem sólidos. Limitação: a ordenação é por objeto, não por pixel; dois objetos translúcidos que se atravessam podem se misturar fora de ordem.
+
 Caminhos são relativos a `Assets/`; vazio significa "sem textura". Texturas são carregadas com stb_image e mantidas em cache por (caminho, sRGB).
 
 ## Ambiente

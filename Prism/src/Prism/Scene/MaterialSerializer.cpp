@@ -17,13 +17,16 @@ namespace Prism {
     //   [3 floats] AlbedoTint
     //   [float]    RoughnessFactor
     //   [float]    MetallicFactor
+    //   v2: [int] BlendMode, [float] Opacity, [float] AlphaCutoff, [2 floats] UVTiling,
+    //       [2 floats] UVOffset, [3 floats] EmissiveColor, [float] EmissiveIntensity, [bool] DoubleSided
     //
     // Sem flag de presenca nem ComponentRegistry aqui, ao contrario de
     // SceneSerializer/PrefabSerializer - este arquivo so representa UM
     // MaterialComponent isolado, entao todos os campos sao sempre
     // gravados/lidos diretamente, na mesma ordem que MaterialComponent os
     // declara (ver Components.h).
-    static constexpr uint32_t kMaterialFormatVersion = 1;
+    // v2: superficie (blend, opacidade, corte, UV, emissao, dupla face) no FIM; v1 ainda e lido.
+    static constexpr uint32_t kMaterialFormatVersion = 2;
     static constexpr char kMagic[4] = { 'P', 'M', 'A', 'T' };
 
     static void WriteString(std::ofstream& out, const std::string& str) {
@@ -59,6 +62,14 @@ namespace Prism {
         WriteRaw(out, material.AlbedoTint);
         WriteRaw(out, material.RoughnessFactor);
         WriteRaw(out, material.MetallicFactor);
+        WriteRaw(out, material.BlendMode);
+        WriteRaw(out, material.Opacity);
+        WriteRaw(out, material.AlphaCutoff);
+        WriteRaw(out, material.UVTiling);
+        WriteRaw(out, material.UVOffset);
+        WriteRaw(out, material.EmissiveColor);
+        WriteRaw(out, material.EmissiveIntensity);
+        WriteRaw(out, material.DoubleSided);
 
         if (!out) {
             PRISM_CORE_ERROR("MaterialSerializer: falha ao escrever dados do material em: ", filepath.string());
@@ -84,7 +95,7 @@ namespace Prism {
         }
 
         uint32_t version = 0;
-        if (!ReadRaw(in, version) || version != kMaterialFormatVersion) {
+        if (!ReadRaw(in, version) || version < 1 || version > kMaterialFormatVersion) {
             PRISM_CORE_ERROR("MaterialSerializer: versao de formato incompativel em '", filepath.string(),
                 "' (arquivo=v", version, ", esperado=v", kMaterialFormatVersion, ").");
             return false;
@@ -101,12 +112,18 @@ namespace Prism {
                && ReadRaw(in, loaded.AlbedoTint)
                && ReadRaw(in, loaded.RoughnessFactor)
                && ReadRaw(in, loaded.MetallicFactor);
+        if (ok && version >= 2) {
+            ok = ReadRaw(in, loaded.BlendMode) && ReadRaw(in, loaded.Opacity) && ReadRaw(in, loaded.AlphaCutoff)
+              && ReadRaw(in, loaded.UVTiling) && ReadRaw(in, loaded.UVOffset) && ReadRaw(in, loaded.EmissiveColor)
+              && ReadRaw(in, loaded.EmissiveIntensity) && ReadRaw(in, loaded.DoubleSided);
+        }
 
         if (!ok) {
             PRISM_CORE_ERROR("MaterialSerializer: arquivo de material corrompido: ", filepath.string());
             return false;
         }
 
+        SanitizeMaterialSurface(loaded);
         outMaterial = loaded;
         PRISM_CORE_INFO("Material carregado de: ", filepath.string());
         return true;

@@ -167,7 +167,20 @@ namespace Prism {
             "MetallicFactor", &MaterialComponent::MetallicFactor,
             "AlbedoPath", &MaterialComponent::AlbedoPath,
             "NormalPath", &MaterialComponent::NormalPath,
-            "RoughnessMetallicPath", &MaterialComponent::RoughnessMetallicPath
+            "RoughnessMetallicPath", &MaterialComponent::RoughnessMetallicPath,
+            // Superficie: BlendMode 0 = opaco, 1 = recorte (AlphaCutoff), 2 = translucido (Opacity).
+            "BlendMode", sol::property(
+                [](MaterialComponent& c) { return (int)c.BlendMode; },
+                [](MaterialComponent& c, int mode) { c.BlendMode = (MaterialBlendMode)mode; SanitizeMaterialSurface(c); }),
+            "Opacity", sol::property(
+                [](MaterialComponent& c) { return c.Opacity; },
+                [](MaterialComponent& c, float v) { c.Opacity = v; SanitizeMaterialSurface(c); }),
+            "AlphaCutoff", &MaterialComponent::AlphaCutoff,
+            "UVTiling", &MaterialComponent::UVTiling,
+            "UVOffset", &MaterialComponent::UVOffset,
+            "EmissiveColor", &MaterialComponent::EmissiveColor,
+            "EmissiveIntensity", &MaterialComponent::EmissiveIntensity,
+            "DoubleSided", &MaterialComponent::DoubleSided
         );
         lua.new_usertype<LightComponent>("Light",
             "Color", &LightComponent::Color,

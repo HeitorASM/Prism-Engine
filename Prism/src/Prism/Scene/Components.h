@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 
 namespace Prism {
 
@@ -141,6 +142,13 @@ namespace Prism {
     // (ver Renderer::DrawMesh, que usa os fatores/tint como fallback
     // quando o path correspondente esta vazio ou a textura falhou ao
     // carregar).
+    // Como o material combina com o que esta atras dele.
+    enum class MaterialBlendMode : int {
+        Opaque = 0,  // ignora o alfa (padrao; o mais barato)
+        Mask = 1,    // recorte: descarta pixels com alfa < AlphaCutoff (folhagem, grades)
+        Blend = 2    // translucido: mistura com o fundo, desenhado depois dos opacos, de tras para frente
+    };
+
     struct MaterialComponent {
         std::string AlbedoPath;              // cor base (RGB) - textura sRGB (ver Texture2D)
         std::string NormalPath;              // normal map em tangent-space - textura LINEAR (nao sRGB)
@@ -173,9 +181,40 @@ namespace Prism {
         // AlbedoPath/NormalPath sendo string, nao um objeto Texture).
         AssetID LinkedAsset;
 
+        // --- Superficie (campos novos NO FIM: layout compativel com o antigo ate LinkedAsset) ---
+        // Alfa final = Opacity * alfa da textura de albedo. Mask/Blend usam esse valor.
+        MaterialBlendMode BlendMode = MaterialBlendMode::Opaque;
+        float Opacity = 1.0f;          // 0 = invisivel, 1 = solido (so vale em Mask/Blend)
+        float AlphaCutoff = 0.5f;      // Mask: pixels com alfa abaixo disto somem
+        // UV das tres texturas: uv * UVTiling + UVOffset (tiling 2 = a textura repete 2x).
+        glm::vec2 UVTiling = { 1.0f, 1.0f };
+        glm::vec2 UVOffset = { 0.0f, 0.0f };
+        // Luz propria, somada depois da iluminacao (nao e afetada por luzes/sombras).
+        glm::vec3 EmissiveColor = { 0.0f, 0.0f, 0.0f };   // cor (sRGB, como o tint de albedo)
+        float EmissiveIntensity = 1.0f;                   // multiplicador (pode passar de 1: brilho/bloom)
+        // Desenha as duas faces: a de tras recebe a normal invertida. Desligado, a face de dentro some.
+        bool DoubleSided = false;
+
         MaterialComponent() = default;
         MaterialComponent(const MaterialComponent&) = default;
     };
+
+    // Deixa a superficie do material em valores validos (arquivo editado a mao, script):
+    // NaN/inf viram o padrao, faixas sao limitadas, modo de blend desconhecido vira Opaque.
+    inline void SanitizeMaterialSurface(MaterialComponent& m) {
+        auto finite = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        if ((int)m.BlendMode < 0 || (int)m.BlendMode > (int)MaterialBlendMode::Blend)
+            m.BlendMode = MaterialBlendMode::Opaque;
+        m.Opacity = std::min(std::max(finite(m.Opacity, 1.0f), 0.0f), 1.0f);
+        m.AlphaCutoff = std::min(std::max(finite(m.AlphaCutoff, 0.5f), 0.0f), 1.0f);
+        m.UVTiling.x = std::min(std::max(finite(m.UVTiling.x, 1.0f), -1000.0f), 1000.0f);
+        m.UVTiling.y = std::min(std::max(finite(m.UVTiling.y, 1.0f), -1000.0f), 1000.0f);
+        m.UVOffset.x = std::min(std::max(finite(m.UVOffset.x, 0.0f), -1000.0f), 1000.0f);
+        m.UVOffset.y = std::min(std::max(finite(m.UVOffset.y, 0.0f), -1000.0f), 1000.0f);
+        for (int i = 0; i < 3; i++)
+            m.EmissiveColor[i] = std::min(std::max(finite(m.EmissiveColor[i], 0.0f), 0.0f), 1.0f);
+        m.EmissiveIntensity = std::min(std::max(finite(m.EmissiveIntensity, 1.0f), 0.0f), 100.0f);
+    }
 
     // O que uma camera desenha ao fundo (ver CameraComponent::ClearMode).
     enum class CameraClearMode : int {

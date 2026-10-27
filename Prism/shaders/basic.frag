@@ -29,6 +29,16 @@ out vec4 o_Color;
 
 uniform vec3 u_BaseColor;
 uniform int u_Instanced;
+
+// Superficie do material (ver MaterialComponent): UV = uv * tiling + offset; modo de alfa
+// 0 = opaco, 1 = recorte, 2 = translucido; emissao em LINEAR (cor sRGB ja convertida x intensidade).
+uniform vec2 u_UVTiling;
+uniform vec2 u_UVOffset;
+uniform float u_Opacity;
+uniform int u_AlphaMode;
+uniform float u_AlphaCutoff;
+uniform vec3 u_Emissive;
+uniform int u_DoubleSided;
 uniform vec3 u_CameraWorldPos;
 
 // --- Material (albedo/normal/roughness-metallic) -----------------
@@ -575,8 +585,13 @@ void main() {
     // Face voltada para "dentro" (de costas para a camera) - ver
     // comentario grande no topo de basic.vert sobre o motivo de
     // usar discard em vez de glCullFace aqui.
-    if (dot(normal, viewDir) < 0.0)
-        discard;
+    // Com u_DoubleSided a face de tras NAO some: ela recebe a normal invertida (iluminada como frente).
+    if (dot(normal, viewDir) < 0.0) {
+        if (u_DoubleSided == 0)
+            discard;
+        normal = -normal;
+    }
+    vec2 uv = v_UV * u_UVTiling + u_UVOffset;
 
     // Normal mapping (TBN): so troca 'normal' se houver mapa -
     // sem u_HasNormalMap, 'normal' continua sendo so a
@@ -589,7 +604,7 @@ void main() {
         vec3 bitangent = cross(normal, tangent);
         mat3 TBN = mat3(tangent, bitangent, normal);
 
-        vec3 tangentNormal = texture(u_NormalMap, v_UV).rgb * 2.0 - 1.0;
+        vec3 tangentNormal = texture(u_NormalMap, uv).rgb * 2.0 - 1.0;
         normal = normalize(TBN * tangentNormal);
     }
 
@@ -613,8 +628,15 @@ void main() {
     // NAO passa por SrgbToLinear: ja chega linear da GPU
     // (GL_SRGB8_ALPHA8), converter de novo seria conversao dupla.
     vec3 albedo = SrgbToLinear((u_Instanced != 0) ? v_InstColor : u_BaseColor);
-    if (u_HasAlbedoMap)
-        albedo *= texture(u_AlbedoMap, v_UV).rgb;
+    float alpha = u_Opacity;
+    if (u_HasAlbedoMap) {
+        vec4 albedoSample = texture(u_AlbedoMap, uv);
+        albedo *= albedoSample.rgb;
+        alpha *= albedoSample.a;
+    }
+    // Recorte: some antes de gastar a iluminacao.
+    if (u_AlphaMode == 1 && alpha < u_AlphaCutoff)
+        discard;
 
     // Roughness/metallic: convencao glTF (G = roughness, B = metallic),
     // texturas LINEARES. Os fatores multiplicam o mapa; sem mapa,
@@ -622,7 +644,7 @@ void main() {
     float roughness = u_Roughness;
     float metallic  = u_Metallic;
     if (u_HasRoughnessMetallicMap) {
-        vec3 rm = texture(u_RoughnessMetallicMap, v_UV).rgb;
+        vec3 rm = texture(u_RoughnessMetallicMap, uv).rgb;
         roughness *= rm.g;
         metallic  *= rm.b;
     }
@@ -691,13 +713,14 @@ void main() {
     // Cor final em linear -> exposicao -> tone mapping -> sRGB.
     // 'lightAccum' ja e radiancia refletida (BRDF aplicado por luz);
     // so o ambiente (ja multiplicado por albedo acima) soma por fora.
-    vec3 color = (ambient + lightAccum);
+    vec3 color = (ambient + lightAccum) + u_Emissive;
+    const float outAlpha = (u_AlphaMode == 2) ? alpha : 1.0;
     if (u_OutputMode != 0) {
-        o_Color = vec4(color, 1.0);
+        o_Color = vec4(color, outAlpha);
         return;
     }
     color *= u_Exposure;
     color = ToneMapACES(color);
     color = LinearToSrgb(color);
-    o_Color = vec4(color, 1.0);
+    o_Color = vec4(color, outAlpha);
 }

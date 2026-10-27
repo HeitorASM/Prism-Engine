@@ -115,6 +115,15 @@ namespace Prism {
                 WriteRaw(out, c.RoughnessFactor);
                 WriteRaw(out, c.MetallicFactor);
                 WriteRaw(out, c.LinkedAsset); // AssetID e so um uint64_t (trivialmente copiavel) - ver Assets/AssetID.h
+                // v2 do bloco: superficie (blend, opacidade, UV, emissao, dupla face)
+                WriteRaw(out, c.BlendMode);
+                WriteRaw(out, c.Opacity);
+                WriteRaw(out, c.AlphaCutoff);
+                WriteRaw(out, c.UVTiling);
+                WriteRaw(out, c.UVOffset);
+                WriteRaw(out, c.EmissiveColor);
+                WriteRaw(out, c.EmissiveIntensity);
+                WriteRaw(out, c.DoubleSided);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
@@ -122,13 +131,20 @@ namespace Prism {
                        && ReadString(in, c.RoughnessMetallicPath) && ReadRaw(in, c.AlbedoTint)
                        && ReadRaw(in, c.RoughnessFactor) && ReadRaw(in, c.MetallicFactor)
                        && ReadRaw(in, c.LinkedAsset);
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    ok = ReadRaw(in, c.BlendMode) && ReadRaw(in, c.Opacity) && ReadRaw(in, c.AlphaCutoff)
+                      && ReadRaw(in, c.UVTiling) && ReadRaw(in, c.UVOffset) && ReadRaw(in, c.EmissiveColor)
+                      && ReadRaw(in, c.EmissiveIntensity) && ReadRaw(in, c.DoubleSided);
+                }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
                     return false;
                 }
+                SanitizeMaterialSurface(c);
                 return true;
             }
         );
+        s_Registry.back().Version = 2;
 
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(

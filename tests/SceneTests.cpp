@@ -8,6 +8,7 @@
 #include <Prism/Scene/Components.h>
 #include <Prism/Scene/ComponentRegistry.h>
 #include <Prism/Scene/SceneSerializer.h>
+#include <Prism/Scene/MaterialSerializer.h>
 #include <Prism/Scene/PrefabSerializer.h>
 #include <Prism/Scene/PrefabSyncer.h>
 
@@ -230,6 +231,90 @@ static void TestOldBlockVersionsStillLoad() {
     }
 }
 
+static void TestMaterialSurface(const fs::path& dir) {
+    auto scene = Scene::Create("Materiais");
+
+    // padrao: opaco, sem emissao, UV neutro
+    MaterialComponent def;
+    CHECK(def.BlendMode == MaterialBlendMode::Opaque && def.Opacity == 1.0f && def.AlphaCutoff == 0.5f);
+    CHECK(def.UVTiling == glm::vec2(1.0f) && def.UVOffset == glm::vec2(0.0f));
+    CHECK(def.EmissiveColor == glm::vec3(0.0f) && !def.DoubleSided);
+
+    // bloco do registro: round-trip dos campos novos
+    Entity src = scene->CreateEntity("src");
+    auto& m = src.AddComponent<MaterialComponent>();
+    m.AlbedoPath = "a.png";
+    m.BlendMode = MaterialBlendMode::Blend;
+    m.Opacity = 0.25f; m.AlphaCutoff = 0.7f;
+    m.UVTiling = { 3.0f, 2.0f }; m.UVOffset = { 0.5f, -0.25f };
+    m.EmissiveColor = { 1.0f, 0.5f, 0.0f }; m.EmissiveIntensity = 4.0f;
+    m.DoubleSided = true;
+    std::ostringstream out(std::ios::out | std::ios::binary);
+    FindInfo("Material")->Serialize(out, src);
+    Entity dst = scene->CreateEntity("dst");
+    std::istringstream in(MakeBlockStream("Material", FindInfo("Material")->Version, out.str()), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+    CHECK(dst.HasComponent<MaterialComponent>());
+    if (dst.HasComponent<MaterialComponent>()) {
+        const auto& r = dst.GetComponent<MaterialComponent>();
+        CHECK(r.AlbedoPath == "a.png" && r.BlendMode == MaterialBlendMode::Blend);
+        CHECK(r.Opacity == 0.25f && r.AlphaCutoff == 0.7f);
+        CHECK(r.UVTiling == glm::vec2(3.0f, 2.0f) && r.UVOffset == glm::vec2(0.5f, -0.25f));
+        CHECK(r.EmissiveColor == glm::vec3(1.0f, 0.5f, 0.0f) && r.EmissiveIntensity == 4.0f && r.DoubleSided);
+    }
+
+    // bloco v1 (sem os 45 bytes da superficie): campos novos ficam no padrao
+    {
+        std::string bytes = out.str();
+        bytes.resize(bytes.size() - (sizeof(int) + 4 * sizeof(float) + 2 * sizeof(float) + 3 * sizeof(float) + sizeof(float) + sizeof(bool) - 0));
+        Entity old = scene->CreateEntity("old");
+        std::istringstream oldIn(MakeBlockStream("Material", 1, bytes), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(oldIn, old, 0));
+        CHECK(old.HasComponent<MaterialComponent>());
+        if (old.HasComponent<MaterialComponent>()) {
+            const auto& r = old.GetComponent<MaterialComponent>();
+            CHECK(r.AlbedoPath == "a.png");
+            CHECK(r.BlendMode == MaterialBlendMode::Opaque && r.Opacity == 1.0f && r.UVTiling == glm::vec2(1.0f) && !r.DoubleSided);
+        }
+    }
+
+    // saneamento: lixo vira valores validos
+    {
+        MaterialComponent bad;
+        bad.BlendMode = (MaterialBlendMode)77;
+        bad.Opacity = std::nanf("");
+        bad.AlphaCutoff = 9.0f;
+        bad.UVTiling = { INFINITY, -5000.0f };
+        bad.EmissiveColor = { -1.0f, 2.0f, std::nanf("") };
+        bad.EmissiveIntensity = 1e9f;
+        SanitizeMaterialSurface(bad);
+        CHECK(bad.BlendMode == MaterialBlendMode::Opaque);
+        CHECK(bad.Opacity == 1.0f && bad.AlphaCutoff == 1.0f);
+        CHECK(bad.UVTiling.x == 1.0f && bad.UVTiling.y == -1000.0f);
+        CHECK(bad.EmissiveColor == glm::vec3(0.0f, 1.0f, 0.0f) && bad.EmissiveIntensity == 100.0f);
+    }
+
+    // .prismmat v2: grava e le; arquivo truncado e recusado
+    {
+        const fs::path file = dir / "mat.prismmat";
+        MaterialComponent mat;
+        mat.AlbedoTint = { 0.5f, 0.6f, 0.7f };
+        mat.BlendMode = MaterialBlendMode::Mask; mat.AlphaCutoff = 0.3f;
+        mat.UVTiling = { 4.0f, 4.0f }; mat.EmissiveColor = { 0.0f, 1.0f, 0.0f }; mat.DoubleSided = true;
+        CHECK(MaterialSerializer::Serialize(mat, file));
+        MaterialComponent loaded;
+        CHECK(MaterialSerializer::Deserialize(file, loaded));
+        CHECK(loaded.BlendMode == MaterialBlendMode::Mask && loaded.AlphaCutoff == 0.3f);
+        CHECK(loaded.UVTiling == glm::vec2(4.0f) && loaded.EmissiveColor == glm::vec3(0.0f, 1.0f, 0.0f) && loaded.DoubleSided);
+        CHECK(loaded.AlbedoTint == glm::vec3(0.5f, 0.6f, 0.7f));
+
+        const std::string bytes = ReadFileBytes(file);
+        WriteFileBytes(dir / "cortado.prismmat", bytes.substr(0, bytes.size() - 5));
+        MaterialComponent partial;
+        CHECK(!MaterialSerializer::Deserialize(dir / "cortado.prismmat", partial));
+    }
+}
+
 static void TestSceneFileRoundTrip(const fs::path& dir) {
     auto scene = Scene::Create("Fase 1");
     Entity root = scene->CreateEntity("Raiz");
@@ -383,6 +468,7 @@ int main() {
     TestTruncatedBlocksNeverCrash();
     TestBlockStreamFraming();
     TestOldBlockVersionsStillLoad();
+    TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
 

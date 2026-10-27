@@ -593,6 +593,30 @@ namespace Prism {
     // Sem 'material' (nullptr), os tres u_Has*Map ficam false e o fragment shader
     // nunca amostra sampler nenhum.
     void Renderer::BindMaterialState(const MaterialComponent* material) {
+        // Superficie (UV, alfa, emissao, dupla face). Sem material: tudo neutro.
+        {
+            glm::vec2 tiling(1.0f), offset(0.0f);
+            float opacity = 1.0f, cutoff = 0.5f;
+            int alphaMode = 0, doubleSided = 0;
+            glm::vec3 emissive(0.0f);
+            if (material) {
+                tiling = material->UVTiling;
+                offset = material->UVOffset;
+                opacity = material->Opacity;
+                cutoff = material->AlphaCutoff;
+                alphaMode = (int)material->BlendMode;
+                doubleSided = material->DoubleSided ? 1 : 0;
+                // A cor do emissivo e escolhida num color picker (sRGB): vai linear e ja multiplicada.
+                emissive = glm::pow(glm::max(material->EmissiveColor, glm::vec3(0.0f)), glm::vec3(2.2f)) * material->EmissiveIntensity;
+            }
+            s_BasicShader->SetFloat2("u_UVTiling", tiling.x, tiling.y);
+            s_BasicShader->SetFloat2("u_UVOffset", offset.x, offset.y);
+            s_BasicShader->SetFloat("u_Opacity", opacity);
+            s_BasicShader->SetFloat("u_AlphaCutoff", cutoff);
+            s_BasicShader->SetInt("u_AlphaMode", alphaMode);
+            s_BasicShader->SetInt("u_DoubleSided", doubleSided);
+            s_BasicShader->SetFloat3("u_Emissive", emissive.x, emissive.y, emissive.z);
+        }
         if (material) {
             Texture2D* albedo = GetOrLoadTexture(material->AlbedoPath, /*isSRGB*/ true);
             if (albedo && albedo->IsValid()) {
@@ -995,6 +1019,11 @@ namespace Prism {
             Mesh* prePassMesh = ResolveMesh(meshRenderer);
             if (!prePassMesh || TestVisibility(meshRenderer, prePassMesh, model, frustum, cullMask) != Visibility::Visible)
                 continue; // fora da imagem (camada ou frustum): nao ocupa o SSAO
+            // Translucidos e recortes nao ocupam o SSAO (um vidro nao escurece o que esta atras;
+            // furos de folhagem viram AO solido).
+            if (const MaterialComponent* surface = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
+                surface && surface->BlendMode != MaterialBlendMode::Opaque)
+                continue;
             s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(model));
             {
                 // View-space: a matriz normal e a de (view * model), nao so
@@ -1144,6 +1173,10 @@ namespace Prism {
                     const MeshRendererComponent& casterRenderer = casterView.get<MeshRendererComponent>(handle);
                     Mesh* geometry = ResolveMesh(casterRenderer);
                     if (!geometry) continue;
+                    // Translucidos nao projetam sombra (cairia solida); recortes projetam como solidos.
+                    if (const MaterialComponent* surface = scene.GetRegistry().try_get<MaterialComponent>(handle);
+                        surface && surface->BlendMode == MaterialBlendMode::Blend)
+                        continue;
                     ShadowCaster caster;
                     caster.Geometry = geometry;
                     caster.Model = scene.GetWorldTransform(Entity(handle, &scene));
@@ -1235,18 +1268,24 @@ namespace Prism {
             glm::mat4 Model{ 1.0f };
             glm::vec3 Color{ 0.85f, 0.55f, 0.2f };
             BonePalette Palette;
+            uint32_t MaterialId = 0;
         };
         // Chave do ESTADO de material (cor base nao entra: e por objeto/instancia).
         struct MaterialKey {
             bool Has = false;
             std::string Albedo, Normal, RoughnessMetallic;
             float Roughness = 1.0f, Metallic = 0.0f;
+            int Blend = 0;
+            float Opacity = 1.0f, Cutoff = 0.5f, TilingX = 1.0f, TilingY = 1.0f, OffsetX = 0.0f, OffsetY = 0.0f;
+            float EmissiveR = 0.0f, EmissiveG = 0.0f, EmissiveB = 0.0f, EmissiveIntensity = 1.0f;
+            bool DoubleSided = false;
             bool operator<(const MaterialKey& o) const {
-                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic)
-                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic);
+                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided)
+                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided);
             }
         };
         std::vector<PendingDraw> pending;
+        std::vector<PendingDraw> translucent;
         std::vector<Batching::Item> batchItems;
         std::map<MaterialKey, uint32_t> materialIds;
 
@@ -1289,8 +1328,23 @@ namespace Prism {
                 key.RoughnessMetallic = material->RoughnessMetallicPath;
                 key.Roughness = glm::clamp(material->RoughnessFactor, 0.0f, 1.0f);
                 key.Metallic = glm::clamp(material->MetallicFactor, 0.0f, 1.0f);
+                key.Blend = (int)material->BlendMode;
+                key.Opacity = material->Opacity;
+                key.Cutoff = material->AlphaCutoff;
+                key.TilingX = material->UVTiling.x; key.TilingY = material->UVTiling.y;
+                key.OffsetX = material->UVOffset.x; key.OffsetY = material->UVOffset.y;
+                key.EmissiveR = material->EmissiveColor.x; key.EmissiveG = material->EmissiveColor.y; key.EmissiveB = material->EmissiveColor.z;
+                key.EmissiveIntensity = material->EmissiveIntensity;
+                key.DoubleSided = material->DoubleSided;
             }
             auto inserted = materialIds.emplace(std::move(key), (uint32_t)materialIds.size());
+
+            draw.MaterialId = inserted.first->second;
+            // Translucidos saem do agrupamento: precisam de ordem de tras para frente (passo 3 abaixo).
+            if (material && material->BlendMode == MaterialBlendMode::Blend) {
+                translucent.push_back(draw);
+                continue;
+            }
 
             Batching::Item item;
             item.Mesh = mesh;
@@ -1373,6 +1427,40 @@ namespace Prism {
                 s_BasicShader->SetInt("u_Instanced", 0);
             }
             s_BasicShader->Unbind();
+        }
+
+        // 3) Translucidos: depois dos opacos, de TRAS PARA FRENTE (pelo centro do objeto), com mistura
+        //    e sem escrever profundidade (testam contra a profundidade dos opacos). Sem instancing.
+        //    Limitacao: ordena por objeto, nao por pixel (objetos que se cruzam podem misturar errado).
+        if (s_BasicShader && !translucent.empty()) {
+            const glm::vec3 eye(cameraWorldPos[0], cameraWorldPos[1], cameraWorldPos[2]);
+            std::stable_sort(translucent.begin(), translucent.end(), [&](const PendingDraw& a, const PendingDraw& b) {
+                const glm::vec3 pa(a.Model[3]), pb(b.Model[3]);
+                return glm::dot(pa - eye, pa - eye) > glm::dot(pb - eye, pb - eye);
+            });
+
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            s_BasicShader->Bind();
+            BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
+
+            uint32_t currentMaterialId = UINT32_MAX;
+            for (const PendingDraw& draw : translucent) {
+                if (draw.MaterialId != currentMaterialId) {
+                    BindMaterialState(draw.Material);
+                    currentMaterialId = draw.MaterialId;
+                }
+                SetBaseColor(nullptr, &draw.Color.x);
+                BindObjectState(glm::value_ptr(draw.Model), draw.Palette.Data, draw.Palette.Count);
+                draw.MeshPtr->BindForCurrentContext();
+                glDrawElements(GL_TRIANGLES, (GLsizei)draw.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+                Profiler::CountDraw(draw.MeshPtr->GetIndexCount());
+                glBindVertexArray(0);
+            }
+            s_BasicShader->Unbind();
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
         }
 
         // Particulas por ultimo: blend + sem escrita de profundidade, testando

@@ -263,6 +263,46 @@ namespace PrismEditor {
             if (ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f))
                 m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
             ImGui::TextDisabled("(?) Roughness: 0 = espelhado, 1 = fosco. Metallic: 0 = plastico/madeira/pedra, 1 = metal. Com um mapa carregado, o fator multiplica o mapa (G = roughness, B = metallic).");
+
+            // --- Superficie: transparencia, UV, emissao, dupla face ---------------------------------
+            ImGui::Separator();
+            ImGui::TextUnformatted("Superficie");
+            auto dirty = [&] { m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity); };
+            const char* blendNames[] = { "Opaco", "Recorte (Mask)", "Translucido (Blend)" };
+            int blend = (int)material.BlendMode;
+            if (ImGui::Combo("Modo de mistura", &blend, blendNames, IM_ARRAYSIZE(blendNames))) {
+                material.BlendMode = (Prism::MaterialBlendMode)blend;
+                dirty();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Opaco: ignora o alfa.\nRecorte: descarta pixels com alfa abaixo do corte (folhagem, grades).\nTranslucido: mistura com o fundo; desenhado depois dos opacos, de tras para frente. Nao projeta sombra nem entra no SSAO.");
+            if (material.BlendMode != Prism::MaterialBlendMode::Opaque) {
+                if (ImGui::SliderFloat("Opacidade", &material.Opacity, 0.0f, 1.0f))
+                    dirty();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Multiplica o alfa da textura de Albedo.");
+            }
+            if (material.BlendMode == Prism::MaterialBlendMode::Mask) {
+                if (ImGui::SliderFloat("Corte do alfa", &material.AlphaCutoff, 0.0f, 1.0f))
+                    dirty();
+            }
+            if (ImGui::DragFloat2("UV Tiling", glm::value_ptr(material.UVTiling), 0.05f, -1000.0f, 1000.0f))
+                dirty();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Quantas vezes a textura se repete (2 = 2x em cada eixo). Vale para Albedo, Normal e Roughness/Metallic.");
+            if (ImGui::DragFloat2("UV Offset", glm::value_ptr(material.UVOffset), 0.01f, -1000.0f, 1000.0f))
+                dirty();
+            if (ImGui::ColorEdit3("Emissao", glm::value_ptr(material.EmissiveColor)))
+                dirty();
+            if (ImGui::DragFloat("Intensidade da emissao", &material.EmissiveIntensity, 0.05f, 0.0f, 100.0f))
+                dirty();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Luz propria do material, somada depois da iluminacao. Acima de 1 passa do branco (bom para Bloom). Preto = sem emissao.");
+            if (ImGui::Checkbox("Dupla face", &material.DoubleSided))
+                dirty();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Desenha tambem a face de tras (iluminada como se fosse a frente). Desligado, a face de dentro de uma malha fechada some.");
+            Prism::SanitizeMaterialSurface(material);
         }
         if (!keepOpen)
             m_Ctx.History.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MaterialComponent>>(m_Ctx.SelectedEntity, "Material"));

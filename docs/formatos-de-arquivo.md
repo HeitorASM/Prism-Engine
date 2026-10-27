@@ -96,9 +96,9 @@ Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` 
 ## `.prismmat`
 
 - Magic: `PMAT`
-- Versão atual: **1** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`)
+- Versão atual: **2** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`); a v1 (sem os campos de superfície) ainda é lida
 
-Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`.
+Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`. A v2 acrescenta, no fim, a **superfície**: `BlendMode`, `Opacity`, `AlphaCutoff`, `UVTiling`, `UVOffset`, `EmissiveColor`, `EmissiveIntensity` e `DoubleSided`. O bloco `Material` das cenas/prefabs tem a mesma ampliação (bloco v2); valores inválidos (NaN, fora de faixa) são corrigidos na leitura.
 
 ## `.meta`
 
