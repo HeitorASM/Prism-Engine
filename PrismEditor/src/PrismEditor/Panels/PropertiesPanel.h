@@ -68,7 +68,6 @@ namespace PrismEditor {
         void DrawAudioSourceUI();
         void DrawNativeScriptUI();
         void DrawParticleEmitterUI();
-        void DrawUIElementUI();
         void DrawUIDocumentUI();
         void DrawAudioListenerUI();
         void DrawAnimatorUI();
@@ -171,7 +170,6 @@ namespace PrismEditor {
         Prism::ScriptComponent m_ScriptBeforeEdit;
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
-        Prism::UIElementComponent m_UIBeforeEdit;
         Prism::UIDocumentComponent m_UIDocBeforeEdit;
 
         // Cache das variaveis publicas (tabela `Properties`) do script

@@ -131,8 +131,34 @@ namespace Prism {
         return true;
     }
 
+    // Le e descarta o bloco do antigo UIElementComponent (flag + campos, ver historico do git).
+    static bool SkipRemovedLegacyUIElement(std::istream& in) {
+        bool has = false;
+        if (!ComponentRegistry::ReadRaw(in, has))
+            return false;
+        if (!has)
+            return true;
+        char scratch[16];
+        std::string text;
+        // Type(int) Visible(bool) Layer(int) Anchor(int) Offset(2f) Size(2f) Color(4f)
+        in.read(scratch, 4); in.read(scratch, 1); in.read(scratch, 4); in.read(scratch, 4);
+        in.read(scratch, 8); in.read(scratch, 8); in.read(scratch, 16);
+        if (!in || !ComponentRegistry::ReadString(in, text) || !ComponentRegistry::ReadString(in, text))
+            return false; // TexturePath, Text
+        // FontSize(f) Align(int) TextColor(4f) Interactable(bool) Hover(4f) Pressed(4f) BlocksPointer(bool)
+        in.read(scratch, 4); in.read(scratch, 4); in.read(scratch, 16); in.read(scratch, 1);
+        in.read(scratch, 16); in.read(scratch, 16); in.read(scratch, 1);
+        return (bool)in;
+    }
+
     bool ComponentRegistry::ReadLegacyComponents(std::istream& in, Entity entity, uint32_t entityIndex, uint32_t sceneFormat) {
         for (auto& info : s_Registry) {
+            // O UIElementComponent (UI antiga, formato v19+) saiu da engine, mas ficava ENTRE o
+            // Particle Emitter e a Camera no formato "flag + campos": pula o bloco dele.
+            if (info.DisplayName == "Camera" && sceneFormat >= 19 && !SkipRemovedLegacyUIElement(in)) {
+                PRISM_CORE_ERROR("ComponentRegistry: arquivo corrompido (UI antiga da entidade ", entityIndex, ").");
+                return false;
+            }
             if (sceneFormat < info.AddedInSceneFormat)
                 continue; // nao existia neste formato: nao ha flag no arquivo
             bool has = false;

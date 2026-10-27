@@ -26,7 +26,7 @@ function OnCollisionEnter(other) end     -- começou a tocar 'other' (Entity)
 function OnCollisionExit(other) end      -- parou de tocar
 function OnTriggerEnter(other) end       -- 'other' entrou num collider marcado como Trigger
 function OnTriggerExit(other) end
-function OnClick() end                   -- botão de UI desta entidade foi clicado
+function OnClick() end                   -- botão de UI (sem onClick) desta entidade foi clicado
 ```
 
 **`OnFixedUpdate`**: roda em passo fixo (`Time.FixedDeltaTime` = 1/60 s), zero ou mais vezes por frame (várias se o frame demorou, no máximo 5), sempre **antes** de cada passo da física. Aplique forças e velocidades (`ApplyForce`, `SetVelocity`) ali: o resultado não depende do framerate. Entrada e visuais continuam em `OnUpdate`. Exemplo: `example_fixed_update.lua`.
@@ -142,7 +142,7 @@ Operam na cena do script que chamou.
 
 ### Mais métodos de `entity`
 
-`SetName`, `SetRotation(x, y, z)` (graus), `SetScale`, `SetParent(pai)`, `Destroy()`, `GetScript()` (as variáveis e funções do script daquela entidade, para scripts conversarem) e getters de components que devolvem `nil` se ausentes: `GetMeshRenderer()` (`Color`), `GetMaterial()` (`AlbedoTint`, `RoughnessFactor`, `MetallicFactor`, caminhos de textura), `GetLight()` (`Color`, `Intensity`, `Range`, `SpotAngle`…), `GetCamera()` (`FOV`, `Primary`, `Exposure`, `SSAO`, `ClearMode`, `ClearColor`, `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast`…), `GetEnvironment()` (`Ambient`, `Zenith`, `Horizon`, `Ground`, `Sky`, `SkyColor`, `SkyRotation`, `SkyIntensity`), `GetAudioSource()` (`Volume`, `Pitch`, `Loop`…), `GetUI()` (`Visible`, `Text`, `FontSize`, `Interactable`, `SetOffset(x, y)`, `SetSize(w, h)`, `SetColor(r,g,b,a)`…; ver [UI](ui.md)), `GetParticleEmitter()` (`Enabled`, `EmissionRate`, `SpreadAngle`, `SetColorStart(r,g,b,a)`…). Partículas: `entity:PlayParticles()` (reinicia e solta o burst), `StopParticles()`, `ClearParticles()`, `IsParticlesPlaying()`, `GetParticleCount()`.
+`SetName`, `SetRotation(x, y, z)` (graus), `SetScale`, `SetParent(pai)`, `Destroy()`, `GetScript()` (as variáveis e funções do script daquela entidade, para scripts conversarem) e getters de components que devolvem `nil` se ausentes: `GetMeshRenderer()` (`Color`), `GetMaterial()` (`AlbedoTint`, `RoughnessFactor`, `MetallicFactor`, caminhos de textura), `GetLight()` (`Color`, `Intensity`, `Range`, `SpotAngle`…), `GetCamera()` (`FOV`, `Primary`, `Exposure`, `SSAO`, `ClearMode`, `ClearColor`, `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast`…), `GetEnvironment()` (`Ambient`, `Zenith`, `Horizon`, `Ground`, `Sky`, `SkyColor`, `SkyRotation`, `SkyIntensity`), `GetAudioSource()` (`Volume`, `Pitch`, `Loop`…), `GetUIDocument()` (`Find("id")`…; ver [UI](ui-prismui.md)), `GetParticleEmitter()` (`Enabled`, `EmissionRate`, `SpreadAngle`, `SetColorStart(r,g,b,a)`…). Partículas: `entity:PlayParticles()` (reinicia e solta o burst), `StopParticles()`, `ClearParticles()`, `IsParticlesPlaying()`, `GetParticleCount()`.
 
 `print(...)` agora vai para o Console, como `log`.
 

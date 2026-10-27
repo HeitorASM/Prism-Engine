@@ -537,15 +537,6 @@ namespace PrismEditor {
                         EntityOps::SetPrimaryCamera(m_Ctx, m_Ctx.SelectedEntity); // garante unicidade - desmarca qualquer Primary anterior
                 }
                 if (ImGui::BeginMenu("Criar UI")) {
-                    // Elementos de UI in-game (ver UI/UISystem.h). Nascem como raizes;
-                    // arraste na hierarquia para aninhar dentro de um Panel.
-                    auto createUI = [this](const char* name, std::function<void(Prism::UIElementComponent&)> setup) {
-                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, name, name,
-                            [setup](Prism::Entity entity) { setup(entity.AddComponent<Prism::UIElementComponent>()); });
-                        CreatePresetEntityCommand* raw = command.get();
-                        m_Ctx.History.Execute(std::move(command));
-                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
-                    };
                     if (ImGui::MenuItem("Documento de UI (.prismui)")) {
                         // Cria Assets/UI/<nome>.prismui com um modelo e uma entidade que aponta para ele.
                         auto project = Prism::Project::GetActive();
@@ -586,30 +577,6 @@ namespace PrismEditor {
                             }
                         }
                     }
-                    if (ImGui::MenuItem("Panel (antigo)"))
-                        createUI("UI Panel", [](Prism::UIElementComponent& ui) {
-                            ui.Type = Prism::UIElementType::Panel;
-                            ui.Size = { 300.0f, 200.0f };
-                            ui.Color = { 0.1f, 0.1f, 0.12f, 0.8f };
-                        });
-                    if (ImGui::MenuItem("Texto (antigo)"))
-                        createUI("UI Texto", [](Prism::UIElementComponent& ui) {
-                            ui.Type = Prism::UIElementType::Text;
-                            ui.Size = { 300.0f, 40.0f };
-                            ui.BlocksPointer = false;
-                        });
-                    if (ImGui::MenuItem("Botao (antigo)"))
-                        createUI("UI Botao", [](Prism::UIElementComponent& ui) {
-                            ui.Type = Prism::UIElementType::Button;
-                            ui.Size = { 200.0f, 50.0f };
-                            ui.Color = { 0.25f, 0.45f, 0.85f, 1.0f };
-                            ui.Text = "Botao";
-                        });
-                    if (ImGui::MenuItem("Imagem (antigo)"))
-                        createUI("UI Imagem", [](Prism::UIElementComponent& ui) {
-                            ui.Type = Prism::UIElementType::Image;
-                            ui.Size = { 128.0f, 128.0f };
-                        });
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Criar Entidade Vazia")) {

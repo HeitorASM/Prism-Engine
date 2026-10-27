@@ -843,21 +843,6 @@ namespace Prism {
         }
     }
 
-    void NativeScripting::DispatchUIClick(Entity self) {
-        if (s_Instances.empty())
-            return;
-        auto it = s_Instances.find(InstanceKey{ self.GetScene(), (uint32_t)self.GetHandle() });
-        if (it == s_Instances.end() || it->second.Faulted)
-            return;
-        try {
-            it->second.Object->OnClick();
-        }
-        catch (const std::exception& error) {
-            PRISM_ERROR("Script C++: excecao em OnClick: ", error.what());
-            it->second.Faulted = true;
-        }
-    }
-
     void NativeScripting::DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId) {
         if (s_Instances.empty())
             return;

@@ -32,7 +32,7 @@ Uma entidade pode ser **filha** de outra (arraste na **Hierarquia**). O filho he
 | **Animator** | Anima um modelo importado (esqueleto e clipes do `.glb/.fbx`). Fica na raiz do modelo. |
 | **Audio Listener** | Marca a entidade que "ouve" (normalmente a câmera). |
 | **Particle Emitter** | Emite partículas (fogo, fumaça, faíscas). |
-| **UI Element** | Elemento de interface in-game: painel, texto, imagem ou botão. |
+| **UI Document** | Interface in-game: aponta para um arquivo `.prismui` (painéis, texto, imagens, botões). |
 
 Cada component tem sua própria seção em **Propriedades**, com o botão **X** para removê-lo.
 
@@ -49,4 +49,4 @@ Cada component tem sua própria seção em **Propriedades**, com o botão **X** 
 - **Moeda coletável**: Mesh Renderer + Collider com **Trigger** + Script com `OnTriggerEnter`.
 - **Personagem controlado por script**: Mesh Renderer + Collider (Capsule) + Rigid Body `Kinematic` + Script.
 - **Fogueira**: Particle Emitter (aditivo) + uma Light laranja.
-- **Placar na tela**: UI Element do tipo Texto + um script que muda o `Text`.
+- **Placar na tela**: UI Document com um `<Text id="placar">` + um script que muda o `Text`.

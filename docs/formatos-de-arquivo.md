@@ -63,7 +63,7 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v16 | `Script::Properties` (variáveis públicas editadas) |
 | v17 | `NativeScript` (nome da classe do script C++) |
 | v18 | `ParticleEmitter` (emissor de partículas) |
-| v19 | `UIElement` (elemento de UI in-game) |
+| v19 | `UIElement` (UI antiga; **removido** - o leitor legado descarta o bloco) |
 | v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
 | (bloco Camera v3) | `Camera` ganha `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast` no fim do bloco; **sem** subir a versão do mapa |
 | (bloco Camera v4) | `Camera` ganha `CullMask` (camadas que enxerga) no fim do bloco; **sem** subir a versão do mapa |

@@ -236,19 +236,6 @@ namespace Prism {
             "SetColorStart", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorStart = { r, g, b, a }; },
             "SetColorEnd", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorEnd = { r, g, b, a }; }
         );
-        // Elemento de UI (entity:GetUI()). Cores por funcao (r, g, b, a de 0 a 1).
-        lua.new_usertype<UIElementComponent>("UIElement",
-            "Visible", &UIElementComponent::Visible,
-            "Text", &UIElementComponent::Text,
-            "FontSize", &UIElementComponent::FontSize,
-            "Interactable", &UIElementComponent::Interactable,
-            "Layer", &UIElementComponent::Layer,
-            "TexturePath", &UIElementComponent::TexturePath,
-            "SetOffset", [](UIElementComponent& c, float x, float y) { c.Offset = { x, y }; },
-            "SetSize", [](UIElementComponent& c, float w, float h) { c.Size = { w, h }; },
-            "SetColor", [](UIElementComponent& c, float r, float g, float b, float a) { c.Color = { r, g, b, a }; },
-            "SetTextColor", [](UIElementComponent& c, float r, float g, float b, float a) { c.TextColor = { r, g, b, a }; }
-        );
         // Documento de UI .prismui (entity:GetUIDocument()): doc:Find("id") devolve um elemento
         // (ou nil). Elemento = referencia por id, segura mesmo se o arquivo for recarregado.
         lua.new_usertype<UINodeRef>("UINode",
@@ -454,7 +441,6 @@ namespace Prism {
                     return std::nullopt;
                 return UIDocRef{ e.GetScene(), e.GetHandle() };
             },
-            "GetUI", [](Entity& e) -> UIElementComponent* { return e.HasComponent<UIElementComponent>() ? &e.GetComponent<UIElementComponent>() : nullptr; },
             "GetParticleEmitter", [](Entity& e) -> ParticleEmitterComponent* { return e.HasComponent<ParticleEmitterComponent>() ? &e.GetComponent<ParticleEmitterComponent>() : nullptr; },
             // Particulas: PlayParticles reinicia (e solta o burst); StopParticles
             // para de emitir (as vivas terminam); ClearParticles remove tudo.
@@ -1264,23 +1250,6 @@ namespace Prism {
         if (!result.valid()) {
             sol::error err = result;
             PRISM_CORE_ERROR("ScriptEngine: erro em callback de colisao/trigger: ", err.what());
-            script.HasRuntimeError = true;
-        }
-    }
-
-    void ScriptEngine::DispatchUIClick(Entity self) {
-        NativeScripting::DispatchUIClick(self);
-
-        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
-        if (it == s_LoadedScripts.end())
-            return;
-        LoadedScript& script = it->second;
-        if (script.HasRuntimeError || !script.OnClick.valid())
-            return;
-        sol::protected_function_result result = script.OnClick();
-        if (!result.valid()) {
-            sol::error err = result;
-            PRISM_CORE_ERROR("ScriptEngine: erro em OnClick: ", err.what());
             script.HasRuntimeError = true;
         }
     }

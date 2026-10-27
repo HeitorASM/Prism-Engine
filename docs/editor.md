@@ -135,7 +135,7 @@ Carregar um material é uma **cópia pontual** (a menos que fique vinculado a um
 
 ## UI in-game
 
-Menu **Entidade → Criar UI** cria Panel, Texto, Botão ou Imagem. O resultado aparece no viewport (só visualização) e no Play. Detalhes em [UI in-game](ui.md).
+Menu **Entidade → Criar UI → Documento de UI (.prismui)** cria o arquivo e a entidade. O resultado aparece no viewport (só visualização) e no Play. Detalhes em [UI em texto](ui-prismui.md).
 
 ## Modo Play
 

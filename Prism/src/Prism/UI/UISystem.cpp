@@ -37,12 +37,6 @@ namespace Prism {
             bool Contains(float px, float py) const { return px >= X && py >= Y && px < X + W && py < Y + H; }
         };
 
-        struct Item {
-            entt::entity Handle;
-            UIElementComponent* Element;
-            Rect Bounds;
-        };
-
         // --- Fonte ----------------------------------------------------------
         // A fonte e um .ttf lido do disco (Prism/fonts/DejaVuSans.ttf, copiado ao
         // lado do executavel) e rasterizada UMA vez num atlas R8: Latin-1
@@ -161,51 +155,6 @@ namespace Prism {
             glTextureParameteri(s_FontTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glPixelStorei(GL_UNPACK_ALIGNMENT, previousAlignment);
             s_FontFailed = false;
-        }
-
-        // Estado de entrada (um botao apertado por vez).
-        Scene* s_PressedScene = nullptr;
-        entt::entity s_PressedHandle = entt::null;
-        bool s_PreviousMouseDown = false;
-
-        // --- Layout ---------------------------------------------------------
-        Rect ComputeRect(const UIElementComponent& c, const Rect& parent) {
-            Rect r;
-            if (c.Anchor == UIAnchor::Stretch) {
-                r.X = parent.X + c.Offset.x;
-                r.Y = parent.Y + c.Offset.y;
-                r.W = std::max(0.0f, parent.W - 2.0f * c.Offset.x);
-                r.H = std::max(0.0f, parent.H - 2.0f * c.Offset.y);
-                return r;
-            }
-            r.W = std::max(0.0f, c.Size.x);
-            r.H = std::max(0.0f, c.Size.y);
-            int a = (int)c.Anchor;
-            int column = a % 3; // 0 esquerda, 1 centro, 2 direita
-            int row = a / 3;    // 0 topo, 1 meio, 2 fundo
-            if (column == 0)      r.X = parent.X + c.Offset.x;
-            else if (column == 1) r.X = parent.X + (parent.W - r.W) * 0.5f + c.Offset.x;
-            else                  r.X = parent.X + parent.W - c.Offset.x - r.W;
-            if (row == 0)         r.Y = parent.Y + c.Offset.y;
-            else if (row == 1)    r.Y = parent.Y + (parent.H - r.H) * 0.5f + c.Offset.y;
-            else                  r.Y = parent.Y + parent.H - c.Offset.y - r.H;
-            return r;
-        }
-
-        void CollectChildren(entt::registry& registry, entt::entity handle, const Rect& bounds, std::vector<Item>& out, int depth) {
-            if (depth > 64)
-                return;
-            auto* relationship = registry.try_get<RelationshipComponent>(handle);
-            if (!relationship)
-                return;
-            for (entt::entity child : relationship->Children) {
-                auto* element = registry.try_get<UIElementComponent>(child);
-                if (!element || !element->Visible)
-                    continue;
-                Rect childBounds = ComputeRect(*element, bounds);
-                out.push_back({ child, element, childBounds });
-                CollectChildren(registry, child, childBounds, out, depth + 1);
-            }
         }
 
         // --- Quads ----------------------------------------------------------
@@ -453,9 +402,6 @@ namespace Prism {
     } // namespace
 
     void UISystem::ResetInput() {
-        s_PressedScene = nullptr;
-        s_PressedHandle = entt::null;
-        s_PreviousMouseDown = false;
         s_PointerOverUI = false;
     }
 
@@ -482,9 +428,8 @@ namespace Prism {
 
     void UISystem::Render(Scene& scene, float layoutWidth, float layoutHeight, bool interactive) {
         entt::registry& registry = scene.GetRegistry();
-        auto view = registry.view<UIElementComponent>();
         auto docView = registry.view<UIDocumentComponent>();
-        if (view.begin() == view.end() && docView.begin() == docView.end()) {
+        if (docView.begin() == docView.end()) {
             if (interactive)
                 s_PointerOverUI = false;
             return;
@@ -509,7 +454,7 @@ namespace Prism {
                 return a.Component->Layer < b.Component->Layer;
             });
         }
-        // Entrada dos documentos (o de cima primeiro); documentos ficam ACIMA da UI antiga.
+        // Entrada dos documentos (o de cima primeiro).
         bool docBlocks = false;
         std::vector<std::pair<size_t, int>> docClicks; // (indice em 'docs', no)
         std::vector<int> docHovered(docs.size(), -1), docPressed(docs.size(), -1);
@@ -527,113 +472,18 @@ namespace Prism {
             }
         }
 
-        // 1) Raizes (sem pai de UI), ordenadas por Layer; depois layout em profundidade.
-        std::vector<entt::entity> roots;
-        for (entt::entity handle : view) {
-            const auto* relationship = registry.try_get<RelationshipComponent>(handle);
-            bool hasUIParent = relationship && relationship->Parent != entt::null
-                && registry.valid(relationship->Parent) && registry.all_of<UIElementComponent>(relationship->Parent);
-            if (!hasUIParent)
-                roots.push_back(handle);
-        }
-        std::stable_sort(roots.begin(), roots.end(), [&](entt::entity a, entt::entity b) {
-            return registry.get<UIElementComponent>(a).Layer < registry.get<UIElementComponent>(b).Layer;
-        });
+        if (interactive)
+            s_PointerOverUI = docBlocks;
 
-        const Rect screen{ 0, 0, layoutWidth, layoutHeight };
-        std::vector<Item> items;
-        for (entt::entity root : roots) {
-            auto& element = registry.get<UIElementComponent>(root);
-            if (!element.Visible)
-                continue;
-            Rect bounds = ComputeRect(element, screen);
-            items.push_back({ root, &element, bounds });
-            CollectChildren(registry, root, bounds, items, 0);
-        }
-
-        // 2) Entrada: o elemento mais acima que barra o mouse vence.
-        entt::entity hovered = entt::null;
-        std::vector<entt::entity> clicked;
-        if (interactive) {
-            bool pointerFree = Input::GetCursorMode() != CursorMode::Locked && !docBlocks;
-            bool mouseDown = Input::IsMouseButtonDown(MouseButton::Left);
-            bool over = false;
-            if (pointerFree) {
-                float mx = Input::GetMouseX(), my = Input::GetMouseY();
-                for (auto it = items.rbegin(); it != items.rend(); ++it) {
-                    const UIElementComponent& e = *it->Element;
-                    bool isButton = e.Type == UIElementType::Button;
-                    bool blocks = isButton || (e.BlocksPointer && e.Type != UIElementType::Text);
-                    if (!blocks || !it->Bounds.Contains(mx, my))
-                        continue;
-                    over = true;
-                    if (isButton && e.Interactable)
-                        hovered = it->Handle;
-                    break; // o de cima barra os de baixo
-                }
-            }
-            s_PointerOverUI = over || docBlocks;
-
-            bool pressedThisScene = s_PressedScene == &scene && s_PressedHandle != entt::null;
-            if (mouseDown && !s_PreviousMouseDown && hovered != entt::null) {
-                s_PressedScene = &scene;
-                s_PressedHandle = hovered;
-            }
-            else if (!mouseDown && s_PreviousMouseDown && pressedThisScene) {
-                if (hovered == s_PressedHandle)
-                    clicked.push_back(hovered);
-                s_PressedScene = nullptr;
-                s_PressedHandle = entt::null;
-            }
-            if (!mouseDown) {
-                s_PressedScene = nullptr;
-                s_PressedHandle = entt::null;
-            }
-            s_PreviousMouseDown = mouseDown;
-        }
-
-        // 3) Desenho.
+        // Desenho.
         Batcher batch;
         batch.Width = layoutWidth;
         batch.Height = layoutHeight;
-        for (const Item& item : items) {
-            const UIElementComponent& e = *item.Element;
-            const Rect& r = item.Bounds;
-            switch (e.Type) {
-                case UIElementType::Panel:
-                case UIElementType::Image: {
-                    const Texture2D* texture = LoadTexture(e.TexturePath);
-                    if (texture) batch.Image(r, e.Color, texture);
-                    else         batch.Solid(r, e.Color);
-                    break;
-                }
-                case UIElementType::Button: {
-                    glm::vec4 tint(1.0f);
-                    bool pressed = interactive && s_PressedScene == &scene && s_PressedHandle == item.Handle;
-                    if (!e.Interactable)        tint = { 0.5f, 0.5f, 0.5f, 0.6f };
-                    else if (pressed)           tint = e.PressedColor;
-                    else if (item.Handle == hovered) tint = e.HoverColor;
-                    glm::vec4 color = e.Color * tint;
-                    const Texture2D* texture = LoadTexture(e.TexturePath);
-                    if (texture) batch.Image(r, color, texture);
-                    else         batch.Solid(r, color);
-                    DrawUIText(batch, e.Text, r, e.FontSize, 1, true, e.TextColor);
-                    break;
-                }
-                case UIElementType::Text:
-                    DrawUIText(batch, e.Text, r, e.FontSize, (int)e.Align, false, e.Color);
-                    break;
-            }
-        }
         for (size_t k = 0; k < docs.size(); k++)
             DrawDocument(batch, docs[k].Runtime->Doc, docHovered[k], docPressed[k]);
         batch.Flush();
 
-        // 4) Cliques por ultimo: um script pode destruir/alterar elementos.
-        for (entt::entity handle : clicked) {
-            if (registry.valid(handle))
-                ScriptEngine::DispatchUIClick(Entity(handle, &scene));
-        }
+        // Cliques por ultimo: um script pode destruir/alterar elementos.
         for (const auto& [k, node] : docClicks) {
             const DocItem& item = docs[k];
             if (!registry.valid(item.Handle) || !item.Runtime->Doc.IsValidIndex(node))

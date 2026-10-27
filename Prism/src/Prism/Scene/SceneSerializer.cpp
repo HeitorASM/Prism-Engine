@@ -64,7 +64,8 @@ namespace Prism {
     //       script): uint32 contagem + [nome, tipo, double, bool, string] cada.
     //   v17 NativeScriptComponent (script em C++): string com o nome da classe.
     //   v18 ParticleEmitterComponent (emissor de particulas).
-    //   v19 UIElementComponent (elemento de UI in-game).
+    //   v19 UIElementComponent (UI in-game antiga; REMOVIDO da engine - o leitor legado
+    //       ainda pula o bloco, ver ComponentRegistry::ReadLegacyComponents).
     //   v20 EnvironmentComponent (ambiente/skybox da cena, ultimo registrado)
     //       e CameraComponent ganha ClearMode, ClearColor, Exposure e SSAO
     //       no fim do bloco. As opcoes de render saem do .prismproj.

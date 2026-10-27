@@ -19,7 +19,7 @@ Convenções: em Lua, `entity` é a entidade dona do script e as funções usam 
 | Terminou a colisão | `function OnCollisionExit(other)` | `void OnCollisionExit(Entity other) override` |
 | Entrou num Trigger | `function OnTriggerEnter(other)` | `void OnTriggerEnter(Entity other) override` |
 | Saiu de um Trigger | `function OnTriggerExit(other)` | `void OnTriggerExit(Entity other) override` |
-| Botão de UI clicado | `function OnClick()` | `void OnClick() override` |
+| Botão de UI (sem onClick) clicado | `function OnClick()` | `void OnClick() override` |
 | Variáveis públicas | `Properties = { ... }` | — |
 
 ## Entidade e Transform
@@ -63,7 +63,7 @@ Rotação sempre em **graus**.
 | Ambiente da cena | `entity:GetEnvironment()` | `GetComponent<EnvironmentComponent>()` |
 | Fonte de áudio | `entity:GetAudioSource()` | `GetComponent<AudioSourceComponent>()` (`Volume`, `Pitch`) |
 | Emissor de partículas | `entity:GetParticleEmitter()` | `GetComponent<ParticleEmitterComponent>()` |
-| UI | `entity:GetUI()` | `GetComponent<UIElementComponent>()` (`Text`, `Color`...) |
+| UI | `entity:GetUIDocument()` | `UISetText(id, txt)`, `UISetColor(id, r,g,b,a)`… |
 | Tem component? | — | `HasComponent<T>()` |
 | Acesso à cena | — | `GetScene()` |
 
@@ -159,7 +159,7 @@ Precisam de um **Animator** na entidade. Detalhes em `docs/animacao.md` do proje
 
 | Função | Lua | C++ |
 |---|---|---|
-| Component de UI | `entity:GetUI()` | `GetComponent<UIElementComponent>()` |
+| Documento de UI | `entity:GetUIDocument()` | `UISetText/UISetColor/...` |
 | Mouse sobre a UI? | `UI.IsPointerOverUI()` | — |
 | Clique de botão | `function OnClick()` | `void OnClick() override` |
 

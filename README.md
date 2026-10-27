@@ -91,7 +91,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
 - [x] Skybox visível (cor, gradiente ou panorama HDR)
 
-- [x] UI in-game (painéis, texto, imagens e botões com `OnClick`; ver `docs/ui.md`)
+- [x] UI in-game (painéis, texto, imagens e botões; a UI antiga por componente foi removida, ver `docs/ui-prismui.md`)
 - [x] Reflexão de ambiente com IBL de verdade (irradiance/prefiltered maps a partir do panorama)
 - [x] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
 - [x] Sombras para luzes Point/Spot e Cascaded Shadow Maps

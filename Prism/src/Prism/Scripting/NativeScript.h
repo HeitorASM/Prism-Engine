@@ -205,7 +205,7 @@ namespace Prism {
         virtual void OnCollisionExit(Entity other) { (void)other; }
         virtual void OnTriggerEnter(Entity other) { (void)other; }
         virtual void OnTriggerExit(Entity other) { (void)other; }
-        // Botao de UI (UIElementComponent::Button) desta entidade foi clicado.
+        // Botao de UI sem onClick (UIDocumentComponent) desta entidade foi clicado.
         virtual void OnClick() {}
         // Botao de um documento .prismui (UIDocumentComponent) desta entidade clicado. 'handler' e o
         // atributo onClick do botao ("" se nao tem) e 'nodeId' o id dele. O padrao chama OnClick()

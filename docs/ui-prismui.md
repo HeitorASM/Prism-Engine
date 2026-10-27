@@ -1,6 +1,6 @@
 # UI em texto: `.prismui`
 
-Uma UI inteira vira **um arquivo de texto** (XML simples) e **uma entidade** com o component **UI Document**. Isso substitui montar a interface com várias entidades `UI Element` (que continuam funcionando, mas são o formato antigo — veja [ui.md](ui.md)).
+Uma UI inteira vira **um arquivo de texto** (XML simples) e **uma entidade** com o component **UI Document**. Não há mais um component por elemento de UI: a interface toda mora no arquivo.
 
 - Menu **Entidade → Criar UI → Documento de UI (.prismui)** cria `Assets/UI/NovaUI.prismui` com um modelo e a entidade que aponta para ele. Ou *+ Add Component → UI Document* e arraste um `.prismui` do Conteúdo do Projeto.
 - **Hot reload**: salve o arquivo (duplo clique abre no editor de código) e a UI se atualiza sozinha, a cada ~0,5 s. Se o XML estiver quebrado, o documento anterior continua na tela e o erro aparece no Console como `arquivo.prismui:linha:coluna: erro: ...`.
@@ -62,7 +62,7 @@ Atributo ou elemento desconhecido vira **aviso** (com sugestão do nome certo qu
 
 ## Scripts
 
-O clique chama a função de nome `onClick` no script (Lua ou C++) **da mesma entidade** que tem o UI Document, recebendo o `id` do botão. Sem `onClick`, chama `OnClick()` como na UI antiga.
+O clique chama a função de nome `onClick` no script (Lua ou C++) **da mesma entidade** que tem o UI Document, recebendo o `id` do botão. Sem `onClick`, chama `OnClick()`.
 
 ### Lua
 
@@ -105,3 +105,5 @@ void OnUIClick(const char* handler, const char* nodeId) override {
 ## Testes
 
 `PrismUITests` (`tests/UITests.cpp`) compila só o núcleo (`UIMarkup`, `UILayout`, `UIInput` — C++ puro, sem OpenGL) e verifica parser, layout e cliques.
+
+> A UI antiga (component `UI Element`, uma entidade por elemento) foi **removida**. Cenas v19–v20 que a tinham continuam abrindo: o bloco é descartado na leitura, e ao salvar some do arquivo.

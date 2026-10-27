@@ -2,12 +2,10 @@
 
 // ============================================================================
 // UISystem.h
-// UI in-game: desenha os UIElementComponent da cena por cima da imagem 3D e
+// UI in-game: desenha os UIDocumentComponent (.prismui) da cena por cima da imagem 3D e
 // trata hover/clique dos botoes.
 //
-// - Layout em pixels (sem escala por resolucao). Raizes: ancoram na tela
-//   inteira, ordenadas por Layer; filhos (hierarquia) ancoram no retangulo do
-//   pai e herdam a visibilidade dele. A ordem de desenho e em profundidade.
+// - Layout e escala por resolucao: ver UI/UILayout.h e docs/ui-prismui.md.
 // - Render(..., interactive=true) tambem le o mouse (Input) e dispara OnClick
 //   (Lua/C++) quando o botao e solto sobre o mesmo botao em que foi apertado.
 //   O editor desenha com interactive=false (so visualizacao).

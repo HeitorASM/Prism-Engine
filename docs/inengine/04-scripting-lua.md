@@ -24,7 +24,7 @@ function OnUpdate(dt) end               -- a cada frame (dt = segundos desde o f
 function OnDestroy() end                -- ao parar o Play ou destruir a entidade
 function OnCollisionEnter(other) end    -- começou a tocar 'other'
 function OnTriggerEnter(other) end      -- 'other' entrou num collider Trigger
-function OnClick() end                  -- o botão de UI desta entidade foi clicado
+function OnClick() end                  -- botão de UI (sem onClick) desta entidade foi clicado
 ```
 
 Erros nunca derrubam o editor: aparecem no **Console** e o script com erro para de ser chamado até você corrigir e reiniciar o Play.
@@ -67,7 +67,7 @@ local pontos = 0
 
 function OnTriggerEnter(other)
     pontos = pontos + 1
-    Scene.Find("Placar"):GetUI().Text = "Moedas: " .. pontos
+    Scene.Find("Placar"):GetUIDocument():Find("moedas").Text = "Moedas: " .. pontos
 end
 ```
 
