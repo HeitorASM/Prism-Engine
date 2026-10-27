@@ -24,9 +24,11 @@ in vec3 v_Normal;
 in vec3 v_WorldPos;
 in vec2 v_UV;
 in vec3 v_Tangent;
+flat in vec3 v_InstColor; // cor por instancia (desenho instanciado)
 out vec4 o_Color;
 
 uniform vec3 u_BaseColor;
+uniform int u_Instanced;
 uniform vec3 u_CameraWorldPos;
 
 // --- Material (albedo/normal/roughness-metallic) -----------------
@@ -610,7 +612,7 @@ void main() {
     // ANTES de multiplicar por luz/textura. A textura de albedo
     // NAO passa por SrgbToLinear: ja chega linear da GPU
     // (GL_SRGB8_ALPHA8), converter de novo seria conversao dupla.
-    vec3 albedo = SrgbToLinear(u_BaseColor);
+    vec3 albedo = SrgbToLinear((u_Instanced != 0) ? v_InstColor : u_BaseColor);
     if (u_HasAlbedoMap)
         albedo *= texture(u_AlbedoMap, v_UV).rgb;
 

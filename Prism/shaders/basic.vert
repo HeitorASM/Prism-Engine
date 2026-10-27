@@ -47,28 +47,41 @@ uniform mat4 u_Model;
 // duas matrizes dao a mesma DIRECAO, entao cenas existentes nao mudam.
 uniform mat3 u_NormalMatrix;
 
+// Desenho INSTANCIADO (Renderer: varios objetos com a mesma malha e material numa chamada so):
+// modelo, matriz normal e cor vem de atributos por instancia em vez dos uniforms acima.
+// Locais 8-11 = mat4, 12-14 = mat3, 15 = vec3 (0-5 sao da malha, ver Mesh.cpp).
+uniform int u_Instanced;
+layout(location = 8) in mat4 a_InstModel;
+layout(location = 12) in mat3 a_InstNormal;
+layout(location = 15) in vec3 a_InstColor;
+
 out vec3 v_Normal;
 out vec3 v_WorldPos;
 out vec2 v_UV;
 out vec3 v_Tangent;
+flat out vec3 v_InstColor;
 
 void main() {
     // Skinning: aplicado ANTES do Model (espaco da malha -> pose -> mundo). A
     // matriz normal do objeto continua valendo (ossos com escala nao uniforme
     // distorcem a normal um pouco - aceitavel para personagens).
+    mat4 model = (u_Instanced != 0) ? a_InstModel : u_Model;
+    mat3 normalMatrix = (u_Instanced != 0) ? a_InstNormal : u_NormalMatrix;
+    v_InstColor = a_InstColor;
+
     mat4 skin = SkinMatrix();
     vec3 skinnedNormal = mat3(skin) * a_Normal;
     vec3 skinnedTangent = mat3(skin) * a_Tangent;
 
-    v_Normal = u_NormalMatrix * skinnedNormal;
+    v_Normal = normalMatrix * skinnedNormal;
     // A TANGENTE continua com mat3(u_Model), de proposito: ela e um
     // vetor AO LONGO da superficie e transforma como qualquer outro
     // vetor do modelo. Usar a matriz normal nela a deixaria de novo
     // nao-perpendicular a normal (~87 graus de desvio) e quebraria a
     // base TBN do normal map.
-    v_Tangent = mat3(u_Model) * skinnedTangent;
+    v_Tangent = mat3(model) * skinnedTangent;
     v_UV = a_UV;
-    vec4 worldPos = u_Model * (skin * vec4(a_Position, 1.0));
+    vec4 worldPos = model * (skin * vec4(a_Position, 1.0));
     v_WorldPos = worldPos.xyz;
     gl_Position = u_ViewProjection * worldPos;
 }

@@ -131,3 +131,14 @@ if(MSVC)
     target_compile_options(PrismProfilerTests PRIVATE /utf-8)
 endif()
 add_test(NAME ProfilerTests COMMAND PrismProfilerTests)
+
+# PrismDrawBatchingTests: agrupamento de desenhos para instancing (Renderer/DrawBatching.h, so std).
+add_executable(PrismDrawBatchingTests
+    DrawBatchingTests.cpp
+)
+target_include_directories(PrismDrawBatchingTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDrawBatchingTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismDrawBatchingTests PRIVATE /utf-8)
+endif()
+add_test(NAME DrawBatchingTests COMMAND PrismDrawBatchingTests)

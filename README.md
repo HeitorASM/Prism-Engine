@@ -105,7 +105,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload (ver `docs/ui-prismui.md`)
 - [x] Camadas de visibilidade na malha e "Culling Mask" na câmera (estilo Godot; ver `docs/renderizacao.md`) — camadas por luz ainda não
 - [x] Frustum culling no renderer
-- [ ] Instancing no renderer
+- [x] Instancing no renderer (passe principal; ver `docs/desempenho.md`)
 - [x] Profiler (painel Desempenho: CPU, GPU, desenhos e triângulos; ver `docs/desempenho.md`)
 - [x] Física: camadas/máscaras configuráveis, juntas e character controller
 - [x] Testes de serialização, do ComponentRegistry e do PrefabSyncer

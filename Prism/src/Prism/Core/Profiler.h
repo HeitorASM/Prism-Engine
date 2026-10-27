@@ -33,6 +33,8 @@ namespace Prism {
             Triangles,         // triangulos enviados nessas chamadas
             ShadowDrawCalls,   // chamadas de desenho dos mapas de sombra
             ShadowTriangles,
+            InstancedDraws,    // chamadas de desenho instanciadas (parte de DrawCalls)
+            InstancedObjects,  // objetos desenhados por elas
             Count_
         };
         static constexpr int kCounterCount = (int)Counter::Count_;
@@ -147,7 +149,12 @@ namespace Prism {
             s.Current[(size_t)c] += amount;
         }
         // Desenho de uma malha com 'indexCount' indices.
-        static void CountDraw(uint32_t indexCount) { Count(Counter::DrawCalls); Count(Counter::Triangles, indexCount / 3); }
+        // 'instances' > 1: UMA chamada instanciada desenhando varias copias da malha.
+        static void CountDraw(uint32_t indexCount, uint32_t instances = 1) {
+            Count(Counter::DrawCalls);
+            Count(Counter::Triangles, (indexCount / 3) * instances);
+            if (instances > 1) { Count(Counter::InstancedDraws); Count(Counter::InstancedObjects, instances); }
+        }
         static void CountShadowDraw(uint32_t indexCount) { Count(Counter::ShadowDrawCalls); Count(Counter::ShadowTriangles, indexCount / 3); }
 
         // --- leitura (para o painel) ----------------------------------------

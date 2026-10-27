@@ -91,6 +91,12 @@ namespace PrismEditor {
         ImGui::SeparatorText("Contadores (ultimo quadro)");
         using C = Profiler::Counter;
         ImGui::Text("Desenhos: %u   Triangulos: %u", Profiler::CounterValue(C::DrawCalls), Profiler::CounterValue(C::Triangles));
+        ImGui::Text("Instanciados: %u chamadas desenhando %u objetos", Profiler::CounterValue(C::InstancedDraws), Profiler::CounterValue(C::InstancedObjects));
+        bool instancing = Prism::Renderer::IsInstancingEnabled();
+        if (ImGui::Checkbox("Instancing", &instancing))
+            Prism::Renderer::SetInstancingEnabled(instancing);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(desligue para comparar o numero de desenhos e o tempo)");
         ImGui::Text("Sombras: %u desenhos, %u triangulos", Profiler::CounterValue(C::ShadowDrawCalls), Profiler::CounterValue(C::ShadowTriangles));
         const Prism::Renderer::CullStats& cull = Prism::Renderer::GetCullStats();
         ImGui::Text("Malhas: %u desenhadas, %u fora do frustum, %u em camadas escondidas", cull.Drawn, cull.FrustumCulled, cull.LayerHidden);

@@ -17,6 +17,7 @@
 #include "ShaderSource.h"
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <cstdint>
 #include <vector>
 
@@ -109,6 +110,11 @@ namespace Prism {
 
         uint32_t m_RendererID = 0;
         std::string m_Name;
+
+        // Local de cada uniform, por nome: glGetUniformLocation e uma chamada ao driver feita
+        // dezenas de vezes por objeto. Limpo quando o programa e recompilado (hot reload).
+        mutable std::unordered_map<std::string, int> m_UniformLocations;
+        int UniformLocation(const std::string& name) const;
 
         // So para shaders de arquivo (CreateFromFiles).
         std::filesystem::path m_VertexPath;

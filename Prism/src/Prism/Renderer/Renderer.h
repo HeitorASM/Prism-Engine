@@ -379,7 +379,20 @@ namespace Prism {
         // desenhar com s_BasicShader fora do fluxo normal de DrawMesh.
         static void UploadLights(const std::vector<GPULight>& lights);
 
+        // Desenho instanciado (varios objetos com a mesma malha e material numa chamada so) no
+        // passe principal. Ligado por padrao; desligar serve para comparar no profiler.
+        static void SetInstancingEnabled(bool enabled);
+        static bool IsInstancingEnabled();
+
     private:
+        // Estado por QUADRO / por MATERIAL / por OBJETO do shader principal (DrawMesh envia os tres;
+        // DrawScene envia o primeiro 1x e os outros so quando mudam). O shader precisa estar ligado.
+        static void BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao);
+        static void BindMaterialState(const MaterialComponent* material);
+        static void SetBaseColor(const MaterialComponent* material, const float* color);
+        static void BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount);
+        static uint32_t GetInstanceBufferForCurrentContext();
+        static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_InstanceBuffersByContext;
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
 

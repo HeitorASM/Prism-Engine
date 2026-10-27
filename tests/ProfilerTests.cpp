@@ -61,6 +61,16 @@ int main() {
     CHECK(Profiler::CounterValue(Profiler::Counter::ShadowDrawCalls) == 1);
     CHECK(Profiler::CounterValue(Profiler::Counter::ShadowTriangles) == 30);
 
+    // desenho instanciado: 1 chamada, triangulos de todas as copias
+    Profiler::BeginFrame();
+    Profiler::CountDraw(300, 50);
+    Profiler::CountDraw(300);
+    Profiler::EndFrame();
+    CHECK(Profiler::CounterValue(Profiler::Counter::DrawCalls) == 2);
+    CHECK(Profiler::CounterValue(Profiler::Counter::Triangles) == 100 * 50 + 100);
+    CHECK(Profiler::CounterValue(Profiler::Counter::InstancedDraws) == 1);
+    CHECK(Profiler::CounterValue(Profiler::Counter::InstancedObjects) == 50);
+
     // zona de GPU
     Profiler::BeginFrame();
     Profiler::SetGpuZone("GPU.Main", 2.5f);

@@ -74,6 +74,7 @@ namespace Prism {
         if (m_RendererID != 0)
             glDeleteProgram(m_RendererID); // o driver adia a liberacao enquanto ainda em uso
         m_RendererID = program;
+        m_UniformLocations.clear(); // os locais mudam com o novo programa
         return true;
     }
 
@@ -167,6 +168,15 @@ namespace Prism {
         return shader;
     }
 
+    int Shader::UniformLocation(const std::string& name) const {
+        auto it = m_UniformLocations.find(name);
+        if (it != m_UniformLocations.end())
+            return it->second;
+        const int location = glGetUniformLocation(m_RendererID, name.c_str());
+        m_UniformLocations.emplace(name, location); // -1 (uniform removido pelo compilador) tambem e guardado
+        return location;
+    }
+
     void Shader::Bind() const {
         glUseProgram(m_RendererID);
     }
@@ -176,43 +186,43 @@ namespace Prism {
     }
 
     void Shader::SetMat4(const std::string& name, const float* matrix4x4) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniformMatrix4fv(location, 1, GL_FALSE, matrix4x4);
     }
 
     void Shader::SetMat4Array(const std::string& name, const float* matrices, uint32_t count) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str()); // local de name[0]
+        int location = UniformLocation(name); // local de name[0]
         if (location >= 0 && count > 0)
             glUniformMatrix4fv(location, (GLsizei)count, GL_FALSE, matrices);
     }
 
     void Shader::SetMat3(const std::string& name, const float* matrix3x3) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniformMatrix3fv(location, 1, GL_FALSE, matrix3x3);
     }
 
     void Shader::SetFloat3(const std::string& name, float x, float y, float z) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniform3f(location, x, y, z);
     }
 
     void Shader::SetFloat2(const std::string& name, float x, float y) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniform2f(location, x, y);
     }
 
     void Shader::SetFloat3Array(const std::string& name, const float* values, uint32_t count) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniform3fv(location, (GLsizei)count, values);
     }
 
     void Shader::SetFloat(const std::string& name, float value) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniform1f(location, value);
     }
 
     void Shader::SetInt(const std::string& name, int value) const {
-        int location = glGetUniformLocation(m_RendererID, name.c_str());
+        int location = UniformLocation(name);
         glUniform1i(location, value);
     }
 

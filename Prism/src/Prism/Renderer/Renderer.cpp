@@ -5,6 +5,7 @@
 #include "../Core/Log.h"
 #include "../Core/Profiler.h"
 #include "GpuTimer.h"
+#include "DrawBatching.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
@@ -14,6 +15,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp> 
 #include <algorithm> 
+#include <cstring>
+#include <map>
+#include <tuple>
 #include <cmath>
 #include <string>    
 #include <limits>   
@@ -43,6 +47,7 @@ namespace Prism {
     Scope<GeometryBuffer> Renderer::s_GeometryBuffer = nullptr;
     Scope<SSAO> Renderer::s_SSAO = nullptr;
     std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_FullscreenQuadVAOsByContext;
+    std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_InstanceBuffersByContext;
     Scope<Mesh> Renderer::s_Meshes[5] = {};
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
@@ -237,6 +242,9 @@ namespace Prism {
         for (auto& [window, vao] : s_FullscreenQuadVAOsByContext)
             glDeleteVertexArrays(1, &vao);
         s_FullscreenQuadVAOsByContext.clear();
+        for (auto& [window, buffer] : s_InstanceBuffersByContext)
+            glDeleteBuffers(1, &buffer);
+        s_InstanceBuffersByContext.clear();
     }
 
     // Ver comentario grande em Renderer.h (s_FullscreenQuadVAOsByContext)
@@ -520,22 +528,13 @@ namespace Prism {
         DrawMesh(mesh, viewProjection, model, color, lights, shadows, ssao, material);
     }
 
-    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material, const glm::mat4* bones, uint32_t boneCount) {
-        if (!s_BasicShader) return;
-        if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
+    // --- Estado do shader principal, em tres camadas -------------------------
+    // Antes, DrawMesh reenviava TUDO (ambiente, luzes, sombras, SSAO, texturas) a cada objeto.
+    // Os uniforms e as texturas ficam no programa/unidades entre desenhos, entao DrawScene envia
+    // o estado do quadro 1x, o do material so quando muda e o do objeto a cada um.
 
-        s_BasicShader->Bind();
+    void Renderer::BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao) {
         s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
-        s_BasicShader->SetMat4("u_Model", model);
-        // Skinning (ver shaders/skinning.glsl): sem paleta, u_Skinned = 0.
-        UploadBones(*s_BasicShader, bones, boneCount);
-        {
-            // Sem este envio, u_NormalMatrix valeria zero (padrao de uniform
-            // nao setado): normal (0,0,0) => normalize() vira NaN no fragment
-            // shader e o objeto sai preto. Ver shaders/basic.vert.
-            glm::mat3 normalMatrix = ComputeNormalMatrix(glm::make_mat4(model));
-            s_BasicShader->SetMat3("u_NormalMatrix", glm::value_ptr(normalMatrix));
-        }
         s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
         // Sem este envio, u_Exposure valeria 0.0 (padrao de uniform nao
         // setado em GLSL) e a cena inteira sairia preta - ver shaders/basic.frag.
@@ -553,22 +552,47 @@ namespace Prism {
         // (0.10 = o brilho natural do panorama), SkyIntensity escala o panorama.
         EnvironmentIBL::Upload(*s_BasicShader, s_IBLActive, s_SkyIntensity * (s_Ambient / 0.10f), glm::radians(s_SkyRotation));
 
-        // Com 'material' fornecido, AlbedoTint manda (ver comentario em
-        // Renderer.h) - 'color' (MeshRendererComponent::Color) e ignorado
-        // nesse caso, exatamente como um Material substitui a cor solida
-        // antiga no editor (ver PropertiesPanel::OnImGuiRender).
+        // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
+        // desenha so com o ambiente fixo do shader (u_LightCount = 0).
+        if (lights)
+            UploadLights(*lights);
+        else
+            s_BasicShader->SetInt("u_LightCount", 0);
+
+        // 'shadows' e opcional (nullptr = sem sombra). Texture units 5-7 (ver
+        // ShadowSystem.h); 0-1 sao AO e 2-4 o Material.
+        if (shadows && shadows->Any())
+            ShadowSystem::Upload(*shadows, *s_BasicShader);
+        else
+            ShadowSystem::UploadNone(*s_BasicShader);
+
+        // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
+        // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao).
+        if (ssao) {
+            ssao->BindBlurredForReading(1);
+            s_BasicShader->SetInt("u_AOMap", 1);
+            s_BasicShader->SetInt("u_HasAO", 1);
+            s_BasicShader->SetFloat2("u_ScreenSize", (float)ssao->GetWidth(), (float)ssao->GetHeight());
+        } else {
+            s_BasicShader->SetInt("u_HasAO", 0);
+        }
+    }
+
+    // Cor base: com 'material' fornecido, AlbedoTint manda (ver comentario em Renderer.h) -
+    // 'color' (MeshRendererComponent::Color) e ignorado nesse caso.
+    void Renderer::SetBaseColor(const MaterialComponent* material, const float* color) {
         if (material)
             s_BasicShader->SetFloat3("u_BaseColor", material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
         else if (color)
             s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
         else
             s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
+    }
 
-        // --- Texturas do Material (slots 2/3/4 - 0/1 reservados para
-        // shadow map / AO map, ver comentarios abaixo) --------------------
-        // Sem 'material' (nullptr), os tres u_Has*Map ficam false e o
-        // fragment shader nunca amostra sampler nenhum - identico ao
-        // comportamento anterior a esta feature existir.
+    // Texturas e fatores do Material (slots 2/3/4 - 0/1 sao do AO, 5-7 das sombras).
+    // Sem 'material' (nullptr), os tres u_Has*Map ficam false e o fragment shader
+    // nunca amostra sampler nenhum.
+    void Renderer::BindMaterialState(const MaterialComponent* material) {
         if (material) {
             Texture2D* albedo = GetOrLoadTexture(material->AlbedoPath, /*isSRGB*/ true);
             if (albedo && albedo->IsValid()) {
@@ -619,31 +643,29 @@ namespace Prism {
             s_BasicShader->SetFloat("u_Roughness", 1.0f);
             s_BasicShader->SetFloat("u_Metallic", 0.0f);
         }
+    }
 
-        // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
-        // desenha so com o ambiente fixo do shader (u_LightCount = 0).
-        if (lights)
-            UploadLights(*lights);
-        else
-            s_BasicShader->SetInt("u_LightCount", 0);
+    void Renderer::BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount) {
+        s_BasicShader->SetInt("u_Instanced", 0);
+        s_BasicShader->SetMat4("u_Model", model);
+        // Skinning (ver shaders/skinning.glsl): sem paleta, u_Skinned = 0.
+        UploadBones(*s_BasicShader, bones, boneCount);
+        // Sem este envio, u_NormalMatrix valeria zero (padrao de uniform
+        // nao setado): normal (0,0,0) => normalize() vira NaN no fragment
+        // shader e o objeto sai preto. Ver shaders/basic.vert.
+        glm::mat3 normalMatrix = ComputeNormalMatrix(glm::make_mat4(model));
+        s_BasicShader->SetMat3("u_NormalMatrix", glm::value_ptr(normalMatrix));
+    }
 
-        // 'shadows' e opcional (nullptr = sem sombra). Texture units 5-7 (ver
-        // ShadowSystem.h); 0-1 sao AO e 2-4 o Material.
-        if (shadows && shadows->Any())
-            ShadowSystem::Upload(*shadows, *s_BasicShader);
-        else
-            ShadowSystem::UploadNone(*s_BasicShader);
+    void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material, const glm::mat4* bones, uint32_t boneCount) {
+        if (!s_BasicShader) return;
+        if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
 
-        // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
-        // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao).
-        if (ssao) {
-            ssao->BindBlurredForReading(1);
-            s_BasicShader->SetInt("u_AOMap", 1);
-            s_BasicShader->SetInt("u_HasAO", 1);
-            s_BasicShader->SetFloat2("u_ScreenSize", (float)ssao->GetWidth(), (float)ssao->GetHeight());
-        } else {
-            s_BasicShader->SetInt("u_HasAO", 0);
-        }
+        s_BasicShader->Bind();
+        BindFrameState(viewProjection, lights, shadows, ssao);
+        BindMaterialState(material);
+        SetBaseColor(material, color);
+        BindObjectState(model, bones, boneCount);
 
         mesh->BindForCurrentContext();
         glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
@@ -651,6 +673,32 @@ namespace Prism {
         glBindVertexArray(0);
 
         s_BasicShader->Unbind();
+    }
+
+    // --- Instancing -----------------------------------------------------------
+    namespace {
+        bool s_InstancingEnabled = true;
+        constexpr uint32_t kMaxInstancesPerDraw = 1024;
+        // Por instancia: mat4 modelo (16) + mat3 normal (9) + cor base (3) = 28 floats.
+        // Locais de atributo 8-15, ver shaders/basic.vert.
+        constexpr uint32_t kInstanceFloats = 28;
+        constexpr GLsizei kInstanceStride = (GLsizei)(kInstanceFloats * sizeof(float));
+    }
+
+    void Renderer::SetInstancingEnabled(bool enabled) { s_InstancingEnabled = enabled; }
+    bool Renderer::IsInstancingEnabled() { return s_InstancingEnabled; }
+
+    // Um buffer de instancias por contexto GL (mesma tecnica dos VAOs; buffers sao compartilhados
+    // na share list, mas assim nao dependemos disso).
+    uint32_t Renderer::GetInstanceBufferForCurrentContext() {
+        GLFWwindow* current = glfwGetCurrentContext();
+        for (auto& [window, buffer] : s_InstanceBuffersByContext)
+            if (window == current)
+                return buffer;
+        uint32_t buffer = 0;
+        glCreateBuffers(1, &buffer);
+        s_InstanceBuffersByContext.emplace_back(current, buffer);
+        return buffer;
     }
 
     void Renderer::SetCameraPosition(const float* worldPos) {
@@ -1177,6 +1225,31 @@ namespace Prism {
         // Nome 'meshRendererView' (nao so 'view') para nao colidir com o
         // parametro 'view' (matriz de camera) desta funcao.
         auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+
+        // 1) Coleta os objetos visiveis. Os desenhos sao feitos DEPOIS, agrupados por material e
+        //    malha (DrawBatching.h) para enviar o estado do material so quando muda e para
+        //    desenhar copias iguais numa chamada instanciada so.
+        struct PendingDraw {
+            Mesh* MeshPtr = nullptr;
+            const MaterialComponent* Material = nullptr;
+            glm::mat4 Model{ 1.0f };
+            glm::vec3 Color{ 0.85f, 0.55f, 0.2f };
+            BonePalette Palette;
+        };
+        // Chave do ESTADO de material (cor base nao entra: e por objeto/instancia).
+        struct MaterialKey {
+            bool Has = false;
+            std::string Albedo, Normal, RoughnessMetallic;
+            float Roughness = 1.0f, Metallic = 0.0f;
+            bool operator<(const MaterialKey& o) const {
+                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic)
+                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic);
+            }
+        };
+        std::vector<PendingDraw> pending;
+        std::vector<Batching::Item> batchItems;
+        std::map<MaterialKey, uint32_t> materialIds;
+
         for (auto entityHandle : meshRendererView) {
             auto& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
             glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
@@ -1196,8 +1269,110 @@ namespace Prism {
                 case Visibility::Visible:         break;
             }
             s_CullStats.Drawn++;
-            BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
-            DrawMesh(mesh, glm::value_ptr(viewProjection), glm::value_ptr(model), &meshRenderer.Color.x, &lights, shadows, ssao, material, palette.Data, palette.Count);
+            if (!mesh)
+                continue; // modelo que falhou ao carregar: nada a desenhar (DrawMesh tambem ignorava)
+
+            PendingDraw draw;
+            draw.MeshPtr = mesh;
+            draw.Material = material;
+            draw.Model = model;
+            draw.Color = glm::vec3(meshRenderer.Color.x, meshRenderer.Color.y, meshRenderer.Color.z);
+            if (material)
+                draw.Color = glm::vec3(material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
+            draw.Palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
+
+            MaterialKey key;
+            if (material) {
+                key.Has = true;
+                key.Albedo = material->AlbedoPath;
+                key.Normal = material->NormalPath;
+                key.RoughnessMetallic = material->RoughnessMetallicPath;
+                key.Roughness = glm::clamp(material->RoughnessFactor, 0.0f, 1.0f);
+                key.Metallic = glm::clamp(material->MetallicFactor, 0.0f, 1.0f);
+            }
+            auto inserted = materialIds.emplace(std::move(key), (uint32_t)materialIds.size());
+
+            Batching::Item item;
+            item.Mesh = mesh;
+            item.MaterialId = inserted.first->second;
+            item.Skinned = draw.Palette.Data && draw.Palette.Count > 0;
+            item.Index = (uint32_t)pending.size();
+            batchItems.push_back(item);
+            pending.push_back(draw);
+        }
+
+        // 2) Desenha por lotes.
+        if (s_BasicShader && !pending.empty()) {
+            const std::vector<Batching::Batch> batches = Batching::Build(batchItems, s_InstancingEnabled, kMaxInstancesPerDraw);
+
+            s_BasicShader->Bind();
+            BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
+
+            uint32_t currentMaterialId = UINT32_MAX;
+            std::vector<float> instanceData;
+            for (const Batching::Batch& batch : batches) {
+                const Batching::Item& first = batchItems[batch.First];
+                const PendingDraw& firstDraw = pending[first.Index];
+                if (first.MaterialId != currentMaterialId) {
+                    BindMaterialState(firstDraw.Material);
+                    currentMaterialId = first.MaterialId;
+                }
+
+                if (!batch.Instanced) {
+                    const PendingDraw& draw = firstDraw;
+                    SetBaseColor(nullptr, &draw.Color.x); // a cor (tint do material ou cor do renderer) ja foi resolvida na coleta
+                    BindObjectState(glm::value_ptr(draw.Model), draw.Palette.Data, draw.Palette.Count);
+                    draw.MeshPtr->BindForCurrentContext();
+                    glDrawElements(GL_TRIANGLES, (GLsizei)draw.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+                    Profiler::CountDraw(draw.MeshPtr->GetIndexCount());
+                    glBindVertexArray(0);
+                    continue;
+                }
+
+                // Lote instanciado: modelo + matriz normal + cor de cada instancia num buffer.
+                instanceData.resize(batch.Count * kInstanceFloats);
+                for (size_t k = 0; k < batch.Count; k++) {
+                    const PendingDraw& draw = pending[batchItems[batch.First + k].Index];
+                    const glm::mat3 normalMatrix = ComputeNormalMatrix(draw.Model);
+                    float* out = &instanceData[k * kInstanceFloats];
+                    std::memcpy(out, glm::value_ptr(draw.Model), 16 * sizeof(float));
+                    std::memcpy(out + 16, glm::value_ptr(normalMatrix), 9 * sizeof(float));
+                    out[25] = draw.Color.x; out[26] = draw.Color.y; out[27] = draw.Color.z;
+                }
+                const uint32_t instanceBuffer = GetInstanceBufferForCurrentContext();
+                glNamedBufferData(instanceBuffer, (GLsizeiptr)(instanceData.size() * sizeof(float)), instanceData.data(), GL_STREAM_DRAW);
+
+                s_BasicShader->SetInt("u_Instanced", 1);
+                s_BasicShader->SetInt("u_Skinned", 0);
+                firstDraw.MeshPtr->BindForCurrentContext();
+                glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+                for (int column = 0; column < 4; column++) { // mat4 = 4 atributos vec4
+                    glEnableVertexAttribArray(8 + column);
+                    glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(column * 4 * sizeof(float)));
+                    glVertexAttribDivisor(8 + column, 1);
+                }
+                for (int column = 0; column < 3; column++) { // mat3 = 3 atributos vec3
+                    glEnableVertexAttribArray(12 + column);
+                    glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)((16 + column * 3) * sizeof(float)));
+                    glVertexAttribDivisor(12 + column, 1);
+                }
+                glEnableVertexAttribArray(15);
+                glVertexAttribPointer(15, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(25 * sizeof(float)));
+                glVertexAttribDivisor(15, 1);
+
+                glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)firstDraw.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr, (GLsizei)batch.Count);
+                Profiler::CountDraw(firstDraw.MeshPtr->GetIndexCount(), (uint32_t)batch.Count);
+
+                // O VAO e da malha (compartilhado com os desenhos normais): devolve ao estado original.
+                for (int location = 8; location <= 15; location++) {
+                    glVertexAttribDivisor(location, 0);
+                    glDisableVertexAttribArray(location);
+                }
+                glBindVertexArray(0);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                s_BasicShader->SetInt("u_Instanced", 0);
+            }
+            s_BasicShader->Unbind();
         }
 
         // Particulas por ultimo: blend + sem escrita de profundidade, testando

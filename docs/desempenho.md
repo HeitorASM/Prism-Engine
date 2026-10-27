@@ -11,6 +11,13 @@
 
 Zonas aninhadas se sobrepõem: o tempo de `Renderer.Shadows` já está dentro de `Renderer.DrawScene`. CPU e GPU rodam em paralelo, então não se somam.
 
+## Otimizações do passe principal
+
+- **Cache de uniforms**: o `Shader` guarda o local de cada uniform (antes cada objeto fazia dezenas de `glGetUniformLocation`).
+- **Estado em três camadas**: ambiente, luzes, sombras e SSAO são enviados **uma vez por quadro**; texturas e fatores do material só quando o material muda; só o modelo, a matriz normal e os ossos vão a cada objeto.
+- **Instancing**: objetos visíveis com a **mesma malha e o mesmo material** (texturas e fatores iguais; a cor pode variar) são desenhados numa chamada só, até 1024 por vez. Malhas animadas (com ossos) não são instanciadas. Os objetos são ordenados por material e malha, o que não muda a imagem (a cena opaca usa teste de profundidade). O checkbox **Instancing** do painel liga/desliga para comparar "Desenhos" e `Renderer.DrawScene` antes e depois.
+- Ainda **não** instanciados: o pré-passe do SSAO e os mapas de sombra (cada um desenha objeto a objeto).
+
 ## Como ler
 
 - `Window.Swap` alto e o resto baixo: você está limitado pelo V-Sync ou pelo monitor.
