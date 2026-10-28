@@ -149,6 +149,13 @@ namespace Prism {
         Blend = 2    // translucido: mistura com o fundo, desenhado depois dos opacos, de tras para frente
     };
 
+    // Valor de um parametro do shader do material (uniform declarado no .glsl, ver Renderer/ShaderParams.h).
+    // Componentes que o tipo nao usa (z/w de um vec2) ficam 0.
+    struct MaterialShaderParam {
+        std::string Name;
+        glm::vec4 Value{ 0.0f };
+    };
+
     struct MaterialComponent {
         std::string AlbedoPath;              // cor base (RGB) - textura sRGB (ver Texture2D)
         std::string NormalPath;              // normal map em tangent-space - textura LINEAR (nao sRGB)
@@ -197,6 +204,8 @@ namespace Prism {
         // Shader do material (opcional): .glsl do projeto, relativo a pasta do projeto, que define
         // prism_surface() (ver docs/shaders-customizados.md). Vazio = shader padrao.
         std::string ShaderPath;
+        // Valores dos parametros do shader (por nome). Faltando = o padrao declarado no .glsl.
+        std::vector<MaterialShaderParam> ShaderParams;
 
         MaterialComponent() = default;
         MaterialComponent(const MaterialComponent&) = default;
@@ -217,6 +226,18 @@ namespace Prism {
         for (int i = 0; i < 3; i++)
             m.EmissiveColor[i] = std::min(std::max(finite(m.EmissiveColor[i], 0.0f), 0.0f), 1.0f);
         m.EmissiveIntensity = std::min(std::max(finite(m.EmissiveIntensity, 1.0f), 0.0f), 100.0f);
+        // Parametros do shader: sem nome vazio/repetido, no maximo 64, valores finitos.
+        if (m.ShaderParams.size() > 64)
+            m.ShaderParams.resize(64);
+        for (size_t i = 0; i < m.ShaderParams.size();) {
+            bool drop = m.ShaderParams[i].Name.empty() || m.ShaderParams[i].Name.size() > 128;
+            for (size_t j = 0; j < i && !drop; j++)
+                drop = (m.ShaderParams[j].Name == m.ShaderParams[i].Name);
+            if (drop) { m.ShaderParams.erase(m.ShaderParams.begin() + (long)i); continue; }
+            for (int k = 0; k < 4; k++)
+                m.ShaderParams[i].Value[k] = std::min(std::max(finite(m.ShaderParams[i].Value[k], 0.0f), -1.0e6f), 1.0e6f);
+            i++;
+        }
     }
 
     // O que uma camera desenha ao fundo (ver CameraComponent::ClearMode).

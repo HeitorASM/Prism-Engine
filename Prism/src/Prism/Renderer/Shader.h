@@ -47,6 +47,7 @@ namespace Prism {
         // (ver u_NormalMatrix em Renderer.cpp).
         void SetMat3(const std::string& name, const float* matrix3x3) const;
         void SetFloat3(const std::string& name, float x, float y, float z) const;
+        void SetFloat4(const std::string& name, float x, float y, float z, float w) const;
 
         // 'x'/'y' - usado hoje so por u_ScreenSize (Renderer::DrawMesh) e
         // u_NoiseScale (Renderer::RenderSSAOPass).

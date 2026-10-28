@@ -22,6 +22,9 @@
 #include <string>    
 #include <limits>   
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <cstdio>
 #include <vector>
 
 namespace Prism {
@@ -31,7 +34,26 @@ namespace Prism {
     static Shader* s_ActiveShader = nullptr;
     // Shaders de material do projeto (basic.vert/frag + o .glsl do material no gancho prism_surface),
     // por ShaderPath. Entradas invalidas ficam no mapa: o hot reload as recompila quando o arquivo e salvo.
-    static std::unordered_map<std::string, Ref<Shader>> s_MaterialShaders;
+    struct MaterialShaderEntry {
+        Ref<Shader> Program;
+        std::vector<ShaderParamDecl> Params; // uniforms declarados no .glsl do projeto
+    };
+    static std::unordered_map<std::string, MaterialShaderEntry> s_MaterialShaders;
+    static const std::vector<ShaderParamDecl> s_NoParams;
+
+    static std::filesystem::path ResolveProjectPath(const std::string& relative) {
+        if (auto project = Project::GetActive())
+            return project->GetProjectDirectory() / relative;
+        return relative;
+    }
+
+    static std::vector<ShaderParamDecl> ReadShaderParams(const std::string& shaderPath) {
+        std::ifstream in(ResolveProjectPath(shaderPath), std::ios::binary);
+        if (!in.is_open())
+            return {};
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return ShaderParams::Parse(std::move(text));
+    }
     static std::filesystem::path s_BasicShaderDir;
     static ShaderDefines s_BasicShaderDefines;
 
@@ -217,9 +239,10 @@ namespace Prism {
             if (*shader)
                 (*shader)->ReloadIfChanged();
         }
-        for (auto& entry : s_MaterialShaders)
-            if (entry.second)
-                entry.second->ReloadIfChanged();
+        for (auto& entry : s_MaterialShaders) {
+            if (entry.second.Program && entry.second.Program->ReloadIfChanged())
+                entry.second.Params = ReadShaderParams(entry.first);
+        }
         PostProcess::ReloadChangedShaders();
         ShadowSystem::ReloadChangedShaders();
         EnvironmentIBL::ReloadChangedShaders();
@@ -552,19 +575,59 @@ namespace Prism {
 
     // Shader do material: o padrao se nao houver ShaderPath, ou se o shader do projeto nao compilar
     // (o erro ja foi para o log; salvar o arquivo corrigido recompila sozinho).
+    static MaterialShaderEntry& GetMaterialShaderEntry(const std::string& shaderPath) {
+        auto it = s_MaterialShaders.find(shaderPath);
+        if (it == s_MaterialShaders.end()) {
+            const ShaderIncludeOverrides overrides = { { "prism_surface.glsl", ResolveProjectPath(shaderPath) } };
+            MaterialShaderEntry entry;
+            entry.Program = Shader::CreateFromFiles("Material:" + shaderPath,
+                s_BasicShaderDir / "basic.vert", s_BasicShaderDir / "basic.frag", s_BasicShaderDefines, overrides);
+            entry.Params = ReadShaderParams(shaderPath);
+            it = s_MaterialShaders.emplace(shaderPath, std::move(entry)).first;
+        }
+        return it->second;
+    }
+
     static Shader* GetMaterialShader(const std::string& shaderPath, Shader* fallback) {
         if (shaderPath.empty())
             return fallback;
-        auto it = s_MaterialShaders.find(shaderPath);
-        if (it == s_MaterialShaders.end()) {
-            std::filesystem::path resolved = shaderPath;
-            if (auto project = Project::GetActive())
-                resolved = project->GetProjectDirectory() / shaderPath;
-            const ShaderIncludeOverrides overrides = { { "prism_surface.glsl", resolved } };
-            it = s_MaterialShaders.emplace(shaderPath, Shader::CreateFromFiles("Material:" + shaderPath,
-                s_BasicShaderDir / "basic.vert", s_BasicShaderDir / "basic.frag", s_BasicShaderDefines, overrides)).first;
+        MaterialShaderEntry& entry = GetMaterialShaderEntry(shaderPath);
+        return (entry.Program && entry.Program->IsValid()) ? entry.Program.get() : fallback;
+    }
+
+    const std::vector<ShaderParamDecl>& Renderer::GetShaderParams(const std::string& shaderPath) {
+        if (shaderPath.empty() || !s_BasicShader)
+            return s_NoParams;
+        return GetMaterialShaderEntry(shaderPath).Params;
+    }
+
+    // Envia ao shader ativo os valores dos parametros do material (o declarado no .glsl vale quando
+    // o material nao tem valor para o nome). So se o shader ativo for o do proprio material.
+    static void UploadShaderParams(const MaterialComponent& material) {
+        auto it = s_MaterialShaders.find(material.ShaderPath);
+        if (it == s_MaterialShaders.end() || it->second.Program.get() != s_ActiveShader)
+            return;
+        for (const ShaderParamDecl& decl : it->second.Params) {
+            float value[4] = { decl.Default[0], decl.Default[1], decl.Default[2], decl.Default[3] };
+            for (const MaterialShaderParam& stored : material.ShaderParams) {
+                if (stored.Name == decl.Name) {
+                    value[0] = stored.Value.x; value[1] = stored.Value.y; value[2] = stored.Value.z; value[3] = stored.Value.w;
+                    break;
+                }
+            }
+            ShaderParams::Clamp(decl, value);
+            if (decl.IsColor) // o Inspetor edita em sRGB (como o resto das cores); o shader recebe linear
+                for (int i = 0; i < 3; i++)
+                    value[i] = value[i] <= 0.04045f ? value[i] / 12.92f : std::pow((value[i] + 0.055f) / 1.055f, 2.4f);
+            switch (decl.Type) {
+                case ShaderParamType::Float: s_ActiveShader->SetFloat(decl.Name, value[0]); break;
+                case ShaderParamType::Int:   s_ActiveShader->SetInt(decl.Name, (int)value[0]); break;
+                case ShaderParamType::Bool:  s_ActiveShader->SetInt(decl.Name, value[0] != 0.0f ? 1 : 0); break;
+                case ShaderParamType::Vec2:  s_ActiveShader->SetFloat2(decl.Name, value[0], value[1]); break;
+                case ShaderParamType::Vec3:  s_ActiveShader->SetFloat3(decl.Name, value[0], value[1], value[2]); break;
+                case ShaderParamType::Vec4:  s_ActiveShader->SetFloat4(decl.Name, value[0], value[1], value[2], value[3]); break;
+            }
         }
-        return (it->second && it->second->IsValid()) ? it->second.get() : fallback;
     }
 
     void Renderer::BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao) {
@@ -702,6 +765,9 @@ namespace Prism {
             s_ActiveShader->SetFloat("u_Roughness", 1.0f);
             s_ActiveShader->SetFloat("u_Metallic", 0.0f);
         }
+
+        if (material && !material->ShaderPath.empty())
+            UploadShaderParams(*material);
     }
 
     void Renderer::BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount) {
@@ -1317,9 +1383,10 @@ namespace Prism {
             float EmissiveR = 0.0f, EmissiveG = 0.0f, EmissiveB = 0.0f, EmissiveIntensity = 1.0f;
             bool DoubleSided = false;
             std::string ShaderPath;
+            std::string Params; // valores dos parametros do shader (texto): materiais com valores diferentes nao se misturam
             bool operator<(const MaterialKey& o) const {
-                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided, ShaderPath)
-                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided, o.ShaderPath);
+                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided, ShaderPath, Params)
+                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided, o.ShaderPath, o.Params);
             }
         };
         std::vector<PendingDraw> pending;
@@ -1376,6 +1443,11 @@ namespace Prism {
                 key.EmissiveIntensity = material->EmissiveIntensity;
                 key.DoubleSided = material->DoubleSided;
                 key.ShaderPath = material->ShaderPath;
+                for (const MaterialShaderParam& param : material->ShaderParams) {
+                    char buffer[160];
+                    std::snprintf(buffer, sizeof(buffer), "%s=%.6g,%.6g,%.6g,%.6g;", param.Name.c_str(), param.Value.x, param.Value.y, param.Value.z, param.Value.w);
+                    key.Params += buffer;
+                }
             }
             auto inserted = materialIds.emplace(std::move(key), (uint32_t)materialIds.size());
 

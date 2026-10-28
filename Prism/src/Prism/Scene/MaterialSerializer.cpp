@@ -20,6 +20,7 @@ namespace Prism {
     //   v2: [int] BlendMode, [float] Opacity, [float] AlphaCutoff, [2 floats] UVTiling,
     //       [2 floats] UVOffset, [3 floats] EmissiveColor, [float] EmissiveIntensity, [bool] DoubleSided
     //   v3: [string] ShaderPath
+    //   v4: [uint32] N, N x ([string] nome, [4 floats] valor)  (parametros do shader)
     //
     // Sem flag de presenca nem ComponentRegistry aqui, ao contrario de
     // SceneSerializer/PrefabSerializer - este arquivo so representa UM
@@ -27,7 +28,7 @@ namespace Prism {
     // gravados/lidos diretamente, na mesma ordem que MaterialComponent os
     // declara (ver Components.h).
     // v2: superficie (blend, opacidade, corte, UV, emissao, dupla face) no FIM; v1 ainda e lido.
-    static constexpr uint32_t kMaterialFormatVersion = 3;
+    static constexpr uint32_t kMaterialFormatVersion = 4;
     static constexpr char kMagic[4] = { 'P', 'M', 'A', 'T' };
 
     static void WriteString(std::ofstream& out, const std::string& str) {
@@ -72,6 +73,11 @@ namespace Prism {
         WriteRaw(out, material.EmissiveIntensity);
         WriteRaw(out, material.DoubleSided);
         WriteString(out, material.ShaderPath);
+        WriteRaw(out, (uint32_t)material.ShaderParams.size());
+        for (const auto& param : material.ShaderParams) {
+            WriteString(out, param.Name);
+            WriteRaw(out, param.Value);
+        }
 
         if (!out) {
             PRISM_CORE_ERROR("MaterialSerializer: falha ao escrever dados do material em: ", filepath.string());
@@ -121,6 +127,15 @@ namespace Prism {
         }
         if (ok && version >= 3)
             ok = ReadString(in, loaded.ShaderPath);
+        if (ok && version >= 4) {
+            uint32_t count = 0;
+            ok = ReadRaw(in, count) && count <= 64;
+            for (uint32_t i = 0; ok && i < count; i++) {
+                MaterialShaderParam param;
+                ok = ReadString(in, param.Name) && ReadRaw(in, param.Value);
+                if (ok) loaded.ShaderParams.push_back(std::move(param));
+            }
+        }
 
         if (!ok) {
             PRISM_CORE_ERROR("MaterialSerializer: arquivo de material corrompido: ", filepath.string());

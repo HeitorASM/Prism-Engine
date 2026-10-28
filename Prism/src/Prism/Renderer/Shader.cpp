@@ -213,6 +213,11 @@ namespace Prism {
         glUniform2f(location, x, y);
     }
 
+    void Shader::SetFloat4(const std::string& name, float x, float y, float z, float w) const {
+        int location = UniformLocation(name);
+        glUniform4f(location, x, y, z, w);
+    }
+
     void Shader::SetFloat3Array(const std::string& name, const float* values, uint32_t count) const {
         int location = UniformLocation(name);
         glUniform3fv(location, (GLsizei)count, values);

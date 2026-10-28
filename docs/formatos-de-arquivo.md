@@ -96,9 +96,9 @@ Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` 
 ## `.prismmat`
 
 - Magic: `PMAT`
-- Versão atual: **3** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`); a v1 (sem os campos de superfície) ainda é lida
+- Versão atual: **4** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`); a v1 (sem os campos de superfície) ainda é lida
 
-Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`. A v2 acrescenta, no fim, a **superfície**: `BlendMode`, `Opacity`, `AlphaCutoff`, `UVTiling`, `UVOffset`, `EmissiveColor`, `EmissiveIntensity` e `DoubleSided`. A v3 acrescenta `ShaderPath` (shader de material, ver [shaders-customizados.md](shaders-customizados.md)). O bloco `Material` das cenas/prefabs tem a mesma ampliação (bloco v3); valores inválidos (NaN, fora de faixa) são corrigidos na leitura.
+Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`. A v2 acrescenta, no fim, a **superfície**: `BlendMode`, `Opacity`, `AlphaCutoff`, `UVTiling`, `UVOffset`, `EmissiveColor`, `EmissiveIntensity` e `DoubleSided`. A v3 acrescenta `ShaderPath` (shader de material, ver [shaders-customizados.md](shaders-customizados.md)) e a v4 os valores dos parâmetros desse shader (nome + 4 floats cada). O bloco `Material` das cenas/prefabs tem a mesma ampliação (bloco v4); valores inválidos (NaN, fora de faixa) são corrigidos na leitura.
 
 ## `.meta`
 

@@ -30,6 +30,7 @@
 #include "GeometryBuffer.h"
 #include "SSAO.h"
 #include "Texture.h"
+#include "ShaderParams.h"
 #include "SkyTexture.h"
 #include "PostProcess.h"
 #include "../Project/Project.h"
@@ -265,6 +266,11 @@ namespace Prism {
         // mostrar um preview/miniatura da textura carregada sem duplicar
         // o cache.
         static Texture2D* GetOrLoadTexture(const std::string& path, bool isSRGB);
+
+        // Parametros (uniforms) declarados no shader de material 'shaderPath' (relativo ao projeto),
+        // na ordem do arquivo. Vazio se o caminho for vazio, o arquivo nao existir ou nao declarar nenhum.
+        // O ponteiro vale ate a proxima chamada de Renderer/hot reload; nao guarde.
+        static const std::vector<ShaderParamDecl>& GetShaderParams(const std::string& shaderPath);
 
         // Define a posicao (world space, 3 floats xyz) da camera usada
         // pelo teste de "face interna transparente" dentro de DrawMesh() -

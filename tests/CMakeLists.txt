@@ -153,3 +153,14 @@ if(MSVC)
     target_compile_options(PrismBuildAnalysisTests PRIVATE /utf-8)
 endif()
 add_test(NAME BuildAnalysisTests COMMAND PrismBuildAnalysisTests)
+
+# PrismShaderParamsTests: leitor dos parametros (uniforms) dos shaders de material (Renderer/ShaderParams.h, so std).
+add_executable(PrismShaderParamsTests
+    ShaderParamsTests.cpp
+)
+target_include_directories(PrismShaderParamsTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismShaderParamsTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismShaderParamsTests PRIVATE /utf-8)
+endif()
+add_test(NAME ShaderParamsTests COMMAND PrismShaderParamsTests)

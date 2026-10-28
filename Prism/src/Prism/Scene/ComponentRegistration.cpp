@@ -126,6 +126,12 @@ namespace Prism {
                 WriteRaw(out, c.DoubleSided);
                 // v3: shader do material
                 WriteString(out, c.ShaderPath);
+                // v4: valores dos parametros do shader
+                WriteRaw(out, (uint32_t)c.ShaderParams.size());
+                for (const auto& param : c.ShaderParams) {
+                    WriteString(out, param.Name);
+                    WriteRaw(out, param.Value);
+                }
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
@@ -140,6 +146,15 @@ namespace Prism {
                 }
                 if (ok && ComponentRegistry::CurrentBlockVersion() >= 3)
                     ok = ReadString(in, c.ShaderPath);
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 4) {
+                    uint32_t count = 0;
+                    ok = ReadRaw(in, count) && count <= 64;
+                    for (uint32_t i = 0; ok && i < count; i++) {
+                        MaterialShaderParam param;
+                        ok = ReadString(in, param.Name) && ReadRaw(in, param.Value);
+                        if (ok) c.ShaderParams.push_back(std::move(param));
+                    }
+                }
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
                     return false;
@@ -148,7 +163,7 @@ namespace Prism {
                 return true;
             }
         );
-        s_Registry.back().Version = 3;
+        s_Registry.back().Version = 4;
 
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(

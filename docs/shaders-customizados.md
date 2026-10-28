@@ -34,10 +34,25 @@ void prism_surface(inout PrismSurface s, in PrismSurfaceInput i) {
 
 O arquivo é incluído no `basic.frag` no lugar de `prism_surface.glsl` (que na engine é vazio). Você pode escrever funções auxiliares e `#include "outro.glsl"` (procurado ao lado do seu arquivo); os uniforms da engine (`u_Time`, `u_CameraWorldPos`, `u_AlbedoMap`...) também estão visíveis.
 
+## Parâmetros no Inspetor
+
+Cada `uniform` de nível de topo com tipo `float`, `int`, `bool`, `vec2`, `vec3` ou `vec4` vira um campo no material (valores guardados por nome na cena e no `.prismmat`):
+
+```glsl
+uniform float u_Velocidade = 3.0;                  // range(0, 10)   -> slider
+uniform vec3  u_Cor = vec3(1.0, 0.3, 0.1);         // color          -> seletor de cor
+uniform bool  u_Pulsar = true;                     //                -> checkbox
+```
+
+- O inicializador é o valor padrão (sem ele, zero). `range(a, b)` limita o campo e o valor; `color` (só `vec3`/`vec4`) usa o seletor, em sRGB como as outras cores, e o shader recebe **linear**.
+- Salvar o `.glsl` relê as declarações; valores de parâmetros que não existem mais ficam guardados e são ignorados. Nomes repetidos, arrays, `sampler*` e outros tipos são ignorados pelo Inspetor (o GLSL continua valendo).
+- Máximo de 64 parâmetros por material. Materiais com valores diferentes não entram no mesmo lote instanciado.
+
 ## Limitações atuais
 
 - Só a **superfície** (fragmento). Não há deslocamento de vértices nem passe de pós-processamento por material.
-- **Sem parâmetros expostos** no Inspetor (os `uniform` do estilo Godot): por enquanto use `i.time`, `i.uv` e os campos do material (`Opacity`, `EmissiveColor`... chegam em `s`).
+- Parâmetros ainda não podem ser lidos/animados por Lua ou C++ (só pelo Inspetor).
+- Sem parâmetros de textura (`sampler2D`).
 - **Sombras e SSAO ignoram o seu código**: o objeto projeta sombra e entra no SSAO com a forma/alfa do material comum.
 - Materiais com shader próprio não entram no mesmo lote que os padrão (o shader faz parte da chave do material), então muitos shaders diferentes custam mais trocas de programa.
 - Jogo exportado: o hot reload é desligado; o `.glsl` precisa estar na pasta do projeto exportada (não verificado).

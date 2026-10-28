@@ -314,6 +314,63 @@ namespace PrismEditor {
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Caminho do .glsl relativo a pasta do projeto. Vazio = shader padrao. O arquivo define prism_surface() e recarrega ao salvar. Se nao compilar, o material usa o shader padrao e o erro aparece no Console.");
+                // Parametros declarados no .glsl ('uniform float u_X = 1.0; // range(0,4)'): um campo cada.
+                if (!material.ShaderPath.empty()) {
+                    const auto& declared = Prism::Renderer::GetShaderParams(material.ShaderPath);
+                    for (const Prism::ShaderParamDecl& decl : declared) {
+                        auto stored = std::find_if(material.ShaderParams.begin(), material.ShaderParams.end(),
+                            [&](const Prism::MaterialShaderParam& p) { return p.Name == decl.Name; });
+                        float value[4] = { decl.Default[0], decl.Default[1], decl.Default[2], decl.Default[3] };
+                        if (stored != material.ShaderParams.end())
+                            value[0] = stored->Value.x, value[1] = stored->Value.y, value[2] = stored->Value.z, value[3] = stored->Value.w;
+                        Prism::ShaderParams::Clamp(decl, value);
+
+                        const float low = decl.HasRange ? decl.Min : -1000.0f, high = decl.HasRange ? decl.Max : 1000.0f;
+                        const float speed = decl.HasRange ? (decl.Max - decl.Min) / 200.0f : 0.01f;
+                        bool changed = false;
+                        switch (decl.Type) {
+                            case Prism::ShaderParamType::Float:
+                                changed = decl.HasRange ? ImGui::SliderFloat(decl.Name.c_str(), &value[0], low, high)
+                                                        : ImGui::DragFloat(decl.Name.c_str(), &value[0], speed);
+                                break;
+                            case Prism::ShaderParamType::Int: {
+                                int integer = (int)value[0];
+                                changed = decl.HasRange ? ImGui::SliderInt(decl.Name.c_str(), &integer, (int)low, (int)high)
+                                                        : ImGui::DragInt(decl.Name.c_str(), &integer);
+                                value[0] = (float)integer;
+                                break;
+                            }
+                            case Prism::ShaderParamType::Bool: {
+                                bool flag = value[0] != 0.0f;
+                                changed = ImGui::Checkbox(decl.Name.c_str(), &flag);
+                                value[0] = flag ? 1.0f : 0.0f;
+                                break;
+                            }
+                            case Prism::ShaderParamType::Vec2:
+                                changed = ImGui::DragFloat2(decl.Name.c_str(), value, speed, decl.HasRange ? low : 0.0f, decl.HasRange ? high : 0.0f);
+                                break;
+                            case Prism::ShaderParamType::Vec3:
+                                changed = decl.IsColor ? ImGui::ColorEdit3(decl.Name.c_str(), value)
+                                                       : ImGui::DragFloat3(decl.Name.c_str(), value, speed, decl.HasRange ? low : 0.0f, decl.HasRange ? high : 0.0f);
+                                break;
+                            case Prism::ShaderParamType::Vec4:
+                                changed = decl.IsColor ? ImGui::ColorEdit4(decl.Name.c_str(), value)
+                                                       : ImGui::DragFloat4(decl.Name.c_str(), value, speed, decl.HasRange ? low : 0.0f, decl.HasRange ? high : 0.0f);
+                                break;
+                        }
+                        if (changed) {
+                            Prism::ShaderParams::Clamp(decl, value);
+                            if (stored == material.ShaderParams.end()) {
+                                material.ShaderParams.push_back({ decl.Name, glm::vec4(0.0f) });
+                                stored = material.ShaderParams.end() - 1;
+                            }
+                            stored->Value = glm::vec4(value[0], value[1], value[2], value[3]);
+                            dirty();
+                        }
+                    }
+                    if (declared.empty())
+                        ImGui::TextDisabled("Sem parametros: declare 'uniform float u_X = 1.0;' no .glsl.");
+                }
                 if (material.ShaderPath.empty()) {
                     if (ImGui::Button("Criar shader de exemplo")) {
                         if (auto project = Prism::Project::GetActive()) {
@@ -326,9 +383,13 @@ namespace PrismEditor {
                                 out << "// Shader de material: altera a superficie ANTES da iluminacao.\n"
                                        "// s.albedo/emissive (linear), s.alpha, s.roughness, s.metallic, s.normal (mundo).\n"
                                        "// i.worldPos, i.viewDir, i.uv (com tiling), i.time (segundos).\n"
+                                       "// Parametros aparecem no Inspetor: 'color' = seletor de cor, range(a,b) = slider.\n"
+                                       "uniform vec3  u_Cor = vec3(1.0, 0.3, 0.1); // color\n"
+                                       "uniform float u_Velocidade = 3.0;          // range(0, 10)\n"
+                                       "uniform float u_Brilho = 1.0;              // range(0, 5)\n"
                                        "void prism_surface(inout PrismSurface s, in PrismSurfaceInput i) {\n"
-                                       "    float pulse = 0.5 + 0.5 * sin(i.time * 3.0);\n"
-                                       "    s.emissive += vec3(1.0, 0.3, 0.1) * pulse;\n"
+                                       "    float pulse = 0.5 + 0.5 * sin(i.time * u_Velocidade);\n"
+                                       "    s.emissive += u_Cor * pulse * u_Brilho;\n"
                                        "}\n";
                             }
                             material.ShaderPath = relative.generic_string();
