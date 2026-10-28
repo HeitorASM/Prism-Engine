@@ -35,6 +35,10 @@ Com o editor aberto, edite e salve qualquer arquivo desta pasta: em até ~0,5 s 
 - Em desenvolvimento a engine lê esta pasta diretamente (caminho embutido pelo CMake em `PRISM_SHADER_SOURCE_DIR`). Fora da árvore do projeto, usa a cópia `shaders/` ao lado do executável (feita no POST_BUILD).
 - `Renderer::SetShaderHotReload(false)` desliga a verificação.
 
+## Shaders de material do projeto
+
+`basic.frag` inclui `prism_surface.glsl` (vazio). Um material com `ShaderPath` compila o mesmo `basic.vert/frag` com esse include trocado pelo `.glsl` do projeto (`ShaderIncludeOverrides`). Ver `docs/shaders-customizados.md`.
+
 ## `#include`
 
 ```glsl

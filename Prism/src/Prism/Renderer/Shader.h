@@ -74,7 +74,8 @@ namespace Prism {
         static Ref<Shader> CreateFromFiles(const std::string& name,
                                            const std::filesystem::path& vertexPath,
                                            const std::filesystem::path& fragmentPath,
-                                           const ShaderDefines& defines = {});
+                                           const ShaderDefines& defines = {},
+                                           const ShaderIncludeOverrides& overrides = {});
 
         // Hot reload: se algum arquivo do shader (inclusive os incluidos)
         // mudou desde a ultima compilacao, recompila. Se a nova versao NAO
@@ -120,6 +121,7 @@ namespace Prism {
         std::filesystem::path m_VertexPath;
         std::filesystem::path m_FragmentPath;
         ShaderDefines m_Defines;
+        ShaderIncludeOverrides m_Overrides;
         std::vector<WatchedFile> m_Watched;
     };
 

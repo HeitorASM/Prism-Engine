@@ -19,6 +19,7 @@ namespace Prism {
     //   [float]    MetallicFactor
     //   v2: [int] BlendMode, [float] Opacity, [float] AlphaCutoff, [2 floats] UVTiling,
     //       [2 floats] UVOffset, [3 floats] EmissiveColor, [float] EmissiveIntensity, [bool] DoubleSided
+    //   v3: [string] ShaderPath
     //
     // Sem flag de presenca nem ComponentRegistry aqui, ao contrario de
     // SceneSerializer/PrefabSerializer - este arquivo so representa UM
@@ -26,7 +27,7 @@ namespace Prism {
     // gravados/lidos diretamente, na mesma ordem que MaterialComponent os
     // declara (ver Components.h).
     // v2: superficie (blend, opacidade, corte, UV, emissao, dupla face) no FIM; v1 ainda e lido.
-    static constexpr uint32_t kMaterialFormatVersion = 2;
+    static constexpr uint32_t kMaterialFormatVersion = 3;
     static constexpr char kMagic[4] = { 'P', 'M', 'A', 'T' };
 
     static void WriteString(std::ofstream& out, const std::string& str) {
@@ -70,6 +71,7 @@ namespace Prism {
         WriteRaw(out, material.EmissiveColor);
         WriteRaw(out, material.EmissiveIntensity);
         WriteRaw(out, material.DoubleSided);
+        WriteString(out, material.ShaderPath);
 
         if (!out) {
             PRISM_CORE_ERROR("MaterialSerializer: falha ao escrever dados do material em: ", filepath.string());
@@ -117,6 +119,8 @@ namespace Prism {
               && ReadRaw(in, loaded.UVTiling) && ReadRaw(in, loaded.UVOffset) && ReadRaw(in, loaded.EmissiveColor)
               && ReadRaw(in, loaded.EmissiveIntensity) && ReadRaw(in, loaded.DoubleSided);
         }
+        if (ok && version >= 3)
+            ok = ReadString(in, loaded.ShaderPath);
 
         if (!ok) {
             PRISM_CORE_ERROR("MaterialSerializer: arquivo de material corrompido: ", filepath.string());

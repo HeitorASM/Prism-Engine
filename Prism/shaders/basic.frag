@@ -40,6 +40,7 @@ uniform float u_AlphaCutoff;
 uniform vec3 u_Emissive;
 uniform int u_DoubleSided;
 uniform vec3 u_CameraWorldPos;
+uniform float u_Time; // segundos desde o inicio (para shaders de material)
 
 // --- Material (albedo/normal/roughness-metallic) -----------------
 // u_Has*Map=false (o padrao) significa nenhuma amostragem de
@@ -578,6 +579,26 @@ vec3 IBLDirection(vec3 dir) {
     return vec3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
 }
 
+// --- Gancho de superficie (shaders de material do projeto) ---------------
+// 's' chega com os valores resolvidos (textura * fator) e volta para a
+// iluminacao. 'i' e so leitura. Cores em LINEAR. O arquivo incluido e
+// prism_surface.glsl (vazio) ou o .glsl do material (ver prism_surface.glsl).
+struct PrismSurface {
+    vec3  albedo;
+    float alpha;
+    float roughness;
+    float metallic;
+    vec3  emissive;
+    vec3  normal;     // espaco do mundo, ja normalizada (com normal map)
+};
+struct PrismSurfaceInput {
+    vec3  worldPos;
+    vec3  viewDir;    // do ponto para a camera
+    vec2  uv;         // ja com tiling/offset
+    float time;
+};
+#include "prism_surface.glsl"
+
 void main() {
     vec3 normal = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
@@ -634,10 +655,6 @@ void main() {
         albedo *= albedoSample.rgb;
         alpha *= albedoSample.a;
     }
-    // Recorte: some antes de gastar a iluminacao.
-    if (u_AlphaMode == 1 && alpha < u_AlphaCutoff)
-        discard;
-
     // Roughness/metallic: convencao glTF (G = roughness, B = metallic),
     // texturas LINEARES. Os fatores multiplicam o mapa; sem mapa,
     // valem sozinhos.
@@ -648,6 +665,31 @@ void main() {
         roughness *= rm.g;
         metallic  *= rm.b;
     }
+
+    // Gancho de superficie: o shader do material (se houver) altera o resultado.
+    PrismSurface surf;
+    surf.albedo = albedo;
+    surf.alpha = alpha;
+    surf.roughness = roughness;
+    surf.metallic = metallic;
+    surf.emissive = u_Emissive;
+    surf.normal = normal;
+    PrismSurfaceInput surfIn;
+    surfIn.worldPos = v_WorldPos;
+    surfIn.viewDir = viewDir;
+    surfIn.uv = uv;
+    surfIn.time = u_Time;
+    prism_surface(surf, surfIn);
+    albedo = max(surf.albedo, vec3(0.0));
+    alpha = clamp(surf.alpha, 0.0, 1.0);
+    roughness = clamp(surf.roughness, 0.0, 1.0);
+    metallic = clamp(surf.metallic, 0.0, 1.0);
+    if (dot(surf.normal, surf.normal) > 1e-6)
+        normal = normalize(surf.normal);
+
+    // Recorte: some antes de gastar a iluminacao (depois do gancho: o shader pode mudar o alfa).
+    if (u_AlphaMode == 1 && alpha < u_AlphaCutoff)
+        discard;
 
     // Ambiente = difuso + especular do gradiente (ver
     // EnvironmentColor e cia, acima).
@@ -713,7 +755,7 @@ void main() {
     // Cor final em linear -> exposicao -> tone mapping -> sRGB.
     // 'lightAccum' ja e radiancia refletida (BRDF aplicado por luz);
     // so o ambiente (ja multiplicado por albedo acima) soma por fora.
-    vec3 color = (ambient + lightAccum) + u_Emissive;
+    vec3 color = (ambient + lightAccum) + max(surf.emissive, vec3(0.0));
     const float outAlpha = (u_AlphaMode == 2) ? alpha : 1.0;
     if (u_OutputMode != 0) {
         o_Color = vec4(color, outAlpha);

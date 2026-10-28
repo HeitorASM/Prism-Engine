@@ -194,6 +194,9 @@ namespace Prism {
         float EmissiveIntensity = 1.0f;                   // multiplicador (pode passar de 1: brilho/bloom)
         // Desenha as duas faces: a de tras recebe a normal invertida. Desligado, a face de dentro some.
         bool DoubleSided = false;
+        // Shader do material (opcional): .glsl do projeto, relativo a pasta do projeto, que define
+        // prism_surface() (ver docs/shaders-customizados.md). Vazio = shader padrao.
+        std::string ShaderPath;
 
         MaterialComponent() = default;
         MaterialComponent(const MaterialComponent&) = default;

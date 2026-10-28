@@ -194,6 +194,32 @@ static void TestRealShaders() {
 }
 #endif
 
+static void TestIncludeOverride() {
+    std::puts("[include substituido (shader de material)]");
+    fs::path d = FreshDir("override");
+    Write(d / "main.frag", "#version 450 core\n#include \"prism_surface.glsl\"\nvoid main() { f(); }\n");
+    Write(d / "prism_surface.glsl", "void f() {}\n");
+    fs::path custom = FreshDir("override_project") / "Shaders" / "meu.glsl";
+    Write(custom, "void f() { /* do projeto */ }\n");
+
+    ShaderSourceResult plain = ShaderSource::Load(d / "main.frag");
+    CHECK(plain.Ok && Contains(plain.Source, "void f() {}"));
+
+    ShaderIncludeOverrides overrides = { { "prism_surface.glsl", custom } };
+    ShaderSourceResult r = ShaderSource::Load(d / "main.frag", {}, overrides);
+    CHECK(r.Ok);
+    CHECK(Contains(r.Source, "do projeto"));
+    CHECK(!Contains(r.Source, "void f() {}"));
+    CHECK(r.Files.size() == 2 && r.Files[1] == custom); // o hot reload observa o arquivo do projeto
+
+    // arquivo do projeto ausente: erro claro e o arquivo continua na lista (observado)
+    ShaderIncludeOverrides missing = { { "prism_surface.glsl", d / "nao_existe.glsl" } };
+    ShaderSourceResult bad = ShaderSource::Load(d / "main.frag", {}, missing);
+    CHECK(!bad.Ok);
+    CHECK(Contains(bad.Error, "nao_existe.glsl"));
+    CHECK(bad.Files.size() == 2);
+}
+
 int main() {
     TestPlainFile();
     TestLineEndingsAndBom();
@@ -201,6 +227,7 @@ int main() {
     TestInclude();
     TestIncludeOnce();
     TestErrors();
+    TestIncludeOverride();
 #ifdef PRISM_TEST_SHADER_DIR
     TestRealShaders();
 #endif

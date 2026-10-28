@@ -26,6 +26,15 @@
 
 namespace Prism {
 
+    // Shader em uso pelo estado de quadro/material/objeto (BindFrameState & cia): o padrao ou o de um
+    // material com ShaderPath. Sempre aponta para um shader valido depois de Init().
+    static Shader* s_ActiveShader = nullptr;
+    // Shaders de material do projeto (basic.vert/frag + o .glsl do material no gancho prism_surface),
+    // por ShaderPath. Entradas invalidas ficam no mapa: o hot reload as recompila quando o arquivo e salvo.
+    static std::unordered_map<std::string, Ref<Shader>> s_MaterialShaders;
+    static std::filesystem::path s_BasicShaderDir;
+    static ShaderDefines s_BasicShaderDefines;
+
     Ref<Shader> Renderer::s_BasicShader = nullptr;
     Ref<Shader> Renderer::s_LineShader = nullptr;
     Ref<Shader> Renderer::s_ParticleShader = nullptr;
@@ -126,11 +135,14 @@ namespace Prism {
 
         // MAX_LIGHTS e injetado no GLSL a partir da constante C++: os dois
         // lados nunca divergem (basic.frag nao compila sem ele).
-        s_BasicShader = loadShader("BasicLit", "basic.vert", "basic.frag", {
+        s_BasicShaderDir = shaderDir;
+        s_BasicShaderDefines = {
             { "MAX_LIGHTS", std::to_string(MAX_LIGHTS) },
             { "CASCADE_COUNT", std::to_string(kShadowCascades) },
             { "MAX_SPOT_SHADOWS", std::to_string(kMaxSpotShadows) },
-            { "MAX_POINT_SHADOWS", std::to_string(kMaxPointShadows) } });
+            { "MAX_POINT_SHADOWS", std::to_string(kMaxPointShadows) } };
+        s_BasicShader = loadShader("BasicLit", "basic.vert", "basic.frag", s_BasicShaderDefines);
+        s_ActiveShader = s_BasicShader.get();
 
         // Gera a geometria de cada primitiva uma unica vez (CPU, ver
         // PrimitiveMeshFactory) e sobe para a GPU como um Mesh - reusado
@@ -205,6 +217,9 @@ namespace Prism {
             if (*shader)
                 (*shader)->ReloadIfChanged();
         }
+        for (auto& entry : s_MaterialShaders)
+            if (entry.second)
+                entry.second->ReloadIfChanged();
         PostProcess::ReloadChangedShaders();
         ShadowSystem::ReloadChangedShaders();
         EnvironmentIBL::ReloadChangedShaders();
@@ -213,6 +228,8 @@ namespace Prism {
     void Renderer::Shutdown() {
         for (auto& mesh : s_Meshes)
             mesh.reset();
+        s_MaterialShaders.clear();
+        s_ActiveShader = nullptr;
         s_BasicShader.reset();
         s_LineShader.reset();
         s_ParticleShader.reset();
@@ -533,48 +550,66 @@ namespace Prism {
     // Os uniforms e as texturas ficam no programa/unidades entre desenhos, entao DrawScene envia
     // o estado do quadro 1x, o do material so quando muda e o do objeto a cada um.
 
+    // Shader do material: o padrao se nao houver ShaderPath, ou se o shader do projeto nao compilar
+    // (o erro ja foi para o log; salvar o arquivo corrigido recompila sozinho).
+    static Shader* GetMaterialShader(const std::string& shaderPath, Shader* fallback) {
+        if (shaderPath.empty())
+            return fallback;
+        auto it = s_MaterialShaders.find(shaderPath);
+        if (it == s_MaterialShaders.end()) {
+            std::filesystem::path resolved = shaderPath;
+            if (auto project = Project::GetActive())
+                resolved = project->GetProjectDirectory() / shaderPath;
+            const ShaderIncludeOverrides overrides = { { "prism_surface.glsl", resolved } };
+            it = s_MaterialShaders.emplace(shaderPath, Shader::CreateFromFiles("Material:" + shaderPath,
+                s_BasicShaderDir / "basic.vert", s_BasicShaderDir / "basic.frag", s_BasicShaderDefines, overrides)).first;
+        }
+        return (it->second && it->second->IsValid()) ? it->second.get() : fallback;
+    }
+
     void Renderer::BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao) {
-        s_BasicShader->SetMat4("u_ViewProjection", viewProjection);
-        s_BasicShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
+        s_ActiveShader->SetMat4("u_ViewProjection", viewProjection);
+        s_ActiveShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
         // Sem este envio, u_Exposure valeria 0.0 (padrao de uniform nao
         // setado em GLSL) e a cena inteira sairia preta - ver shaders/basic.frag.
-        s_BasicShader->SetFloat("u_Exposure", s_Exposure);
-        s_BasicShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
-        s_BasicShader->SetFloat("u_Ambient", s_Ambient);
+        s_ActiveShader->SetFloat("u_Exposure", s_Exposure);
+        s_ActiveShader->SetFloat("u_Time", (float)glfwGetTime());
+        s_ActiveShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
+        s_ActiveShader->SetFloat("u_Ambient", s_Ambient);
         // As tres cores do gradiente de ambiente. Sem estes envios elas
         // valeriam (0,0,0) e o ambiente inteiro (difuso e reflexo dos
         // metais) sairia preto. Ver EnvironmentColor em shaders/basic.frag.
-        s_BasicShader->SetFloat3("u_EnvZenith",  s_EnvZenith[0],  s_EnvZenith[1],  s_EnvZenith[2]);
-        s_BasicShader->SetFloat3("u_EnvHorizon", s_EnvHorizon[0], s_EnvHorizon[1], s_EnvHorizon[2]);
-        s_BasicShader->SetFloat3("u_EnvGround",  s_EnvGround[0],  s_EnvGround[1],  s_EnvGround[2]);
-        s_BasicShader->SetFloat("u_EnvScale", ComputeEnvironmentNormalization(s_Ambient, s_EnvZenith, s_EnvHorizon, s_EnvGround));
+        s_ActiveShader->SetFloat3("u_EnvZenith",  s_EnvZenith[0],  s_EnvZenith[1],  s_EnvZenith[2]);
+        s_ActiveShader->SetFloat3("u_EnvHorizon", s_EnvHorizon[0], s_EnvHorizon[1], s_EnvHorizon[2]);
+        s_ActiveShader->SetFloat3("u_EnvGround",  s_EnvGround[0],  s_EnvGround[1],  s_EnvGround[2]);
+        s_ActiveShader->SetFloat("u_EnvScale", ComputeEnvironmentNormalization(s_Ambient, s_EnvZenith, s_EnvHorizon, s_EnvGround));
         // IBL (panorama do ambiente): Ambient/0.10 mantem o slider de Ambient util
         // (0.10 = o brilho natural do panorama), SkyIntensity escala o panorama.
-        EnvironmentIBL::Upload(*s_BasicShader, s_IBLActive, s_SkyIntensity * (s_Ambient / 0.10f), glm::radians(s_SkyRotation));
+        EnvironmentIBL::Upload(*s_ActiveShader, s_IBLActive, s_SkyIntensity * (s_Ambient / 0.10f), glm::radians(s_SkyRotation));
 
         // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
         // desenha so com o ambiente fixo do shader (u_LightCount = 0).
         if (lights)
             UploadLights(*lights);
         else
-            s_BasicShader->SetInt("u_LightCount", 0);
+            s_ActiveShader->SetInt("u_LightCount", 0);
 
         // 'shadows' e opcional (nullptr = sem sombra). Texture units 5-7 (ver
         // ShadowSystem.h); 0-1 sao AO e 2-4 o Material.
         if (shadows && shadows->Any())
-            ShadowSystem::Upload(*shadows, *s_BasicShader);
+            ShadowSystem::Upload(*shadows, *s_ActiveShader);
         else
-            ShadowSystem::UploadNone(*s_BasicShader);
+            ShadowSystem::UploadNone(*s_ActiveShader);
 
         // 'ssao' e opcional (ver comentario em Renderer.h) - sem ele,
         // u_HasAO fica false e o termo ambiente usa 1.0 (sem oclusao).
         if (ssao) {
             ssao->BindBlurredForReading(1);
-            s_BasicShader->SetInt("u_AOMap", 1);
-            s_BasicShader->SetInt("u_HasAO", 1);
-            s_BasicShader->SetFloat2("u_ScreenSize", (float)ssao->GetWidth(), (float)ssao->GetHeight());
+            s_ActiveShader->SetInt("u_AOMap", 1);
+            s_ActiveShader->SetInt("u_HasAO", 1);
+            s_ActiveShader->SetFloat2("u_ScreenSize", (float)ssao->GetWidth(), (float)ssao->GetHeight());
         } else {
-            s_BasicShader->SetInt("u_HasAO", 0);
+            s_ActiveShader->SetInt("u_HasAO", 0);
         }
     }
 
@@ -582,11 +617,11 @@ namespace Prism {
     // 'color' (MeshRendererComponent::Color) e ignorado nesse caso.
     void Renderer::SetBaseColor(const MaterialComponent* material, const float* color) {
         if (material)
-            s_BasicShader->SetFloat3("u_BaseColor", material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
+            s_ActiveShader->SetFloat3("u_BaseColor", material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
         else if (color)
-            s_BasicShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
+            s_ActiveShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
         else
-            s_BasicShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
+            s_ActiveShader->SetFloat3("u_BaseColor", 0.85f, 0.55f, 0.2f);
     }
 
     // Texturas e fatores do Material (slots 2/3/4 - 0/1 sao do AO, 5-7 das sombras).
@@ -609,31 +644,31 @@ namespace Prism {
                 // A cor do emissivo e escolhida num color picker (sRGB): vai linear e ja multiplicada.
                 emissive = glm::pow(glm::max(material->EmissiveColor, glm::vec3(0.0f)), glm::vec3(2.2f)) * material->EmissiveIntensity;
             }
-            s_BasicShader->SetFloat2("u_UVTiling", tiling.x, tiling.y);
-            s_BasicShader->SetFloat2("u_UVOffset", offset.x, offset.y);
-            s_BasicShader->SetFloat("u_Opacity", opacity);
-            s_BasicShader->SetFloat("u_AlphaCutoff", cutoff);
-            s_BasicShader->SetInt("u_AlphaMode", alphaMode);
-            s_BasicShader->SetInt("u_DoubleSided", doubleSided);
-            s_BasicShader->SetFloat3("u_Emissive", emissive.x, emissive.y, emissive.z);
+            s_ActiveShader->SetFloat2("u_UVTiling", tiling.x, tiling.y);
+            s_ActiveShader->SetFloat2("u_UVOffset", offset.x, offset.y);
+            s_ActiveShader->SetFloat("u_Opacity", opacity);
+            s_ActiveShader->SetFloat("u_AlphaCutoff", cutoff);
+            s_ActiveShader->SetInt("u_AlphaMode", alphaMode);
+            s_ActiveShader->SetInt("u_DoubleSided", doubleSided);
+            s_ActiveShader->SetFloat3("u_Emissive", emissive.x, emissive.y, emissive.z);
         }
         if (material) {
             Texture2D* albedo = GetOrLoadTexture(material->AlbedoPath, /*isSRGB*/ true);
             if (albedo && albedo->IsValid()) {
                 albedo->Bind(2);
-                s_BasicShader->SetInt("u_AlbedoMap", 2);
-                s_BasicShader->SetInt("u_HasAlbedoMap", 1);
+                s_ActiveShader->SetInt("u_AlbedoMap", 2);
+                s_ActiveShader->SetInt("u_HasAlbedoMap", 1);
             } else {
-                s_BasicShader->SetInt("u_HasAlbedoMap", 0);
+                s_ActiveShader->SetInt("u_HasAlbedoMap", 0);
             }
 
             Texture2D* normalMap = GetOrLoadTexture(material->NormalPath, /*isSRGB*/ false);
             if (normalMap && normalMap->IsValid()) {
                 normalMap->Bind(3);
-                s_BasicShader->SetInt("u_NormalMap", 3);
-                s_BasicShader->SetInt("u_HasNormalMap", 1);
+                s_ActiveShader->SetInt("u_NormalMap", 3);
+                s_ActiveShader->SetInt("u_HasNormalMap", 1);
             } else {
-                s_BasicShader->SetInt("u_HasNormalMap", 0);
+                s_ActiveShader->SetInt("u_HasNormalMap", 0);
             }
 
             // RoughnessMetallicMap (slot 4): canal G = roughness, canal B =
@@ -642,21 +677,21 @@ namespace Prism {
             Texture2D* roughnessMetallic = GetOrLoadTexture(material->RoughnessMetallicPath, /*isSRGB*/ false);
             if (roughnessMetallic && roughnessMetallic->IsValid()) {
                 roughnessMetallic->Bind(4);
-                s_BasicShader->SetInt("u_RoughnessMetallicMap", 4);
-                s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 1);
+                s_ActiveShader->SetInt("u_RoughnessMetallicMap", 4);
+                s_ActiveShader->SetInt("u_HasRoughnessMetallicMap", 1);
             } else {
-                s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 0);
+                s_ActiveShader->SetInt("u_HasRoughnessMetallicMap", 0);
             }
 
             // Fatores PBR: multiplicam o mapa acima quando existe, ou valem
             // sozinhos (sem mapa). Clamp defensivo: valores fora de [0,1]
             // (ex: editados a mao num .prismmat) nao devem quebrar o BRDF.
-            s_BasicShader->SetFloat("u_Roughness", glm::clamp(material->RoughnessFactor, 0.0f, 1.0f));
-            s_BasicShader->SetFloat("u_Metallic", glm::clamp(material->MetallicFactor, 0.0f, 1.0f));
+            s_ActiveShader->SetFloat("u_Roughness", glm::clamp(material->RoughnessFactor, 0.0f, 1.0f));
+            s_ActiveShader->SetFloat("u_Metallic", glm::clamp(material->MetallicFactor, 0.0f, 1.0f));
         } else {
-            s_BasicShader->SetInt("u_HasAlbedoMap", 0);
-            s_BasicShader->SetInt("u_HasNormalMap", 0);
-            s_BasicShader->SetInt("u_HasRoughnessMetallicMap", 0);
+            s_ActiveShader->SetInt("u_HasAlbedoMap", 0);
+            s_ActiveShader->SetInt("u_HasNormalMap", 0);
+            s_ActiveShader->SetInt("u_HasRoughnessMetallicMap", 0);
 
             // Entidade SEM MaterialComponent: totalmente fosca e nao
             // metalica (roughness=1, metallic=0). Nao enviar nada deixaria
@@ -664,28 +699,29 @@ namespace Prism {
             // preto. Com 1/0 o resultado fica ~igual ao Lambert antigo
             // (ver CalculateLight em shaders/basic.frag), entao cenas existentes
             // nao mudam de aparencia.
-            s_BasicShader->SetFloat("u_Roughness", 1.0f);
-            s_BasicShader->SetFloat("u_Metallic", 0.0f);
+            s_ActiveShader->SetFloat("u_Roughness", 1.0f);
+            s_ActiveShader->SetFloat("u_Metallic", 0.0f);
         }
     }
 
     void Renderer::BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount) {
-        s_BasicShader->SetInt("u_Instanced", 0);
-        s_BasicShader->SetMat4("u_Model", model);
+        s_ActiveShader->SetInt("u_Instanced", 0);
+        s_ActiveShader->SetMat4("u_Model", model);
         // Skinning (ver shaders/skinning.glsl): sem paleta, u_Skinned = 0.
-        UploadBones(*s_BasicShader, bones, boneCount);
+        UploadBones(*s_ActiveShader, bones, boneCount);
         // Sem este envio, u_NormalMatrix valeria zero (padrao de uniform
         // nao setado): normal (0,0,0) => normalize() vira NaN no fragment
         // shader e o objeto sai preto. Ver shaders/basic.vert.
         glm::mat3 normalMatrix = ComputeNormalMatrix(glm::make_mat4(model));
-        s_BasicShader->SetMat3("u_NormalMatrix", glm::value_ptr(normalMatrix));
+        s_ActiveShader->SetMat3("u_NormalMatrix", glm::value_ptr(normalMatrix));
     }
 
     void Renderer::DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao, const MaterialComponent* material, const glm::mat4* bones, uint32_t boneCount) {
         if (!s_BasicShader) return;
         if (!mesh) return; // primitiva ainda nao carregada (nao deveria acontecer apos Init()) OU modelo importado que falhou a carregar (ver GetOrLoadModelMesh) - evita um crash silencioso nos dois casos
 
-        s_BasicShader->Bind();
+        s_ActiveShader = material ? GetMaterialShader(material->ShaderPath, s_BasicShader.get()) : s_BasicShader.get();
+        s_ActiveShader->Bind();
         BindFrameState(viewProjection, lights, shadows, ssao);
         BindMaterialState(material);
         SetBaseColor(material, color);
@@ -696,7 +732,7 @@ namespace Prism {
         Profiler::CountDraw(mesh->GetIndexCount());
         glBindVertexArray(0);
 
-        s_BasicShader->Unbind();
+        s_ActiveShader->Unbind();
     }
 
     // --- Instancing -----------------------------------------------------------
@@ -944,24 +980,24 @@ namespace Prism {
     }
 
     void Renderer::UploadLights(const std::vector<GPULight>& lights) {
-        if (!s_BasicShader) return;
+        if (!s_ActiveShader) return;
 
         int count = (int)std::min<size_t>(lights.size(), MAX_LIGHTS);
-        s_BasicShader->SetInt("u_LightCount", count);
+        s_ActiveShader->SetInt("u_LightCount", count);
 
         for (int i = 0; i < count; i++) {
             const GPULight& light = lights[i];
             std::string prefix = "u_Lights[" + std::to_string(i) + "].";
 
-            s_BasicShader->SetInt(prefix + "Type", light.Type);
-            s_BasicShader->SetFloat3(prefix + "Position", light.Position.x, light.Position.y, light.Position.z);
-            s_BasicShader->SetFloat3(prefix + "Direction", light.Direction.x, light.Direction.y, light.Direction.z);
-            s_BasicShader->SetFloat3(prefix + "Color", light.Color.x, light.Color.y, light.Color.z);
-            s_BasicShader->SetFloat(prefix + "Intensity", light.Intensity);
-            s_BasicShader->SetFloat(prefix + "Range", light.Range);
-            s_BasicShader->SetFloat(prefix + "CosOuterAngle", light.CosOuterAngle);
-            s_BasicShader->SetFloat(prefix + "CosInnerAngle", light.CosInnerAngle);
-            s_BasicShader->SetInt(prefix + "ShadowSlot", light.CastShadows ? light.ShadowSlot : -1);
+            s_ActiveShader->SetInt(prefix + "Type", light.Type);
+            s_ActiveShader->SetFloat3(prefix + "Position", light.Position.x, light.Position.y, light.Position.z);
+            s_ActiveShader->SetFloat3(prefix + "Direction", light.Direction.x, light.Direction.y, light.Direction.z);
+            s_ActiveShader->SetFloat3(prefix + "Color", light.Color.x, light.Color.y, light.Color.z);
+            s_ActiveShader->SetFloat(prefix + "Intensity", light.Intensity);
+            s_ActiveShader->SetFloat(prefix + "Range", light.Range);
+            s_ActiveShader->SetFloat(prefix + "CosOuterAngle", light.CosOuterAngle);
+            s_ActiveShader->SetFloat(prefix + "CosInnerAngle", light.CosInnerAngle);
+            s_ActiveShader->SetInt(prefix + "ShadowSlot", light.CastShadows ? light.ShadowSlot : -1);
         }
     }
 
@@ -1264,6 +1300,7 @@ namespace Prism {
         //    desenhar copias iguais numa chamada instanciada so.
         struct PendingDraw {
             Mesh* MeshPtr = nullptr;
+            Shader* ShaderPtr = nullptr; // shader do material (o padrao se nao houver ShaderPath)
             const MaterialComponent* Material = nullptr;
             glm::mat4 Model{ 1.0f };
             glm::vec3 Color{ 0.85f, 0.55f, 0.2f };
@@ -1279,9 +1316,10 @@ namespace Prism {
             float Opacity = 1.0f, Cutoff = 0.5f, TilingX = 1.0f, TilingY = 1.0f, OffsetX = 0.0f, OffsetY = 0.0f;
             float EmissiveR = 0.0f, EmissiveG = 0.0f, EmissiveB = 0.0f, EmissiveIntensity = 1.0f;
             bool DoubleSided = false;
+            std::string ShaderPath;
             bool operator<(const MaterialKey& o) const {
-                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided)
-                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided);
+                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided, ShaderPath)
+                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided, o.ShaderPath);
             }
         };
         std::vector<PendingDraw> pending;
@@ -1314,6 +1352,7 @@ namespace Prism {
             PendingDraw draw;
             draw.MeshPtr = mesh;
             draw.Material = material;
+            draw.ShaderPtr = material ? GetMaterialShader(material->ShaderPath, s_BasicShader.get()) : s_BasicShader.get();
             draw.Model = model;
             draw.Color = glm::vec3(meshRenderer.Color.x, meshRenderer.Color.y, meshRenderer.Color.z);
             if (material)
@@ -1336,6 +1375,7 @@ namespace Prism {
                 key.EmissiveR = material->EmissiveColor.x; key.EmissiveG = material->EmissiveColor.y; key.EmissiveB = material->EmissiveColor.z;
                 key.EmissiveIntensity = material->EmissiveIntensity;
                 key.DoubleSided = material->DoubleSided;
+                key.ShaderPath = material->ShaderPath;
             }
             auto inserted = materialIds.emplace(std::move(key), (uint32_t)materialIds.size());
 
@@ -1359,8 +1399,19 @@ namespace Prism {
         if (s_BasicShader && !pending.empty()) {
             const std::vector<Batching::Batch> batches = Batching::Build(batchItems, s_InstancingEnabled, kMaxInstancesPerDraw);
 
-            s_BasicShader->Bind();
-            BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
+            // Troca de shader so quando o material muda (o shader faz parte da chave do material); o
+            // estado de quadro (camera, luzes, sombras) e reenviado ao novo programa.
+            Shader* boundShader = nullptr;
+            auto useShader = [&](Shader* shader) {
+                if (shader == boundShader)
+                    return;
+                if (boundShader)
+                    boundShader->Unbind();
+                shader->Bind();
+                s_ActiveShader = shader;
+                BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
+                boundShader = shader;
+            };
 
             uint32_t currentMaterialId = UINT32_MAX;
             std::vector<float> instanceData;
@@ -1368,6 +1419,7 @@ namespace Prism {
                 const Batching::Item& first = batchItems[batch.First];
                 const PendingDraw& firstDraw = pending[first.Index];
                 if (first.MaterialId != currentMaterialId) {
+                    useShader(firstDraw.ShaderPtr);
                     BindMaterialState(firstDraw.Material);
                     currentMaterialId = first.MaterialId;
                 }
@@ -1396,8 +1448,8 @@ namespace Prism {
                 const uint32_t instanceBuffer = GetInstanceBufferForCurrentContext();
                 glNamedBufferData(instanceBuffer, (GLsizeiptr)(instanceData.size() * sizeof(float)), instanceData.data(), GL_STREAM_DRAW);
 
-                s_BasicShader->SetInt("u_Instanced", 1);
-                s_BasicShader->SetInt("u_Skinned", 0);
+                s_ActiveShader->SetInt("u_Instanced", 1);
+                s_ActiveShader->SetInt("u_Skinned", 0);
                 firstDraw.MeshPtr->BindForCurrentContext();
                 glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
                 for (int column = 0; column < 4; column++) { // mat4 = 4 atributos vec4
@@ -1424,9 +1476,10 @@ namespace Prism {
                 }
                 glBindVertexArray(0);
                 glBindBuffer(GL_ARRAY_BUFFER, 0);
-                s_BasicShader->SetInt("u_Instanced", 0);
+                s_ActiveShader->SetInt("u_Instanced", 0);
             }
-            s_BasicShader->Unbind();
+            if (boundShader)
+                boundShader->Unbind();
         }
 
         // 3) Translucidos: depois dos opacos, de TRAS PARA FRENTE (pelo centro do objeto), com mistura
@@ -1442,11 +1495,18 @@ namespace Prism {
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
-            s_BasicShader->Bind();
-            BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
-
+            Shader* boundShader = nullptr;
             uint32_t currentMaterialId = UINT32_MAX;
             for (const PendingDraw& draw : translucent) {
+                if (draw.ShaderPtr != boundShader) {
+                    if (boundShader)
+                        boundShader->Unbind();
+                    draw.ShaderPtr->Bind();
+                    s_ActiveShader = draw.ShaderPtr;
+                    BindFrameState(glm::value_ptr(viewProjection), &lights, shadows, ssao);
+                    boundShader = draw.ShaderPtr;
+                    currentMaterialId = UINT32_MAX; // programa novo: o estado do material precisa ser reenviado
+                }
                 if (draw.MaterialId != currentMaterialId) {
                     BindMaterialState(draw.Material);
                     currentMaterialId = draw.MaterialId;
@@ -1458,7 +1518,8 @@ namespace Prism {
                 Profiler::CountDraw(draw.MeshPtr->GetIndexCount());
                 glBindVertexArray(0);
             }
-            s_BasicShader->Unbind();
+            if (boundShader)
+                boundShader->Unbind();
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
         }

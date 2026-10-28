@@ -303,6 +303,40 @@ namespace PrismEditor {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Desenha tambem a face de tras (iluminada como se fosse a frente). Desligado, a face de dentro de uma malha fechada some.");
             Prism::SanitizeMaterialSurface(material);
+
+            ImGui::SeparatorText("Shader do material");
+            {
+                char shaderBuffer[512];
+                std::snprintf(shaderBuffer, sizeof(shaderBuffer), "%s", material.ShaderPath.c_str());
+                if (ImGui::InputText("Shader (.glsl)", shaderBuffer, sizeof(shaderBuffer))) {
+                    material.ShaderPath = shaderBuffer;
+                    dirty();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Caminho do .glsl relativo a pasta do projeto. Vazio = shader padrao. O arquivo define prism_surface() e recarrega ao salvar. Se nao compilar, o material usa o shader padrao e o erro aparece no Console.");
+                if (material.ShaderPath.empty()) {
+                    if (ImGui::Button("Criar shader de exemplo")) {
+                        if (auto project = Prism::Project::GetActive()) {
+                            const std::filesystem::path relative = "Shaders/MeuShader.glsl";
+                            const std::filesystem::path file = project->GetProjectDirectory() / relative;
+                            std::error_code ec;
+                            std::filesystem::create_directories(file.parent_path(), ec);
+                            if (!std::filesystem::exists(file, ec)) {
+                                std::ofstream out(file, std::ios::binary);
+                                out << "// Shader de material: altera a superficie ANTES da iluminacao.\n"
+                                       "// s.albedo/emissive (linear), s.alpha, s.roughness, s.metallic, s.normal (mundo).\n"
+                                       "// i.worldPos, i.viewDir, i.uv (com tiling), i.time (segundos).\n"
+                                       "void prism_surface(inout PrismSurface s, in PrismSurfaceInput i) {\n"
+                                       "    float pulse = 0.5 + 0.5 * sin(i.time * 3.0);\n"
+                                       "    s.emissive += vec3(1.0, 0.3, 0.1) * pulse;\n"
+                                       "}\n";
+                            }
+                            material.ShaderPath = relative.generic_string();
+                            dirty();
+                        }
+                    }
+                }
+            }
         }
         if (!keepOpen)
             m_Ctx.History.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MaterialComponent>>(m_Ctx.SelectedEntity, "Material"));

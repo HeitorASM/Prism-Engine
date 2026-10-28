@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 10; // v10: MaterialComponent ganhou campos de superficie (layout mudou)
+    constexpr uint32_t kNativeApiVersion = 11; // v11: MaterialComponent ganhou ShaderPath; v10: campos de superficie (layout mudou)
 
     struct NativeRayHit {
         bool Hit = false;

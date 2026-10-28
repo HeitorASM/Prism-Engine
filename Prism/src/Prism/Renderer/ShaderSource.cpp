@@ -14,6 +14,7 @@ namespace Prism {
         struct Context {
             fs::path RootDir;
             const ShaderDefines* Defines = nullptr;
+            const ShaderIncludeOverrides* Overrides = nullptr;
             std::vector<fs::path> Files;
             std::vector<std::string> Stack;           // arquivos em expansao (deteccao de ciclo)
             std::unordered_set<std::string> Included; // '#pragma once' implicito
@@ -133,6 +134,11 @@ namespace Prism {
 
                     const fs::path name = fs::path(std::string(rest.substr(1, close - 1)));
                     fs::path resolved;
+                    if (ctx.Overrides) {
+                        for (const auto& [from, to] : *ctx.Overrides)
+                            if (from == name.generic_string()) { resolved = to; break; }
+                    }
+                    if (resolved.empty())
                     for (const fs::path& base : { file.parent_path(), ctx.RootDir }) {
                         std::error_code ec;
                         fs::path candidate = base / name;
@@ -172,8 +178,9 @@ namespace Prism {
 
     }
 
-    ShaderSourceResult ShaderSource::Load(const fs::path& file, const ShaderDefines& defines) {
+    ShaderSourceResult ShaderSource::Load(const fs::path& file, const ShaderDefines& defines, const ShaderIncludeOverrides& overrides) {
         Context ctx;
+        ctx.Overrides = &overrides;
         ctx.RootDir = file.parent_path();
         ctx.Defines = &defines;
 

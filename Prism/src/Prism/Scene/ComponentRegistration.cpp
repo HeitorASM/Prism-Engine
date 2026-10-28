@@ -124,6 +124,8 @@ namespace Prism {
                 WriteRaw(out, c.EmissiveColor);
                 WriteRaw(out, c.EmissiveIntensity);
                 WriteRaw(out, c.DoubleSided);
+                // v3: shader do material
+                WriteString(out, c.ShaderPath);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
@@ -136,6 +138,8 @@ namespace Prism {
                       && ReadRaw(in, c.UVTiling) && ReadRaw(in, c.UVOffset) && ReadRaw(in, c.EmissiveColor)
                       && ReadRaw(in, c.EmissiveIntensity) && ReadRaw(in, c.DoubleSided);
                 }
+                if (ok && ComponentRegistry::CurrentBlockVersion() >= 3)
+                    ok = ReadString(in, c.ShaderPath);
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
                     return false;
@@ -144,7 +148,7 @@ namespace Prism {
                 return true;
             }
         );
-        s_Registry.back().Version = 2;
+        s_Registry.back().Version = 3;
 
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(

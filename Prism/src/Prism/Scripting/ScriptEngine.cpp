@@ -180,7 +180,8 @@ namespace Prism {
             "UVOffset", &MaterialComponent::UVOffset,
             "EmissiveColor", &MaterialComponent::EmissiveColor,
             "EmissiveIntensity", &MaterialComponent::EmissiveIntensity,
-            "DoubleSided", &MaterialComponent::DoubleSided
+            "DoubleSided", &MaterialComponent::DoubleSided,
+            "ShaderPath", &MaterialComponent::ShaderPath
         );
         lua.new_usertype<LightComponent>("Light",
             "Color", &LightComponent::Color,

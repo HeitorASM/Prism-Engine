@@ -25,11 +25,13 @@ namespace Prism {
     Ref<Shader> Shader::CreateFromFiles(const std::string& name,
                                         const std::filesystem::path& vertexPath,
                                         const std::filesystem::path& fragmentPath,
-                                        const ShaderDefines& defines) {
+                                        const ShaderDefines& defines,
+                                        const ShaderIncludeOverrides& overrides) {
         Ref<Shader> shader(new Shader(name)); // CreateRef nao enxerga o construtor privado
         shader->m_VertexPath = vertexPath;
         shader->m_FragmentPath = fragmentPath;
         shader->m_Defines = defines;
+        shader->m_Overrides = overrides;
         shader->BuildFromFiles();
         return shader;
     }
@@ -39,8 +41,8 @@ namespace Prism {
     // assim um shader quebrado nao e recompilado a cada poll, so quando
     // alguem salvar de novo.
     bool Shader::BuildFromFiles() {
-        ShaderSourceResult vertex = ShaderSource::Load(m_VertexPath, m_Defines);
-        ShaderSourceResult fragment = ShaderSource::Load(m_FragmentPath, m_Defines);
+        ShaderSourceResult vertex = ShaderSource::Load(m_VertexPath, m_Defines, m_Overrides);
+        ShaderSourceResult fragment = ShaderSource::Load(m_FragmentPath, m_Defines, m_Overrides);
 
         m_Watched.clear();
         auto watch = [this](const std::vector<std::filesystem::path>& files) {
