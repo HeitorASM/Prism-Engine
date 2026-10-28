@@ -20,6 +20,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 namespace Prism {
@@ -102,6 +103,31 @@ namespace Prism {
         // espaco do mundo (viewport, gizmos, fisica futura) - o
         // TransformComponent sozinho so tem o espaco LOCAL (relativo ao pai).
         glm::mat4 GetWorldTransform(Entity entity);
+
+        // Cache de matrizes de mundo VALIDO ENQUANTO UM SCOPE ESTIVER VIVO.
+        // Sem scope, GetWorldTransform recalcula a cadeia de ancestrais a
+        // cada chamada (custo O(profundidade) + trigonometria por nivel).
+        // Com um scope aberto, cada entidade e calculada UMA vez e os
+        // pais sao reaproveitados pelos filhos.
+        //
+        // REGRA: so abra um scope em trechos em que NENHUM TransformComponent
+        // (nem Parent/Children) muda - ex: o corpo de Renderer::DrawScene, que
+        // so le a cena. TransformComponent e uma struct publica, entao nao ha
+        // como saber quando alguem a altera; por isso o cache NAO e
+        // persistente entre quadros (cada scope externo comeca do zero).
+        // Scopes podem ser aninhados (so o mais externo invalida o cache).
+        class WorldTransformScope {
+        public:
+            explicit WorldTransformScope(Scene& scene) : m_Scene(scene) {
+                if (m_Scene.m_WorldCacheDepth++ == 0)
+                    ++m_Scene.m_WorldCacheEpoch; // invalida tudo de uma vez, sem limpar os vetores
+            }
+            ~WorldTransformScope() { --m_Scene.m_WorldCacheDepth; }
+            WorldTransformScope(const WorldTransformScope&) = delete;
+            WorldTransformScope& operator=(const WorldTransformScope&) = delete;
+        private:
+            Scene& m_Scene;
+        };
 
         // --- Troca de cena em jogo (Scene.Load / Scene.Reload nos scripts) ------
         // Scripts so PEDEM a troca (RequestLoadScene/RequestReloadScene); quem
@@ -252,6 +278,14 @@ namespace Prism {
         // OnFixedUpdate de todos os scripts (Lua e C++), chamado por
         // PhysicsEngine::Simulate antes de cada passo fixo da fisica.
         void RunFixedUpdate(float fixedDeltaTime);
+
+        // Cache de GetWorldTransform (ver WorldTransformScope). Indexado pelo
+        // indice da entidade no EnTT; 'stamp == epoch' significa entrada valida.
+        glm::mat4 ComputeWorldTransformCached(entt::entity handle);
+        int m_WorldCacheDepth = 0;
+        uint32_t m_WorldCacheEpoch = 0;
+        std::vector<glm::mat4> m_WorldCache;
+        std::vector<uint32_t> m_WorldCacheStamp;
 
         std::string m_Name;
         entt::registry m_Registry;

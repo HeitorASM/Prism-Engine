@@ -344,6 +344,11 @@ namespace Prism {
 
     glm::mat4 Scene::GetWorldTransform(Entity entity) {
         entt::entity handle = entity.GetHandle();
+
+        // Dentro de um WorldTransformScope (ver Scene.h): memoizado.
+        if (m_WorldCacheDepth > 0)
+            return ComputeWorldTransformCached(handle);
+
         glm::mat4 local = m_Registry.get<TransformComponent>(handle).GetTransform();
 
         auto* rel = m_Registry.try_get<RelationshipComponent>(handle);
@@ -351,6 +356,29 @@ namespace Prism {
             return local;
 
         return GetWorldTransform(Entity(rel->Parent, this)) * local;
+    }
+
+    // Mesma matematica do caminho sem cache, mas cada entidade e calculada uma
+    // vez por scope. Devolve por VALOR de proposito: a recursao pode redimensionar
+    // os vetores do cache e invalidar qualquer referencia.
+    glm::mat4 Scene::ComputeWorldTransformCached(entt::entity handle) {
+        const size_t index = (size_t)entt::entt_traits<entt::entity>::to_entity(handle);
+        if (index >= m_WorldCacheStamp.size()) {
+            const size_t newSize = index + 1 + (index >> 1); // cresce com folga
+            m_WorldCacheStamp.resize(newSize, 0u);           // 0 nunca e uma epoca valida (comecam em 1)
+            m_WorldCache.resize(newSize);
+        }
+        if (m_WorldCacheStamp[index] == m_WorldCacheEpoch)
+            return m_WorldCache[index];
+
+        glm::mat4 world = m_Registry.get<TransformComponent>(handle).GetTransform();
+        const auto* rel = m_Registry.try_get<RelationshipComponent>(handle);
+        if (rel && rel->Parent != entt::null && m_Registry.valid(rel->Parent))
+            world = ComputeWorldTransformCached(rel->Parent) * world;
+
+        m_WorldCache[index] = world;
+        m_WorldCacheStamp[index] = m_WorldCacheEpoch;
+        return world;
     }
 
     // Teste raio-vs-AABB classico ("slab method": trata a caixa como a

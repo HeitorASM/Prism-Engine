@@ -121,6 +121,18 @@ if(MSVC)
 endif()
 add_test(NAME SceneTests COMMAND PrismSceneTests)
 
+# PrismMaterialStateTests: identidade do estado de material usada no agrupamento de desenhos (Renderer/MaterialState.h).
+add_executable(PrismMaterialStateTests
+    MaterialStateTests.cpp
+)
+target_include_directories(PrismMaterialStateTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismMaterialStateTests PRIVATE cxx_std_20)
+target_link_libraries(PrismMaterialStateTests PRIVATE glm EnTT::EnTT)
+if(MSVC)
+    target_compile_options(PrismMaterialStateTests PRIVATE /utf-8)
+endif()
+add_test(NAME MaterialStateTests COMMAND PrismMaterialStateTests)
+
 # PrismProfilerTests: medidor de desempenho (Core/Profiler.h, so std, relogio falso).
 add_executable(PrismProfilerTests
     ProfilerTests.cpp

@@ -6,6 +6,7 @@
 #include "../Core/Profiler.h"
 #include "GpuTimer.h"
 #include "DrawBatching.h"
+#include "MaterialState.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
@@ -1219,9 +1220,64 @@ namespace Prism {
         glEnable(GL_BLEND);
     }
 
+    namespace {
+        // Um objeto visivel do passe principal, coletado antes de desenhar.
+        struct PendingDraw {
+            Mesh* MeshPtr = nullptr;
+            Shader* ShaderPtr = nullptr; // shader do material (o padrao se nao houver ShaderPath)
+            const MaterialComponent* Material = nullptr;
+            glm::mat4 Model{ 1.0f };
+            glm::vec3 Color{ 0.85f, 0.55f, 0.2f };
+            Renderer::BonePalette Palette;
+            uint32_t MaterialId = 0;
+        };
+
+        // Buffers temporarios do DrawScene, REUSADOS entre quadros: clear() mantem a
+        // capacidade, entao depois dos primeiros quadros nao ha mais alocacao aqui.
+        // DrawScene nao e reentrante; se um dia for chamado de dentro de si mesmo,
+        // a chamada interna usa um conjunto proprio (ver FrameScratchLease).
+        struct FrameScratch {
+            std::vector<PendingDraw> Pending;
+            std::vector<PendingDraw> Translucent;
+            std::vector<Batching::Item> BatchItems;
+            std::vector<float> InstanceData;
+            std::vector<ShadowCaster> Casters;
+            MaterialState::IdTable MaterialIds;
+
+            void Reset() {
+                Pending.clear(); Translucent.clear(); BatchItems.clear();
+                InstanceData.clear(); Casters.clear(); MaterialIds.Clear();
+            }
+        };
+
+        class FrameScratchLease {
+        public:
+            FrameScratchLease() {
+                if (!s_InUse) { s_InUse = true; m_Owner = true; m_Scratch = &s_Shared; }
+                else m_Scratch = &m_Local;
+                m_Scratch->Reset();
+            }
+            ~FrameScratchLease() { if (m_Owner) s_InUse = false; }
+            FrameScratchLease(const FrameScratchLease&) = delete;
+            FrameScratchLease& operator=(const FrameScratchLease&) = delete;
+            FrameScratch& Get() { return *m_Scratch; }
+        private:
+            static inline FrameScratch s_Shared;
+            static inline bool s_InUse = false;
+            FrameScratch m_Local;   // so e usado no caso reentrante (vazio e barato)
+            FrameScratch* m_Scratch = nullptr;
+            bool m_Owner = false;
+        };
+    }
+
     void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera) {
         PRISM_PROFILE_SCOPE("Renderer.DrawScene");
         GpuTimer::Scope gpuScene("GPU.DrawScene");
+        // Nada na cena muda durante o desenho: cada matriz de mundo (luzes, sombras,
+        // pre-passe do SSAO e passe principal) e calculada UMA vez neste quadro.
+        Scene::WorldTransformScope worldTransforms(scene);
+        FrameScratchLease scratchLease;
+        FrameScratch& scratch = scratchLease.Get();
         SetCameraPosition(cameraWorldPos);
         ApplyFrameState(scene, camera);
 
@@ -1264,7 +1320,7 @@ namespace Prism {
 
         // Sombras: casters = toda entidade com mesh; ShadowSystem desenha os mapas
         // (cascatas / spot / cubo) e preenche lights[i].ShadowSlot.
-        std::vector<ShadowCaster> casters;
+        std::vector<ShadowCaster>& casters = scratch.Casters;
         {
             bool anyShadowLight = false;
             for (const GPULight& l : lights)
@@ -1364,35 +1420,11 @@ namespace Prism {
         // 1) Coleta os objetos visiveis. Os desenhos sao feitos DEPOIS, agrupados por material e
         //    malha (DrawBatching.h) para enviar o estado do material so quando muda e para
         //    desenhar copias iguais numa chamada instanciada so.
-        struct PendingDraw {
-            Mesh* MeshPtr = nullptr;
-            Shader* ShaderPtr = nullptr; // shader do material (o padrao se nao houver ShaderPath)
-            const MaterialComponent* Material = nullptr;
-            glm::mat4 Model{ 1.0f };
-            glm::vec3 Color{ 0.85f, 0.55f, 0.2f };
-            BonePalette Palette;
-            uint32_t MaterialId = 0;
-        };
-        // Chave do ESTADO de material (cor base nao entra: e por objeto/instancia).
-        struct MaterialKey {
-            bool Has = false;
-            std::string Albedo, Normal, RoughnessMetallic;
-            float Roughness = 1.0f, Metallic = 0.0f;
-            int Blend = 0;
-            float Opacity = 1.0f, Cutoff = 0.5f, TilingX = 1.0f, TilingY = 1.0f, OffsetX = 0.0f, OffsetY = 0.0f;
-            float EmissiveR = 0.0f, EmissiveG = 0.0f, EmissiveB = 0.0f, EmissiveIntensity = 1.0f;
-            bool DoubleSided = false;
-            std::string ShaderPath;
-            std::string Params; // valores dos parametros do shader (texto): materiais com valores diferentes nao se misturam
-            bool operator<(const MaterialKey& o) const {
-                return std::tie(Has, Albedo, Normal, RoughnessMetallic, Roughness, Metallic, Blend, Opacity, Cutoff, TilingX, TilingY, OffsetX, OffsetY, EmissiveR, EmissiveG, EmissiveB, EmissiveIntensity, DoubleSided, ShaderPath, Params)
-                     < std::tie(o.Has, o.Albedo, o.Normal, o.RoughnessMetallic, o.Roughness, o.Metallic, o.Blend, o.Opacity, o.Cutoff, o.TilingX, o.TilingY, o.OffsetX, o.OffsetY, o.EmissiveR, o.EmissiveG, o.EmissiveB, o.EmissiveIntensity, o.DoubleSided, o.ShaderPath, o.Params);
-            }
-        };
-        std::vector<PendingDraw> pending;
-        std::vector<PendingDraw> translucent;
-        std::vector<Batching::Item> batchItems;
-        std::map<MaterialKey, uint32_t> materialIds;
+        // Ids de material (MaterialState.h): mesmo agrupamento de antes, sem strings nem std::map por objeto.
+        std::vector<PendingDraw>& pending = scratch.Pending;
+        std::vector<PendingDraw>& translucent = scratch.Translucent;
+        std::vector<Batching::Item>& batchItems = scratch.BatchItems;
+        MaterialState::IdTable& materialIds = scratch.MaterialIds;
 
         for (auto entityHandle : meshRendererView) {
             auto& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
@@ -1403,8 +1435,7 @@ namespace Prism {
             // grande em Renderer::DrawMesh/Renderer.h) - quando presente,
             // ganha prioridade sobre MeshRendererComponent::Color (a cor
             // solida "legada" de antes do sistema de Material existir).
-            Entity entity(entityHandle, &scene);
-            const MaterialComponent* material = entity.HasComponent<MaterialComponent>() ? &entity.GetComponent<MaterialComponent>() : nullptr;
+            const MaterialComponent* material = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
 
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             switch (TestVisibility(meshRenderer, mesh, model, cameraFrustum, cullMask)) {
@@ -1426,32 +1457,9 @@ namespace Prism {
                 draw.Color = glm::vec3(material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
             draw.Palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
 
-            MaterialKey key;
-            if (material) {
-                key.Has = true;
-                key.Albedo = material->AlbedoPath;
-                key.Normal = material->NormalPath;
-                key.RoughnessMetallic = material->RoughnessMetallicPath;
-                key.Roughness = glm::clamp(material->RoughnessFactor, 0.0f, 1.0f);
-                key.Metallic = glm::clamp(material->MetallicFactor, 0.0f, 1.0f);
-                key.Blend = (int)material->BlendMode;
-                key.Opacity = material->Opacity;
-                key.Cutoff = material->AlphaCutoff;
-                key.TilingX = material->UVTiling.x; key.TilingY = material->UVTiling.y;
-                key.OffsetX = material->UVOffset.x; key.OffsetY = material->UVOffset.y;
-                key.EmissiveR = material->EmissiveColor.x; key.EmissiveG = material->EmissiveColor.y; key.EmissiveB = material->EmissiveColor.z;
-                key.EmissiveIntensity = material->EmissiveIntensity;
-                key.DoubleSided = material->DoubleSided;
-                key.ShaderPath = material->ShaderPath;
-                for (const MaterialShaderParam& param : material->ShaderParams) {
-                    char buffer[160];
-                    std::snprintf(buffer, sizeof(buffer), "%s=%.6g,%.6g,%.6g,%.6g;", param.Name.c_str(), param.Value.x, param.Value.y, param.Value.z, param.Value.w);
-                    key.Params += buffer;
-                }
-            }
-            auto inserted = materialIds.emplace(std::move(key), (uint32_t)materialIds.size());
+            const uint32_t materialId = materialIds.GetOrAdd(material);
 
-            draw.MaterialId = inserted.first->second;
+            draw.MaterialId = materialId;
             // Translucidos saem do agrupamento: precisam de ordem de tras para frente (passo 3 abaixo).
             if (material && material->BlendMode == MaterialBlendMode::Blend) {
                 translucent.push_back(draw);
@@ -1460,7 +1468,7 @@ namespace Prism {
 
             Batching::Item item;
             item.Mesh = mesh;
-            item.MaterialId = inserted.first->second;
+            item.MaterialId = materialId;
             item.Skinned = draw.Palette.Data && draw.Palette.Count > 0;
             item.Index = (uint32_t)pending.size();
             batchItems.push_back(item);
@@ -1486,7 +1494,7 @@ namespace Prism {
             };
 
             uint32_t currentMaterialId = UINT32_MAX;
-            std::vector<float> instanceData;
+            std::vector<float>& instanceData = scratch.InstanceData;
             for (const Batching::Batch& batch : batches) {
                 const Batching::Item& first = batchItems[batch.First];
                 const PendingDraw& firstDraw = pending[first.Index];

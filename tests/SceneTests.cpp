@@ -12,6 +12,7 @@
 #include <Prism/Scene/PrefabSerializer.h>
 #include <Prism/Scene/PrefabSyncer.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -457,6 +458,75 @@ static void TestPrefabSyncer(const fs::path& dir) {
     CHECK(!PrefabSyncer::Diff(inst, dir / "nao-existe.prismprefab").Valid);
 }
 
+// Cache de matriz de mundo (Scene::WorldTransformScope): o resultado COM scope
+// tem que ser identico ao calculo sem scope, em hierarquias profundas, e o cache
+// nao pode vazar de um scope para o seguinte (a cena muda entre quadros).
+static bool NearlyEqual(const glm::mat4& a, const glm::mat4& b) {
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++)
+            if (std::fabs(a[c][r] - b[c][r]) > 1e-4f) return false;
+    return true;
+}
+
+static void TestWorldTransformScope() {
+    Scene scene("WorldCache");
+    std::vector<Entity> chain;
+    Entity previous;
+    for (int i = 0; i < 12; i++) {
+        Entity e = scene.CreateEntity("N" + std::to_string(i));
+        auto& t = e.GetComponent<TransformComponent>();
+        t.Translation = { 1.0f * i, 0.5f, -0.25f * i };
+        t.Rotation = { 3.0f * i, 10.0f, 1.5f * i };
+        t.Scale = { 1.0f + 0.05f * i, 1.0f, 1.0f + 0.02f * i };
+        if (i > 0) scene.SetParent(e, previous);
+        chain.push_back(e);
+        previous = e;
+    }
+    // Um irmao solto (sem pai) no meio, para misturar raizes e filhos.
+    Entity loose = scene.CreateEntity("Solto");
+    loose.GetComponent<TransformComponent>().Translation = { 9, 9, 9 };
+
+    std::vector<glm::mat4> reference;
+    for (Entity& e : chain) reference.push_back(scene.GetWorldTransform(e));
+    const glm::mat4 looseReference = scene.GetWorldTransform(loose);
+
+    {
+        Scene::WorldTransformScope scope(scene);
+        for (size_t i = 0; i < chain.size(); i++)
+            CHECK(NearlyEqual(scene.GetWorldTransform(chain[i]), reference[i]));
+        // consultar de novo (agora vindo do cache) e fora de ordem continua igual
+        for (size_t i = chain.size(); i-- > 0;)
+            CHECK(NearlyEqual(scene.GetWorldTransform(chain[i]), reference[i]));
+        CHECK(NearlyEqual(scene.GetWorldTransform(loose), looseReference));
+
+        // scope aninhado nao invalida nem quebra o externo
+        {
+            Scene::WorldTransformScope inner(scene);
+            CHECK(NearlyEqual(scene.GetWorldTransform(chain.back()), reference.back()));
+        }
+        CHECK(NearlyEqual(scene.GetWorldTransform(chain.back()), reference.back()));
+    }
+
+    // Entre dois scopes a cena muda: o segundo NAO pode devolver valores do primeiro.
+    chain[3].GetComponent<TransformComponent>().Translation = { 100.0f, 0.0f, 0.0f };
+    {
+        Scene::WorldTransformScope scope(scene);
+        CHECK(!NearlyEqual(scene.GetWorldTransform(chain.back()), reference.back()));
+        CHECK(NearlyEqual(scene.GetWorldTransform(chain[1]), reference[1])); // acima da mudanca: igual
+    }
+    // Fora de qualquer scope, volta ao calculo direto e tambem enxerga a mudanca.
+    CHECK(!NearlyEqual(scene.GetWorldTransform(chain.back()), reference.back()));
+
+    // Entidades criadas depois de um scope (indices maiores que o cache) funcionam.
+    for (int i = 0; i < 300; i++) scene.CreateEntity("Extra");
+    Entity late = scene.CreateEntity("Tardia");
+    late.GetComponent<TransformComponent>().Translation = { 1, 2, 3 };
+    {
+        Scene::WorldTransformScope scope(scene);
+        CHECK(NearlyEqual(scene.GetWorldTransform(late), late.GetComponent<TransformComponent>().GetTransform()));
+    }
+}
+
 int main() {
     const fs::path dir = fs::temp_directory_path() / "prism_scene_tests";
     std::error_code ec;
@@ -471,6 +541,7 @@ int main() {
     TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
+    TestWorldTransformScope();
 
     fs::remove_all(dir, ec);
     std::printf("%d checagens, %d falhas\n", g_checks, g_failures);
