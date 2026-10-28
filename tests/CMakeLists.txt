@@ -164,3 +164,38 @@ if(MSVC)
     target_compile_options(PrismShaderParamsTests PRIVATE /utf-8)
 endif()
 add_test(NAME ShaderParamsTests COMMAND PrismShaderParamsTests)
+
+# PrismDiskCacheTests: cache em disco (Core/DiskCache.h) e matematica de miniaturas (Assets/ThumbnailImage.h), so std.
+add_executable(PrismDiskCacheTests
+    DiskCacheTests.cpp
+)
+target_include_directories(PrismDiskCacheTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDiskCacheTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismDiskCacheTests PRIVATE /utf-8)
+endif()
+add_test(NAME DiskCacheTests COMMAND PrismDiskCacheTests)
+
+# PrismLuaBytecodeTests: cache de bytecode do Lua com o Lua/sol2 reais. O codigo testado e o do
+# ScriptEngine.cpp: o trecho entre "BEGIN LuaChunkCache" e "END LuaChunkCache" e extraido na configuracao.
+if(TARGET lua AND TARGET sol2)
+    file(READ ${PRISM_SRC}/Prism/Scripting/ScriptEngine.cpp PRISM_SCRIPT_ENGINE_TEXT)
+    string(FIND "${PRISM_SCRIPT_ENGINE_TEXT}" "// BEGIN LuaChunkCache" PRISM_LUA_CACHE_BEGIN)
+    string(FIND "${PRISM_SCRIPT_ENGINE_TEXT}" "// END LuaChunkCache" PRISM_LUA_CACHE_END)
+    if(PRISM_LUA_CACHE_BEGIN GREATER -1 AND PRISM_LUA_CACHE_END GREATER PRISM_LUA_CACHE_BEGIN)
+        math(EXPR PRISM_LUA_CACHE_LENGTH "${PRISM_LUA_CACHE_END} - ${PRISM_LUA_CACHE_BEGIN}")
+        string(SUBSTRING "${PRISM_SCRIPT_ENGINE_TEXT}" ${PRISM_LUA_CACHE_BEGIN} ${PRISM_LUA_CACHE_LENGTH} PRISM_LUA_CACHE_CODE)
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/LuaChunkCache.inc "${PRISM_LUA_CACHE_CODE}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PRISM_SRC}/Prism/Scripting/ScriptEngine.cpp)
+        add_executable(PrismLuaBytecodeTests LuaBytecodeCacheTests.cpp)
+        target_include_directories(PrismLuaBytecodeTests PRIVATE ${PRISM_SRC} ${CMAKE_CURRENT_BINARY_DIR})
+        target_compile_features(PrismLuaBytecodeTests PRIVATE cxx_std_20)
+        target_link_libraries(PrismLuaBytecodeTests PRIVATE lua sol2)
+        if(MSVC)
+            target_compile_options(PrismLuaBytecodeTests PRIVATE /utf-8 /bigobj)
+        endif()
+        add_test(NAME LuaBytecodeTests COMMAND PrismLuaBytecodeTests)
+    else()
+        message(WARNING "ScriptEngine.cpp: marcadores LuaChunkCache nao encontrados; PrismLuaBytecodeTests nao sera criado.")
+    endif()
+endif()

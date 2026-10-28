@@ -13,6 +13,7 @@
 #include "../UI/UISystem.h"
 #include "../UI/UIDocument.h"
 #include "../Core/Log.h"
+#include "../Core/DiskCache.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -23,6 +24,67 @@
 #include <vector>
 
 namespace Prism {
+
+    // --- Cache de bytecode ---------------------------------------------------
+    // Compilar o texto Lua e barato para um script, mas a cada abertura de projeto/Play/hot reload
+    // todos sao recompilados. O bytecode (com informacao de depuracao: mensagens de erro continuam com
+    // arquivo e linha) fica em <Projeto>/Cache/LuaBytecode, chaveado pelo texto, pelo nome do chunk
+    // (o bytecode embute o caminho) e pela versao do Lua. Qualquer problema (sem projeto, disco, versao)
+    // cai no caminho normal pelo texto.
+    static std::filesystem::path LuaBytecodeDirectory() {
+        auto project = Project::GetActive();
+        if (!project)
+            return {};
+        return project->GetProjectDirectory() / "Cache" / "LuaBytecode";
+    }
+
+    // BEGIN LuaChunkCache (extraido por tests/LuaBytecodeCacheTests.cpp)
+    static int LuaDumpWriter(lua_State*, const void* data, size_t size, void* userData) {
+        auto* out = static_cast<std::vector<uint8_t>*>(userData);
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        out->insert(out->end(), bytes, bytes + size);
+        return 0;
+    }
+
+    static sol::load_result LoadLuaChunkCached(sol::state& lua, const std::string& source, const std::string& chunkName,
+                                               const std::filesystem::path& directory) {
+        if (directory.empty())
+            return lua.load(source, chunkName);
+
+        static bool s_Pruned = false;
+        if (!s_Pruned) {
+            s_Pruned = true;
+            DiskCache::Prune(directory, 64ull * 1024 * 1024);
+        }
+
+        const std::string key = DiskCache::KeyName({
+            DiskCache::Hash64(source), DiskCache::Hash64(chunkName),
+            DiskCache::Hash64(std::string(LUA_VERSION) + "/" + std::to_string(sizeof(lua_Integer)) + std::to_string(sizeof(lua_Number))),
+            1 /* formato do cache de bytecode */ });
+
+        std::vector<uint8_t> bytecode;
+        if (DiskCache::Read(directory, key, bytecode)) {
+            sol::load_result cached = lua.load_buffer(reinterpret_cast<const char*>(bytecode.data()), bytecode.size(), chunkName, sol::load_mode::binary);
+            if (cached.valid())
+                return cached;
+            // bytecode que o Lua nao aceita (cache de outra build): refaz pelo texto e sobrescreve abaixo
+        }
+
+        sol::load_result compiled = lua.load(source, chunkName);
+        if (compiled.valid()) {
+            sol::function function = compiled;
+            lua_State* state = lua.lua_state();
+            function.push();
+            std::vector<uint8_t> dumped;
+            const int dumpResult = lua_dump(state, LuaDumpWriter, &dumped, 0);
+            lua_pop(state, 1);
+            if (dumpResult == 0 && !dumped.empty())
+                DiskCache::Write(directory, key, dumped);
+        }
+        return compiled;
+    }
+    // END LuaChunkCache
+
 
     // Referencias Lua para documentos .prismui: guardam (cena, entidade[, id]) e resolvem a cada
     // acesso, entao continuam validas se o arquivo for recarregado (hot reload).
@@ -914,7 +976,7 @@ namespace Prism {
         // limitacao do sol2 nessa API especifica. load()+chamada manual e
         // uma API mais simples/direta do sol2 que nao passa por essa
         // sobrecarga problematica.
-        sol::load_result loadResult = s_Lua->load(source, scriptAbsolutePath.string());
+        sol::load_result loadResult = LoadLuaChunkCached(*s_Lua, source, scriptAbsolutePath.string(), LuaBytecodeDirectory());
         if (!loadResult.valid()) {
             sol::error err = loadResult;
             PRISM_CORE_ERROR("ScriptEngine: erro ao carregar '", scriptAbsolutePath.string(), "': ", err.what());

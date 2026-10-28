@@ -47,6 +47,10 @@ namespace Prism {
         // NORMAL/ROUGHNESS/METALLIC sao dados tecnicos (nao cor
         // percebida) e devem ficar com isSRGB=false (dado linear puro).
         explicit Texture2D(const std::string& path, bool isSRGB);
+
+        // Textura a partir de pixels RGBA8 ja decodificados (miniaturas, ver ThumbnailCache). 'label' vai
+        // para GetPath(). Mesma amostragem da outra forma (mipmaps, repeat).
+        Texture2D(uint32_t width, uint32_t height, const uint8_t* rgba, bool isSRGB, const std::string& label);
         ~Texture2D();
 
         Texture2D(const Texture2D&) = delete;

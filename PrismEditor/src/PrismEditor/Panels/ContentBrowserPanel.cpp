@@ -3,6 +3,7 @@
 #include "../Core/EditorTheme.h"
 #include <Prism/Assets/AssetMeta.h>
 #include <Prism/Core/Log.h>
+#include <Prism/Renderer/ThumbnailCache.h>
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
@@ -452,6 +453,7 @@ namespace PrismEditor {
     }
 
     void ContentBrowserPanel::RenderGrid() {
+        Prism::ThumbnailCache::NewFrame();
         const EditorTheme& theme = EditorTheme::Get();
         ImGuiIO& io = ImGui::GetIO();
 
@@ -507,9 +509,9 @@ namespace PrismEditor {
                 const bool isTyped = isImage || isPrefabFile || isMaterialFile || isModelFile || isAudioFile;
                 const bool isProtectedEntry = IsProtected(entry.Path);
 
-                // Miniatura de imagem, pelo mesmo cache do Renderer usado pelo
-                // painel de Material (isSRGB=true: so preview, a diferenca e cosmetica).
-                Prism::Texture2D* thumbnail = isImage ? Prism::Renderer::GetOrLoadTexture(entry.Path.string(), /*isSRGB*/ true) : nullptr;
+                // Miniatura de imagem: reduzida e guardada em Cache/Thumbnails (ver ThumbnailCache.h),
+                // em vez de carregar a imagem inteira na GPU so para mostrar um icone.
+                Prism::Texture2D* thumbnail = isImage ? Prism::ThumbnailCache::Get(entry.Path) : nullptr;
                 const bool hasThumbnail = thumbnail && thumbnail->IsValid();
 
                 FileIcon icon = entry.IsDirectory ? FileIcon::Folder
