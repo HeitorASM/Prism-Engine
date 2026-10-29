@@ -61,6 +61,13 @@ int main() {
     CHECK(Profiler::CounterValue(Profiler::Counter::ShadowDrawCalls) == 1);
     CHECK(Profiler::CounterValue(Profiler::Counter::ShadowTriangles) == 30);
 
+    // sombra instanciada: 1 chamada, triangulos de todas as copias
+    Profiler::BeginFrame();
+    Profiler::CountShadowDraw(90, 4);
+    Profiler::EndFrame();
+    CHECK(Profiler::CounterValue(Profiler::Counter::ShadowDrawCalls) == 1);
+    CHECK(Profiler::CounterValue(Profiler::Counter::ShadowTriangles) == 120);
+
     // desenho instanciado: 1 chamada, triangulos de todas as copias
     Profiler::BeginFrame();
     Profiler::CountDraw(300, 50);

@@ -36,19 +36,23 @@ namespace Prism::Batching {
         bool Instanced = false;       // true: desenhar os 'Count' objetos com UMA chamada
     };
 
-    inline std::vector<Batch> Build(std::vector<Item>& items, bool allowInstancing, uint32_t maxInstances) {
+    // Ordem dos lotes: material, malha, nao-animadas primeiro, indice original.
+    inline bool ItemLess(const Item& a, const Item& b) {
+        if (a.MaterialId != b.MaterialId) return a.MaterialId < b.MaterialId;
+        if (a.Mesh != b.Mesh) return std::less<const void*>{}(a.Mesh, b.Mesh);
+        if (a.Skinned != b.Skinned) return !a.Skinned; // nao-animadas primeiro
+        return a.Index < b.Index;
+    }
+
+    // Agrupa itens que JA ESTAO ordenados por ItemLess (ou por qualquer ordem que
+    // mantenha iguais juntos). Util quando a ordenacao e feita uma vez e varios
+    // passes (ex: sombras) escolhem subconjuntos dela, sem reordenar a cada passe.
+    inline std::vector<Batch> GroupSorted(const std::vector<Item>& items, bool allowInstancing, uint32_t maxInstances) {
         std::vector<Batch> batches;
         if (items.empty())
             return batches;
         if (maxInstances < 2)
             allowInstancing = false;
-
-        std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-            if (a.MaterialId != b.MaterialId) return a.MaterialId < b.MaterialId;
-            if (a.Mesh != b.Mesh) return std::less<const void*>{}(a.Mesh, b.Mesh);
-            if (a.Skinned != b.Skinned) return !a.Skinned; // nao-animadas primeiro
-            return a.Index < b.Index;
-        });
 
         size_t i = 0;
         while (i < items.size()) {
@@ -72,6 +76,11 @@ namespace Prism::Batching {
             i = j;
         }
         return batches;
+    }
+
+    inline std::vector<Batch> Build(std::vector<Item>& items, bool allowInstancing, uint32_t maxInstances) {
+        std::sort(items.begin(), items.end(), ItemLess);
+        return GroupSorted(items, allowInstancing, maxInstances);
     }
 
 }

@@ -155,7 +155,8 @@ namespace Prism {
             Count(Counter::Triangles, (indexCount / 3) * instances);
             if (instances > 1) { Count(Counter::InstancedDraws); Count(Counter::InstancedObjects, instances); }
         }
-        static void CountShadowDraw(uint32_t indexCount) { Count(Counter::ShadowDrawCalls); Count(Counter::ShadowTriangles, indexCount / 3); }
+        // 'instances' > 1: uma chamada instanciada desenhando varias copias (conta 1 desenho, N x triangulos).
+        static void CountShadowDraw(uint32_t indexCount, uint32_t instances = 1) { Count(Counter::ShadowDrawCalls); Count(Counter::ShadowTriangles, (indexCount / 3) * instances); }
 
         // --- leitura (para o painel) ----------------------------------------
         static const ZoneStat& Frame() { return S().Frame; }

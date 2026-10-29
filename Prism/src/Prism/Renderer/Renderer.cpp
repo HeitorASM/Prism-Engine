@@ -1338,6 +1338,11 @@ namespace Prism {
                     ShadowCaster caster;
                     caster.Geometry = geometry;
                     caster.Model = scene.GetWorldTransform(Entity(handle, &scene));
+                    if (!geometry->IsSkinned()) {
+                        caster.LocalMin = geometry->GetLocalBoundsMin();
+                        caster.LocalMax = geometry->GetLocalBoundsMax();
+                        caster.HasBounds = true;
+                    }
                     BonePalette palette = ResolveBonePalette(scene, handle, casterRenderer, geometry);
                     caster.Bones = palette.Data;
                     caster.BoneCount = palette.Count;

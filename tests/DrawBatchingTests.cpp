@@ -1,5 +1,6 @@
 // DrawBatchingTests.cpp - agrupamento de desenhos (Renderer/DrawBatching.h, so std).
 #include <Prism/Renderer/DrawBatching.h>
+#include <algorithm>
 #include <cstdio>
 #include <set>
 
@@ -118,6 +119,33 @@ int main() {
       CHECK(b.size() <= 12 * 4);                 // 10000/12 ~ 833 por grupo: 1 lote cada
       CHECK(b.size() >= 12);
       CheckCoverage(v, b, 10000); }
+
+    // GroupSorted: ordena UMA vez e cada passe (sombras) agrupa so um subconjunto - igual a Build do subconjunto
+    { std::vector<Item> all;
+      int* meshes[3] = { &A, &B, &C };
+      for (uint32_t i = 0; i < 300; i++) all.push_back(Make(meshes[i % 3], 0, i, i % 7 == 0));
+      std::sort(all.begin(), all.end(), ItemLess);
+      std::vector<Item> subset;                                   // "visiveis para a luz": 2 de cada 3, na mesma ordem
+      for (size_t i = 0; i < all.size(); i++) if (i % 3 != 0) subset.push_back(all[i]);
+
+      std::vector<Item> viaBuild = subset;
+      auto expected = Build(viaBuild, true, 16);                  // ordena de novo
+      auto grouped = GroupSorted(subset, true, 16);               // usa a ordem que ja tem
+      CHECK(grouped.size() == expected.size());
+      for (size_t i = 0; i < grouped.size() && i < expected.size(); i++)
+          CHECK(grouped[i].First == expected[i].First && grouped[i].Count == expected[i].Count && grouped[i].Instanced == expected[i].Instanced);
+      for (size_t i = 0; i < subset.size(); i++) CHECK(subset[i].Index == viaBuild[i].Index);
+      CheckCoverage(subset, grouped, subset.size());
+      CHECK(GroupSorted(std::vector<Item>{}, true, 16).empty()); }
+
+    // GroupSorted respeita o limite por lote e o desligamento do instancing
+    { std::vector<Item> v; for (uint32_t i = 0; i < 10; i++) v.push_back(Make(&A, 0, i));
+      auto b = GroupSorted(v, true, 4);                           // 4 + 4 + 2
+      CHECK(b.size() == 3 && b[0].Count == 4 && b[1].Count == 4 && b[2].Count == 2);
+      for (auto& x : b) CHECK(x.Instanced);
+      auto off = GroupSorted(v, false, 4);
+      CHECK(off.size() == 10);
+      for (auto& x : off) CHECK(!x.Instanced); }
 
     std::printf("%d checagens, %d falhas\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

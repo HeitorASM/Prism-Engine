@@ -46,6 +46,11 @@ namespace Prism {
         glm::mat4 Model{ 1.0f };
         const glm::mat4* Bones = nullptr; // paleta de ossos (malha animada) - nulo = sem skinning
         uint32_t BoneCount = 0;
+
+        // Caixa LOCAL da malha, para descartar o caster fora do volume da luz. HasBounds = false
+        // (malha animada: a pose pode sair da caixa) = nunca descartado.
+        glm::vec3 LocalMin{ 0.0f }, LocalMax{ 0.0f };
+        bool HasBounds = false;
     };
 
     // Resultado de um quadro: o que o basic.frag precisa para amostrar.

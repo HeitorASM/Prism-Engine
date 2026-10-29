@@ -3,6 +3,8 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include "ShadowSystem.h"
+#include "Culling.h"
+#include "DrawBatching.h"
 #include "../Core/Log.h"
 #include "../Animation/ModelRig.h"
 
@@ -10,6 +12,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -87,19 +90,106 @@ namespace Prism {
             return true;
         }
 
-        void DrawCasters(const std::vector<ShadowCaster>& casters, const Shader& shader) {
-            for (const ShadowCaster& caster : casters) {
+        // --- Culling por luz + instancing -----------------------------------------
+        // Os casters sao ordenados UMA vez por quadro (malha, animada?) em
+        // s_SortedItems; cada passe (cascata, spot, face do cubo) escolhe o
+        // subconjunto que toca o volume da luz e agrupa copias iguais da mesma
+        // malha numa chamada instanciada. O descarte e sem perda: o GL recortaria
+        // esses objetos de qualquer jeito (nao ha depth clamp nas sombras).
+        constexpr uint32_t kMaxShadowInstances = 1024;
+        std::vector<Batching::Item> s_SortedItems;   // todos os casters validos, em ordem de lote
+        std::vector<Batching::Item> s_PassItems;     // os visiveis para a luz do passe atual
+        std::vector<float> s_ShadowInstanceData;     // mat4 por instancia
+        std::vector<std::pair<GLFWwindow*, uint32_t>> s_InstanceBuffers; // um por contexto GLFW
+
+        uint32_t InstanceBufferForCurrentContext() {
+            GLFWwindow* current = glfwGetCurrentContext();
+            for (auto& [window, buffer] : s_InstanceBuffers)
+                if (window == current)
+                    return buffer;
+            GLuint buffer = 0;
+            glCreateBuffers(1, &buffer);
+            s_InstanceBuffers.emplace_back(current, buffer);
+            return buffer;
+        }
+
+        void SortCasters(const std::vector<ShadowCaster>& casters) {
+            s_SortedItems.clear();
+            for (uint32_t i = 0; i < (uint32_t)casters.size(); ++i) {
+                const ShadowCaster& caster = casters[i];
                 if (!caster.Geometry)
                     continue;
-                shader.SetMat4("u_Model", glm::value_ptr(caster.Model));
-                // Malha animada: a sombra segue a pose atual (ver shaders/skinning.glsl).
-                const bool skinned = caster.Bones && caster.BoneCount > 0;
-                shader.SetInt("u_Skinned", skinned ? 1 : 0);
-                if (skinned)
-                    shader.SetMat4Array("u_Bones", glm::value_ptr(caster.Bones[0]), std::min(caster.BoneCount, (uint32_t)kMaxBones));
-                caster.Geometry->BindForCurrentContext();
-                glDrawElements(GL_TRIANGLES, (GLsizei)caster.Geometry->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
-                Profiler::CountShadowDraw(caster.Geometry->GetIndexCount());
+                Batching::Item item;
+                item.Mesh = caster.Geometry;
+                item.MaterialId = 0; // sombra nao depende de material
+                item.Skinned = caster.Bones && caster.BoneCount > 0;
+                item.Index = i;
+                s_SortedItems.push_back(item);
+            }
+            std::sort(s_SortedItems.begin(), s_SortedItems.end(), Batching::ItemLess);
+        }
+
+        bool CasterVisible(const ShadowCaster& caster, const Culling::Frustum& frustum) {
+            if (!caster.HasBounds)
+                return true;
+            return frustum.IntersectsLocalBox(glm::value_ptr(caster.LocalMin), glm::value_ptr(caster.LocalMax), glm::value_ptr(caster.Model));
+        }
+
+        void DrawCasterSingle(const ShadowCaster& caster, const Shader& shader) {
+            shader.SetMat4("u_Model", glm::value_ptr(caster.Model));
+            // Malha animada: a sombra segue a pose atual (ver shaders/skinning.glsl).
+            const bool skinned = caster.Bones && caster.BoneCount > 0;
+            shader.SetInt("u_Skinned", skinned ? 1 : 0);
+            if (skinned)
+                shader.SetMat4Array("u_Bones", glm::value_ptr(caster.Bones[0]), std::min(caster.BoneCount, (uint32_t)kMaxBones));
+            caster.Geometry->BindForCurrentContext();
+            glDrawElements(GL_TRIANGLES, (GLsizei)caster.Geometry->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+            Profiler::CountShadowDraw(caster.Geometry->GetIndexCount());
+        }
+
+        void DrawCasters(const std::vector<ShadowCaster>& casters, const Shader& shader, const Culling::Frustum& frustum) {
+            s_PassItems.clear();
+            for (const Batching::Item& item : s_SortedItems)
+                if (CasterVisible(casters[item.Index], frustum))
+                    s_PassItems.push_back(item);
+            if (s_PassItems.empty())
+                return;
+
+            shader.SetInt("u_Instanced", 0);
+            const std::vector<Batching::Batch> batches = Batching::GroupSorted(s_PassItems, /*allowInstancing=*/true, kMaxShadowInstances);
+            for (const Batching::Batch& batch : batches) {
+                const ShadowCaster& first = casters[s_PassItems[batch.First].Index];
+                if (!batch.Instanced) {
+                    DrawCasterSingle(first, shader);
+                    continue;
+                }
+
+                s_ShadowInstanceData.resize(batch.Count * 16);
+                for (size_t k = 0; k < batch.Count; ++k)
+                    std::memcpy(&s_ShadowInstanceData[k * 16], glm::value_ptr(casters[s_PassItems[batch.First + k].Index].Model), 16 * sizeof(float));
+                const uint32_t instanceBuffer = InstanceBufferForCurrentContext();
+                glNamedBufferData(instanceBuffer, (GLsizeiptr)(s_ShadowInstanceData.size() * sizeof(float)), s_ShadowInstanceData.data(), GL_STREAM_DRAW);
+
+                shader.SetInt("u_Instanced", 1);
+                shader.SetInt("u_Skinned", 0); // malha animada nunca entra num lote instanciado
+                first.Geometry->BindForCurrentContext();
+                glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+                for (int column = 0; column < 4; ++column) { // mat4 = 4 atributos vec4 (locais 8-11, como em basic.vert)
+                    glEnableVertexAttribArray(8 + column);
+                    glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(float), (const void*)(uintptr_t)(column * 4 * sizeof(float)));
+                    glVertexAttribDivisor(8 + column, 1);
+                }
+                glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)first.Geometry->GetIndexCount(), GL_UNSIGNED_INT, nullptr, (GLsizei)batch.Count);
+                Profiler::CountShadowDraw(first.Geometry->GetIndexCount(), (uint32_t)batch.Count);
+
+                // O VAO e da malha (compartilhado com os desenhos normais): devolve ao estado original.
+                for (int location = 8; location <= 11; ++location) {
+                    glVertexAttribDivisor(location, 0);
+                    glDisableVertexAttribArray(location);
+                }
+                glBindVertexArray(0);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                shader.SetInt("u_Instanced", 0);
             }
             glBindVertexArray(0);
         }
@@ -200,7 +290,7 @@ namespace Prism {
                     return false;
                 }
                 s_DepthShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(frame.CascadeMatrix[c]));
-                DrawCasters(casters, *s_DepthShader);
+                DrawCasters(casters, *s_DepthShader, Culling::Frustum::FromViewProjection(glm::value_ptr(frame.CascadeMatrix[c])));
             }
             s_DepthShader->Unbind();
             return true;
@@ -226,7 +316,7 @@ namespace Prism {
                 return false;
             s_DepthShader->Bind();
             s_DepthShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(frame.SpotMatrix[slot]));
-            DrawCasters(casters, *s_DepthShader);
+            DrawCasters(casters, *s_DepthShader, Culling::Frustum::FromViewProjection(glm::value_ptr(frame.SpotMatrix[slot])));
             s_DepthShader->Unbind();
             return true;
         }
@@ -254,7 +344,7 @@ namespace Prism {
                 }
                 const glm::mat4 matrix = projection * glm::lookAt(light.Position, light.Position + directions[face], ups[face]);
                 s_PointShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(matrix));
-                DrawCasters(casters, *s_PointShader);
+                DrawCasters(casters, *s_PointShader, Culling::Frustum::FromViewProjection(glm::value_ptr(matrix)));
             }
             s_PointShader->Unbind();
             return true;
@@ -273,6 +363,9 @@ namespace Prism {
         for (auto& [window, framebuffer] : s_Framebuffers)
             glDeleteFramebuffers(1, &framebuffer);
         s_Framebuffers.clear();
+        for (auto& [window, buffer] : s_InstanceBuffers)
+            glDeleteBuffers(1, &buffer);
+        s_InstanceBuffers.clear();
         if (s_CascadeTexture) { glDeleteTextures(1, &s_CascadeTexture); s_CascadeTexture = 0; }
         if (s_SpotTexture) { glDeleteTextures(1, &s_SpotTexture); s_SpotTexture = 0; }
         if (s_PointTexture) { glDeleteTextures(1, &s_PointTexture); s_PointTexture = 0; }
@@ -330,6 +423,8 @@ namespace Prism {
             sceneMax = glm::max(sceneMax, position);
         }
         const float sceneRadius = glm::length(sceneMax - sceneMin) * 0.5f + 2.0f;
+
+        SortCasters(casters); // uma vez por quadro; cada passe so filtra (ver DrawCasters)
 
         // Estado do GL: guarda e restaura (o chamador continua o quadro dele).
         GLint previousFramebuffer = 0, previousViewport[4];
