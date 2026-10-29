@@ -375,6 +375,26 @@ namespace Prism {
         // permitir que ferramentas de editor (ex: um futuro "AO buffer
         // viewer" de debug) reusem o resultado sem duplicar logica.
         static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, uint32_t cullMask = Culling::kAllLayers);
+
+        // Um objeto que ENTRA na imagem de uma camera (passou por camada e frustum), com tudo que os
+        // passes de desenho precisam ja resolvido: malha, material, matriz de mundo e paleta de ossos.
+        // DrawScene monta esta lista UMA vez por quadro e a usa no pre-passe do SSAO e no passe
+        // principal (antes, cada passe repetia o percurso da cena, a matriz de mundo e a busca da malha).
+        // Os ponteiros valem ate a cena mudar (so durante o quadro).
+        struct VisibleMesh {
+            entt::entity Entity = entt::null;
+            Mesh* MeshPtr = nullptr;
+            const MeshRendererComponent* MeshRenderer = nullptr;
+            const MaterialComponent* Material = nullptr; // nulo = entidade sem MaterialComponent
+            glm::mat4 Model{ 1.0f };
+            BonePalette Palette;
+        };
+        // Preenche 'out' (limpa antes) e atualiza GetCullStats(). Entidades cujo modelo falhou ao carregar
+        // contam como desenhadas (como antes) mas nao entram na lista.
+        static void CollectVisibleMeshes(class Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out);
+        // Mesmo pre-passe, a partir de uma lista ja coletada. Objetos transluscidos/recortados ficam de fora do
+        // SSAO; copias iguais da mesma malha sao desenhadas por instancing.
+        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, const std::vector<VisibleMesh>& visible);
         static SSAO* RenderSSAOPass(GeometryBuffer& gBuffer, const float* projection, uint32_t width, uint32_t height);
         static void RenderSSAOBlurPass(SSAO& ssao);
 

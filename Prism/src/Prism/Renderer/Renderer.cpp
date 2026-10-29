@@ -1096,7 +1096,48 @@ namespace Prism {
 
     const Renderer::CullStats& Renderer::GetCullStats() { return s_CullStats; }
 
+    void Renderer::CollectVisibleMeshes(Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out) {
+        out.clear();
+        auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+        for (auto entityHandle : meshRendererView) {
+            const MeshRendererComponent& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
+            const glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
+            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
+            switch (TestVisibility(meshRenderer, mesh, model, frustum, cullMask)) {
+                case Visibility::LayerHidden:     s_CullStats.LayerHidden++;     continue;
+                case Visibility::OutsideFrustum:  s_CullStats.FrustumCulled++;   continue;
+                case Visibility::Visible:         break;
+            }
+            s_CullStats.Drawn++;
+            if (!mesh)
+                continue; // modelo que falhou ao carregar: nada a desenhar
+
+            VisibleMesh visible;
+            visible.Entity = entityHandle;
+            visible.MeshPtr = mesh;
+            visible.MeshRenderer = &meshRenderer;
+            // MaterialComponent e OPCIONAL (uma entidade pode ter so MeshRendererComponent); quando presente,
+            // ganha prioridade sobre MeshRendererComponent::Color.
+            visible.Material = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
+            visible.Model = model;
+            visible.Palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
+            out.push_back(visible);
+        }
+    }
+
+    // Compatibilidade: pre-passe que faz a propria coleta (DrawScene usa a sobrecarga com a lista).
     GeometryBuffer* Renderer::RenderGeometryPrePass(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, uint32_t cullMask) {
+        const CullStats savedStats = s_CullStats; // esta coleta nao e a do passe principal
+        const glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
+        const Culling::Frustum frustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
+        std::vector<VisibleMesh> visible;
+        CollectVisibleMeshes(scene, frustum, cullMask, visible);
+        s_CullStats = savedStats;
+        return RenderGeometryPrePass(scene, view, projection, width, height, visible);
+    }
+
+    GeometryBuffer* Renderer::RenderGeometryPrePass(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, const std::vector<VisibleMesh>& visible) {
+        (void)scene; // a lista ja vem coletada
         // Aloca sob demanda (mesma logica de s_ShadowMap, ver comentario
         // em Renderer.h) - so na primeira vez que DrawScene decide usar
         // SSAO (ver flag em DrawScene). Redimensiona se a resolucao da
@@ -1113,34 +1154,86 @@ namespace Prism {
         glm::mat4 viewProjection = glm::make_mat4(projection) * glm::make_mat4(view);
         s_GeometryPrePassShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
         s_GeometryPrePassShader->SetMat4("u_View", view);
+        // Instancias: normal em view-space = inversa-transposta(view) * matriz normal de mundo (ver geometry_prepass.vert).
+        const glm::mat4 viewMatrix = glm::make_mat4(view);
+        const glm::mat3 viewNormalBase = ComputeNormalMatrix(viewMatrix);
+        s_GeometryPrePassShader->SetMat3("u_ViewNormalBase", glm::value_ptr(viewNormalBase));
+        s_GeometryPrePassShader->SetInt("u_Instanced", 0);
 
-        const Culling::Frustum frustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
-        auto meshView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
-        for (auto entityHandle : meshView) {
-            auto& meshRenderer = meshView.get<MeshRendererComponent>(entityHandle);
-            glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-            Mesh* prePassMesh = ResolveMesh(meshRenderer);
-            if (!prePassMesh || TestVisibility(meshRenderer, prePassMesh, model, frustum, cullMask) != Visibility::Visible)
-                continue; // fora da imagem (camada ou frustum): nao ocupa o SSAO
-            // Translucidos e recortes nao ocupam o SSAO (um vidro nao escurece o que esta atras;
-            // furos de folhagem viram AO solido).
-            if (const MaterialComponent* surface = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
-                surface && surface->BlendMode != MaterialBlendMode::Opaque)
+        // Translucidos e recortes nao ocupam o SSAO (um vidro nao escurece o que esta atras;
+        // furos de folhagem viram AO solido). Material nao importa para o pre-passe: agrupa so por malha.
+        static std::vector<Batching::Item> s_PrePassItems;
+        static std::vector<float> s_PrePassInstanceData;
+        s_PrePassItems.clear();
+        for (uint32_t i = 0; i < (uint32_t)visible.size(); ++i) {
+            const VisibleMesh& object = visible[i];
+            if (!object.MeshPtr)
                 continue;
-            s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(model));
-            {
+            if (object.Material && object.Material->BlendMode != MaterialBlendMode::Opaque)
+                continue;
+            Batching::Item item;
+            item.Mesh = object.MeshPtr;
+            item.MaterialId = 0;
+            item.Skinned = object.Palette.Data && object.Palette.Count > 0;
+            item.Index = i;
+            s_PrePassItems.push_back(item);
+        }
+        const std::vector<Batching::Batch> batches = Batching::Build(s_PrePassItems, s_InstancingEnabled, kMaxInstancesPerDraw);
+
+        for (const Batching::Batch& batch : batches) {
+            const VisibleMesh& first = visible[s_PrePassItems[batch.First].Index];
+            if (!batch.Instanced) {
+                s_GeometryPrePassShader->SetMat4("u_Model", glm::value_ptr(first.Model));
                 // View-space: a matriz normal e a de (view * model), nao so
                 // a do model - a normal chega ao SSAO ja em view-space.
-                glm::mat3 viewNormalMatrix = ComputeNormalMatrix(glm::make_mat4(view) * model);
+                const glm::mat3 viewNormalMatrix = ComputeNormalMatrix(viewMatrix * first.Model);
                 s_GeometryPrePassShader->SetMat3("u_ViewNormalMatrix", glm::value_ptr(viewNormalMatrix));
+                UploadBones(*s_GeometryPrePassShader, first.Palette.Data, first.Palette.Count);
+                first.MeshPtr->BindForCurrentContext();
+                glDrawElements(GL_TRIANGLES, (GLsizei)first.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
+                Profiler::CountDraw(first.MeshPtr->GetIndexCount());
+                continue;
             }
 
-            Mesh* mesh = prePassMesh;
-            BonePalette palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
-            UploadBones(*s_GeometryPrePassShader, palette.Data, palette.Count);
-            mesh->BindForCurrentContext();
-            glDrawElements(GL_TRIANGLES, (GLsizei)mesh->GetIndexCount(), GL_UNSIGNED_INT, nullptr);
-            Profiler::CountDraw(mesh->GetIndexCount());
+            // Lote instanciado: mesmo formato de instancia do passe principal (modelo + matriz normal de mundo + cor);
+            // a cor nao e usada aqui.
+            s_PrePassInstanceData.resize(batch.Count * kInstanceFloats);
+            for (size_t k = 0; k < batch.Count; k++) {
+                const VisibleMesh& object = visible[s_PrePassItems[batch.First + k].Index];
+                const glm::mat3 normalMatrix = ComputeNormalMatrix(object.Model);
+                float* out = &s_PrePassInstanceData[k * kInstanceFloats];
+                std::memcpy(out, glm::value_ptr(object.Model), 16 * sizeof(float));
+                std::memcpy(out + 16, glm::value_ptr(normalMatrix), 9 * sizeof(float));
+                out[25] = out[26] = out[27] = 0.0f;
+            }
+            const uint32_t instanceBuffer = GetInstanceBufferForCurrentContext();
+            glNamedBufferData(instanceBuffer, (GLsizeiptr)(s_PrePassInstanceData.size() * sizeof(float)), s_PrePassInstanceData.data(), GL_STREAM_DRAW);
+
+            s_GeometryPrePassShader->SetInt("u_Instanced", 1);
+            s_GeometryPrePassShader->SetInt("u_Skinned", 0); // malha animada nunca entra num lote instanciado
+            first.MeshPtr->BindForCurrentContext();
+            glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+            for (int column = 0; column < 4; column++) { // mat4 = 4 atributos vec4 (locais 8-11)
+                glEnableVertexAttribArray(8 + column);
+                glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(column * 4 * sizeof(float)));
+                glVertexAttribDivisor(8 + column, 1);
+            }
+            for (int column = 0; column < 3; column++) { // mat3 = 3 atributos vec3 (locais 12-14)
+                glEnableVertexAttribArray(12 + column);
+                glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)((16 + column * 3) * sizeof(float)));
+                glVertexAttribDivisor(12 + column, 1);
+            }
+            glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)first.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr, (GLsizei)batch.Count);
+            Profiler::CountDraw(first.MeshPtr->GetIndexCount(), (uint32_t)batch.Count);
+
+            // O VAO e da malha (compartilhado com os desenhos normais): devolve ao estado original.
+            for (int location = 8; location <= 14; location++) {
+                glVertexAttribDivisor(location, 0);
+                glDisableVertexAttribArray(location);
+            }
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            s_GeometryPrePassShader->SetInt("u_Instanced", 0);
         }
 
         glBindVertexArray(0);
@@ -1242,11 +1335,12 @@ namespace Prism {
             std::vector<Batching::Item> BatchItems;
             std::vector<float> InstanceData;
             std::vector<ShadowCaster> Casters;
+            std::vector<Renderer::VisibleMesh> Visible;
             MaterialState::IdTable MaterialIds;
 
             void Reset() {
                 Pending.clear(); Translucent.clear(); BatchItems.clear();
-                InstanceData.clear(); Casters.clear(); MaterialIds.Clear();
+                InstanceData.clear(); Casters.clear(); Visible.clear(); MaterialIds.Clear();
             }
         };
 
@@ -1298,6 +1392,9 @@ namespace Prism {
         const uint32_t cullMask = (camera.LayoutMagic == CameraRenderSettings::kLayoutMagic) ? camera.CullMask : Culling::kAllLayers;
         const Culling::Frustum cameraFrustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
         s_CullStats = CullStats{};
+
+        // Objetos visiveis desta camera, coletados UMA vez (pre-passe do SSAO e passe principal usam a mesma lista).
+        CollectVisibleMeshes(scene, cameraFrustum, cullMask, scratch.Visible);
 
         // Coleta todas as luzes da cena UMA VEZ por frame (nao por
         // entidade desenhada) - reusada em todo DrawMesh abaixo, ja que a
@@ -1370,7 +1467,7 @@ namespace Prism {
         GpuTimer::Scope gSSAO("GPU.SSAO");
         SSAO* ssao = nullptr;
         if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0) {
-            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight, cullMask);
+            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight, scratch.Visible);
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
             glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
 
@@ -1414,15 +1511,8 @@ namespace Prism {
         // Fundo antes da geometria (preenche a tela inteira).
         DrawSky(view, projection, cameraWorldPos);
 
-        // Toda entidade com TransformComponent + MeshRendererComponent,
-        // usando a transform de MUNDO (Scene::GetWorldTransform,
-        // ancestrais/parenting inclusos).
-        //
-        // Nome 'meshRendererView' (nao so 'view') para nao colidir com o
-        // parametro 'view' (matriz de camera) desta funcao.
-        auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
-
-        // 1) Coleta os objetos visiveis. Os desenhos sao feitos DEPOIS, agrupados por material e
+        // 1) Monta os desenhos a partir da lista de visiveis (CollectVisibleMeshes, transform de MUNDO ja resolvida).
+        //    Os desenhos sao feitos DEPOIS, agrupados por material e
         //    malha (DrawBatching.h) para enviar o estado do material so quando muda e para
         //    desenhar copias iguais numa chamada instanciada so.
         // Ids de material (MaterialState.h): mesmo agrupamento de antes, sem strings nem std::map por objeto.
@@ -1431,36 +1521,23 @@ namespace Prism {
         std::vector<Batching::Item>& batchItems = scratch.BatchItems;
         MaterialState::IdTable& materialIds = scratch.MaterialIds;
 
-        for (auto entityHandle : meshRendererView) {
-            auto& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
-            glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
-
-            // MaterialComponent e OPCIONAL (uma entidade pode ter so
-            // MeshRendererComponent, sem Material nenhum - ver comentario
-            // grande em Renderer::DrawMesh/Renderer.h) - quando presente,
-            // ganha prioridade sobre MeshRendererComponent::Color (a cor
-            // solida "legada" de antes do sistema de Material existir).
-            const MaterialComponent* material = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
-
-            Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
-            switch (TestVisibility(meshRenderer, mesh, model, cameraFrustum, cullMask)) {
-                case Visibility::LayerHidden:     s_CullStats.LayerHidden++;     continue;
-                case Visibility::OutsideFrustum:  s_CullStats.FrustumCulled++;   continue;
-                case Visibility::Visible:         break;
-            }
-            s_CullStats.Drawn++;
-            if (!mesh)
-                continue; // modelo que falhou ao carregar: nada a desenhar (DrawMesh tambem ignorava)
+        for (const VisibleMesh& visibleMesh : scratch.Visible) {
+            // MaterialComponent e OPCIONAL (uma entidade pode ter so MeshRendererComponent, sem Material
+            // nenhum - ver comentario grande em Renderer::DrawMesh/Renderer.h) - quando presente, ganha
+            // prioridade sobre MeshRendererComponent::Color (a cor solida "legada" de antes do sistema
+            // de Material existir).
+            const MaterialComponent* material = visibleMesh.Material;
+            Mesh* mesh = visibleMesh.MeshPtr;
 
             PendingDraw draw;
             draw.MeshPtr = mesh;
             draw.Material = material;
             draw.ShaderPtr = material ? GetMaterialShader(material->ShaderPath, s_BasicShader.get()) : s_BasicShader.get();
-            draw.Model = model;
-            draw.Color = glm::vec3(meshRenderer.Color.x, meshRenderer.Color.y, meshRenderer.Color.z);
+            draw.Model = visibleMesh.Model;
+            draw.Color = glm::vec3(visibleMesh.MeshRenderer->Color.x, visibleMesh.MeshRenderer->Color.y, visibleMesh.MeshRenderer->Color.z);
             if (material)
                 draw.Color = glm::vec3(material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
-            draw.Palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
+            draw.Palette = visibleMesh.Palette;
 
             const uint32_t materialId = materialIds.GetOrAdd(material);
 
