@@ -4,6 +4,25 @@
 
 namespace Prism {
 
+    // Layout de atributos (estado do VAO). Usado pelo VAO do construtor e
+    // pelos VAOs extras por contexto (BindForCurrentContext) - um lugar so,
+    // para os dois nunca divergirem.
+    static void SetupVertexAttributes() {
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Position));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Normal));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, UV));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Tangent));
+        // Ids de osso: INTEIROS (glVertexAttribIPointer, para o ivec4 do shader).
+        glEnableVertexAttribArray(4);
+        glVertexAttribIPointer(4, 4, GL_INT, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, BoneIds));
+        glEnableVertexAttribArray(5);
+        glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, BoneWeights));
+    }
+
     Scope<Mesh> Mesh::Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices) {
         return CreateScope<Mesh>(vertices, indices);
     }
@@ -23,6 +42,12 @@ namespace Prism {
                 glm::vec3 pos(v.Position[0], v.Position[1], v.Position[2]);
                 boundsMin = glm::min(boundsMin, pos);
                 boundsMax = glm::max(boundsMax, pos);
+            }
+            for (const MeshVertex& v : vertices) {
+                if (v.BoneWeights[0] + v.BoneWeights[1] + v.BoneWeights[2] + v.BoneWeights[3] > 0.0f) {
+                    m_Skinned = true;
+                    break;
+                }
             }
             m_LocalBoundsMin = boundsMin;
             m_LocalBoundsMax = boundsMax;
@@ -44,14 +69,7 @@ namespace Prism {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_STATIC_DRAW);
 
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Position));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Normal));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, UV));
-        glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Tangent));
+        SetupVertexAttributes();
 
         glBindVertexArray(0);
     }
@@ -109,14 +127,7 @@ namespace Prism {
         glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
 
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Position));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Normal));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, UV));
-        glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), (const void*)offsetof(MeshVertex, Tangent));
+        SetupVertexAttributes();
 
         m_ContextVAOs.emplace_back(current, vao);
     }

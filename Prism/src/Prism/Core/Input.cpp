@@ -19,6 +19,9 @@ namespace Prism {
     float Input::s_PreviousMouseY = 0.0f;
     bool Input::s_FirstFrameSinceContext = true;
     CursorMode Input::s_CursorMode = CursorMode::Normal;
+bool Input::s_Enabled = true;
+float Input::s_MouseOriginX = 0.0f;
+float Input::s_MouseOriginY = 0.0f;
 
     void Input::SetContext(GLFWwindow* window) {
         s_Window = window;
@@ -32,6 +35,9 @@ namespace Prism {
         // valido para chamar numa janela nula - o unico "reset" possivel
         // nesse caso e no proprio estado local s_CursorMode).
         s_CursorMode = CursorMode::Normal;
+        s_Enabled = true;          // um contexto novo sempre comeca capturando
+        s_MouseOriginX = 0.0f;     // e sem deslocamento de mouse
+        s_MouseOriginY = 0.0f;
         if (window)
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
@@ -60,7 +66,7 @@ namespace Prism {
         // se o script passar um numero cru invalido de proposito (ex:
         // Input.IsKeyDown(99999)), o que e responsabilidade de quem
         // escreveu o script, nao um bug desta classe.
-        if (!s_Window || keyCode < 0 || keyCode > GLFW_KEY_LAST)
+        if (!s_Window || !s_Enabled || keyCode < 0 || keyCode > GLFW_KEY_LAST)
             return false;
         int state = glfwGetKey(s_Window, keyCode);
         return state == GLFW_PRESS || state == GLFW_REPEAT;
@@ -95,7 +101,7 @@ namespace Prism {
     }
 
     bool Input::IsMouseButtonDown(int buttonCode) {
-        if (!s_Window || buttonCode < 0 || buttonCode > GLFW_MOUSE_BUTTON_LAST)
+        if (!s_Window || !s_Enabled || buttonCode < 0 || buttonCode > GLFW_MOUSE_BUTTON_LAST)
             return false;
         return glfwGetMouseButton(s_Window, buttonCode) == GLFW_PRESS;
     }
@@ -104,18 +110,18 @@ namespace Prism {
         if (!s_Window) return 0.0f;
         double x, y;
         glfwGetCursorPos(s_Window, &x, &y);
-        return (float)x;
+        return (float)x - s_MouseOriginX;
     }
 
     float Input::GetMouseY() {
         if (!s_Window) return 0.0f;
         double x, y;
         glfwGetCursorPos(s_Window, &x, &y);
-        return (float)y;
+        return (float)y - s_MouseOriginY;
     }
 
     float Input::GetMouseDeltaX() {
-        if (!s_Window) return 0.0f;
+        if (!s_Window || !s_Enabled) return 0.0f;
         // Primeiro frame desde SetContext/SetCursorMode (ver comentario
         // grande em s_FirstFrameSinceContext, Input.h) - s_PreviousMouseX
         // ainda nao reflete "o frame anterior de verdade" (EndFrame()
@@ -129,7 +135,7 @@ namespace Prism {
     }
 
     float Input::GetMouseDeltaY() {
-        if (!s_Window) return 0.0f;
+        if (!s_Window || !s_Enabled) return 0.0f;
         if (s_FirstFrameSinceContext) return 0.0f;
         return GetMouseY() - s_PreviousMouseY;
     }

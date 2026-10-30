@@ -178,6 +178,23 @@ namespace Prism {
         // frame anterior".
         static void EndFrame();
 
+        // --- Uso embutido no editor (aba "Game") -----------------------------
+        // Na aba Game o jogo roda DENTRO da janela do editor: SetContext
+        // aponta para a janela do editor, e estas duas chamadas adaptam o
+        // resultado ao retangulo da imagem do jogo.
+        //
+        // SetEnabled(false): toda consulta de teclado/mouse devolve "nada
+        // apertado" (o jogo nao captura o input enquanto o usuario usa o
+        // resto do editor). Padrao: true (a PlayWindow e o Runtime nunca
+        // mexem nisto).
+        static void SetEnabled(bool enabled) { s_Enabled = enabled; }
+        static bool IsEnabled() { return s_Enabled; }
+
+        // Origem (em pixels da janela, canto superior esquerdo da imagem do
+        // jogo) subtraida de GetMouseX/Y: o mouse passa a ser relativo a
+        // imagem, como se ela fosse a janela inteira. (0,0) = sem deslocamento.
+        static void SetMouseOrigin(float x, float y) { s_MouseOriginX = x; s_MouseOriginY = y; }
+
     private:
         static GLFWwindow* s_Window;
 
@@ -221,6 +238,12 @@ namespace Prism {
         static bool s_FirstFrameSinceContext;
 
         static CursorMode s_CursorMode;
+
+        // NO FIM da classe de proposito (layout dos membros antigos intacto
+        // em builds incrementais).
+        static bool s_Enabled;
+        static float s_MouseOriginX;
+        static float s_MouseOriginY;
     };
 
 }

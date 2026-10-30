@@ -15,6 +15,7 @@
 #include "Prism/Core/Command.h"
 #include "Prism/Core/CommandHistory.h"
 #include "Prism/Core/Input.h"
+#include "Prism/Core/CommandLine.h"
 #include "Prism/Layer/Layer.h"
 #include "Prism/Assets/AssetID.h"
 #include "Prism/Assets/AssetMeta.h"
@@ -22,6 +23,7 @@
 #include "Prism/Project/Project.h"
 #include "Prism/Renderer/Framebuffer.h"
 #include "Prism/Renderer/Renderer.h"
+#include "Prism/Renderer/GameView.h"
 #include "Prism/Renderer/Shader.h"
 #include "Prism/Scene/Scene.h"
 #include "Prism/Scene/Entity.h"
@@ -33,6 +35,10 @@
 #include "Prism/Scene/PrefabSyncer.h"
 #include "Prism/Scene/MaterialSerializer.h"
 #include "Prism/Scripting/ScriptEngine.h"
+#include "Prism/Scripting/NativeScripting.h"
+#include "Prism/Particles/ParticleSystem.h"
+#include "Prism/Animation/AnimationSystem.h"
+#include "Prism/UI/UISystem.h"
 #include "Prism/Physics/PhysicsEngine.h"
 
 // --- Entry Point ---

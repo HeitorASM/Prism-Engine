@@ -21,6 +21,7 @@ target_link_libraries(PrismEditor PRIVATE
     Prism
     imguicolortextedit
     imguizmo
+    nfd
 )
 
 target_compile_features(PrismEditor PUBLIC cxx_std_20)
@@ -60,6 +61,50 @@ add_custom_command(TARGET PrismEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${PRISM_SHADER_DIR}
         $<TARGET_FILE_DIR:PrismEditor>/shaders
+)
+
+# Documentacao da engine (docs/*.md): painel "Documentacao" do editor (F1).
+# Em desenvolvimento le direto da pasta do codigo-fonte; fora dela, da copia
+# ao lado do executavel.
+set(PRISM_DOCS_DIR ${CMAKE_SOURCE_DIR}/docs)
+target_compile_definitions(PrismEditor PRIVATE PRISM_DOCS_SOURCE_DIR="${PRISM_DOCS_DIR}")
+# remove_directory antes: evita sobrar paginas antigas (renomeadas/apagadas) na copia.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        $<TARGET_FILE_DIR:PrismEditor>/docs
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${PRISM_DOCS_DIR}
+        $<TARGET_FILE_DIR:PrismEditor>/docs
+)
+
+# A fonte da interface do editor (EditorTheme) e a mesma da UI in-game.
+target_compile_definitions(PrismEditor PRIVATE PRISM_EDITOR_FONT_SOURCE_DIR="${PRISM_FONT_DIR}")
+# Copia as fontes (UI in-game) para perto do executavel - mesmo esquema dos shaders.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${PRISM_FONT_DIR}
+        $<TARGET_FILE_DIR:PrismEditor>/fonts
+)
+
+# SDK dos scripts em C++ (caminhos de include da engine) - lido pelo editor
+# ao gerar o projeto de scripts do usuario (NativeScripting::GetSdkFile).
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_BINARY_DIR}/PrismSDK.cmake
+        $<TARGET_FILE_DIR:PrismEditor>
+)
+
+# Runtime para "Arquivo > Exportar Jogo": copia a pasta do PrismRuntime (executavel + DLLs +
+# shaders + fontes, ver PrismRuntime/CMakeLists.txt) para <editor>/Runtime. Sai da MESMA
+# configuracao (Debug/Release) do editor, que e a do modulo C++ do projeto (o ABI da STL
+# difere entre elas no MSVC). O add_dependencies fica no CMakeLists.txt da raiz, depois de
+# os dois alvos existirem. remove_directory antes evita sobrar arquivos antigos na copia.
+add_custom_command(TARGET PrismEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        $<TARGET_FILE_DIR:PrismEditor>/Runtime
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        $<TARGET_FILE_DIR:PrismRuntime>
+        $<TARGET_FILE_DIR:PrismEditor>/Runtime
 )
 
 # Assimp builda como biblioteca DINAMICA por padrao (assimp-vc***.dll no

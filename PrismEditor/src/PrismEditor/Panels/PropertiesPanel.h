@@ -56,13 +56,24 @@ namespace PrismEditor {
         // component. Um component novo = um .cpp novo + uma linha la.
         void DrawTransformUI();
         void DrawMeshRendererUI();
+        void DrawLevelMeshUI();
         void DrawMaterialUI();
         void DrawLightUI();
         void DrawColliderUI();
         void DrawRigidBodyUI();
         void DrawRaycastUI();
+        void DrawJointUI();
+        void DrawCharacterControllerUI();
         void DrawCameraUI();
         void DrawScriptUI();
+        void DrawAudioSourceUI();
+        void DrawNativeScriptUI();
+        void DrawParticleEmitterUI();
+        void DrawUIDocumentUI();
+        void DrawAudioListenerUI();
+        void DrawAnimatorUI();
+        void DrawAnimatorGraphUI(Prism::AnimatorComponent& animator, const std::vector<std::string>& clips);
+        void DrawEnvironmentUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e
@@ -151,6 +162,22 @@ namespace PrismEditor {
         Prism::RigidBodyComponent m_RigidBodyBeforeEdit;
         Prism::CameraComponent m_CameraBeforeEdit;
         Prism::RaycastComponent m_RaycastBeforeEdit;
+        Prism::JointComponent m_JointBeforeEdit;
+        Prism::CharacterControllerComponent m_CharacterBeforeEdit;
+        Prism::AudioSourceComponent m_AudioSourceBeforeEdit;
+        Prism::AnimatorComponent m_AnimatorBeforeEdit;
+        int m_AnimSelState = -1;       // editor de estados: estado selecionado (-2 = "Qualquer estado", -1 = nada)
+        int m_AnimSelTransition = -1;  // transicao selecionada (-1 = nada)
+        Prism::ScriptComponent m_ScriptBeforeEdit;
+        Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
+        Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
+        Prism::UIDocumentComponent m_UIDocBeforeEdit;
+
+        // Cache das variaveis publicas (tabela `Properties`) do script
+        // selecionado: relido so quando o arquivo ou o caminho mudam.
+        std::string m_ScriptPropsPath;
+        std::filesystem::file_time_type m_ScriptPropsTime{};
+        std::vector<Prism::ScriptPropertyValue> m_ScriptPropsDefaults;
 
         // Estado do popup modal "Novo Script" (mesmo padrao de
         // m_ShowSaveAsPopup/m_SaveAsNameBuffer acima) - aberto pelo botao
@@ -195,6 +222,10 @@ namespace PrismEditor {
         std::filesystem::file_time_type m_PrefabDiffCachedFileTime{};
 
         Prism::PrefabDiffResult m_PrefabDiffCache;
+
+        // NO FIM da classe de proposito (layout de membros antigos intacto
+        // em builds incrementais) - ver comentario equivalente em EditorLayer.h.
+        Prism::EnvironmentComponent m_EnvironmentBeforeEdit;
     };
 
 }

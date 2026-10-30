@@ -31,13 +31,13 @@ namespace Prism {
 
     enum class AssetType {
         Unknown,
-        Texture,   // .png .jpg .jpeg .bmp .tga
+        Texture,   // .png .jpg .jpeg .bmp .tga .hdr
         Material,  // .prismmat
         Prefab,    // .prismprefab
         Scene,     // .prismmap
         Script,    // .lua
         Model,     // .obj .fbx .gltf .glb (importacao ainda nao existe; ja ganha identidade)
-        Audio      // .wav .ogg .mp3
+        Audio      // .wav .ogg .mp3 .flac (o AudioEngine toca todos)
     };
 
     const char* AssetTypeToString(AssetType type);

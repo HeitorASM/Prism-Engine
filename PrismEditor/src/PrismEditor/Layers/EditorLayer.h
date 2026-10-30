@@ -19,7 +19,6 @@
 //   Panels/EditorGizmos.h     gizmos de linha (camera, collider, luz, raycast)
 //   Panels/HierarchyPanel.h   arvore de entidades e popup "Criar Prefab"
 //   Panels/PropertiesPanel.h  propriedades por component, prefab, popups de material/script
-//   Panels/RenderSettingsPanel.h  menu Renderizacao
 //   Panels/Console/ContentBrowser/ScriptEditor  paineis ja independentes
 //
 // Undo/Redo (Ctrl+Z / Ctrl+Y): ver EditorContext::History e
@@ -30,20 +29,28 @@
 #include <imgui.h>
 #include "../Core/EditorContext.h"
 #include "../Core/SceneDocument.h"
+#include "../Core/NativeBuilder.h"
+#include "../Core/GameExportRunner.h"
 #include "../Panels/ViewportPanel.h"
 #include "../Panels/HierarchyPanel.h"
 #include "../Panels/PropertiesPanel.h"
-#include "../Panels/RenderSettingsPanel.h"
 #include "../Panels/ConsolePanel.h"
 #include "../Panels/ContentBrowserPanel.h"
 #include "../Panels/ScriptEditorPanel.h"
+#include "../Panels/DocsPanel.h"
+#include "../Panels/ProfilerPanel.h"
+#include "../Panels/BuildOutputPanel.h"
+#include "../Panels/GamePanel.h"
 #include "../Play/PlayWindow.h"
 
 namespace PrismEditor {
 
     class EditorLayer : public Prism::Layer {
     public:
-        EditorLayer();
+        // buildNativeOnOpen: compila os scripts C++ do projeto assim que o editor
+        // abre (preferencia da tela de projetos). Nao muda nada se o projeto nao
+        // tiver Source/.
+        explicit EditorLayer(bool buildNativeOnOpen = false);
 
         void OnAttach() override;
         void OnDetach() override;
@@ -55,11 +62,40 @@ namespace PrismEditor {
         void RenderDockspace();
         void RenderMenuBar();
 
+        // Barra superior fixa (Play/Parar, salvar, desfazer/refazer, layout).
+        void RenderToolbar();
+        // Monta o layout padrao dos paineis: Hierarquia a esquerda, Propriedades
+        // a direita, Viewport + Editor de Codigo (abas) no centro, Conteudo do
+        // Projeto + Console (abas) embaixo. Chamado na primeira abertura (sem
+        // layout salvo) e por "Janela > Restaurar layout padrao".
+        void BuildDefaultLayout(unsigned int dockspaceId, float width, float height);
+        bool m_ResetLayoutRequested = false;
+
+        // Scripts C++: botao "Compilar" da barra superior (gera Source/ se faltar, compila e recarrega o modulo).
+        void RenderBuildToolbarGroup();
+        void StartNativeBuild();
+        void PollNativeBuild();
+
+        // Arquivo > Exportar Jogo...: empacota o projeto + PrismRuntime numa pasta (ver
+        // Prism/Project/GameExporter.h). A copia roda numa thread de fundo; a saida vai
+        // para a aba "Saida de Build".
+        void StartGameExport();
+        void BeginGameExport();   // depois do aviso de "alteracoes nao salvas"
+        void PollGameExport();
+
+        // Arquivo > Fechar Projeto: volta para a tela de projetos (ProjectManagerLayer).
+        void CloseProject();
+
         // Chamado pelo botao "Play" da menu bar - abre a PlayWindow (janela
         // separada do SO, ver Play/PlayWindow.h) com uma COPIA clonada da
         // Scene ativa. A Scene de edicao nunca e tocada por scripts/fisica,
         // entao nao ha nada para restaurar ao parar.
         void OnPlayButtonClicked();
+        // Play em janela separada do SO (PlayWindow), alternativa a aba Game.
+        void OnPlayWindowButtonClicked();
+        // true se o jogo roda na aba Game OU na janela separada.
+        bool IsPlaying() const;
+        void StopPlaying();
 
         // Chamado pelo botao "Parar" (so aparece quando a PlayWindow esta
         // aberta) - fecha a PlayWindow (para scripts/fisica da copia e
@@ -88,7 +124,6 @@ namespace PrismEditor {
         ViewportPanel m_Viewport;
         HierarchyPanel m_Hierarchy;
         PropertiesPanel m_Properties;
-        RenderSettingsPanel m_RenderSettings;
 
         // Painel de Console - le do Prism::LogBuffer (ver Prism.h) e tem
         // seu proprio estado de UI (filtros, auto-scroll), por isso vive em
@@ -106,6 +141,8 @@ namespace PrismEditor {
         // um editor com abas ainda - ver ScriptEditorPanel::Open, que troca
         // o arquivo ativo em vez de abrir uma segunda instancia).
         ScriptEditorPanel m_ScriptEditor;
+        ProfilerPanel m_Profiler; // painel "Desempenho" (menu Janela)
+        DocsPanel m_Docs; // painel "Documentacao" (botao na barra superior, menu Ajuda e F1)
 
         // Janela de Play (janela separada do SO, ver Play/PlayWindow.h) -
         // dona de uma Scene CLONADA, nunca a mesma instancia de
@@ -113,6 +150,25 @@ namespace PrismEditor {
         // fecham; OnUpdate() e chamado uma vez por frame (ver
         // EditorLayer::OnUpdate) enquanto m_PlayWindow.IsOpen().
         PrismEditor::PlayWindow m_PlayWindow;
+
+        // Compilacao do modulo de scripts C++ (thread de fundo, ver
+        // Core/NativeBuilder.h). Terminou durante o Play => o modulo so e
+        // recarregado quando o Play fechar (as instancias usam o codigo antigo).
+        NativeBuilder m_NativeBuilder;
+        bool m_NativeReloadPending = false;
+
+        // ATENCAO: membros novos ficam NO FIM da classe de proposito (ver o
+        // comentario sobre layout em Project.h).
+        BuildOutputPanel m_BuildOutput;     // aba "Saida de Build"
+        bool m_BuildNativeOnOpen = false;
+        bool m_LastNativeBuildFailed = false;
+
+        // Aba "Game" (jogo rodando dentro do editor, ver Panels/GamePanel.h).
+        GamePanel m_Game;
+
+        // Exportacao do jogo (thread de fundo, ver Core/GameExportRunner.h).
+        GameExportRunner m_GameExporter;
+        std::filesystem::path m_LastExportParent; // pasta onde o dialogo "Exportar" abre da proxima vez
     };
 
 }

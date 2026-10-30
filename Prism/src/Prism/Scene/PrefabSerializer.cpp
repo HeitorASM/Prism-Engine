@@ -3,6 +3,7 @@
 #include "Entity.h"
 #include "ComponentRegistry.h"
 #include "../Core/Log.h"
+#include "../Core/AtomicFile.h"
 
 #include <fstream>
 #include <cstdint>
@@ -44,7 +45,11 @@ namespace Prism {
     // desvincularam (ver botao "Desvincular" no painel Material), alem
     // de qualquer outra entidade fora do prefab que aponte para o mesmo
     // asset. Isto e intencional: o vinculo e do MATERIAL, nao do prefab.
-    static constexpr uint32_t kPrefabFormatVersion = 2; // v2: MeshRenderer::SubmeshIndex (mesmo bloco do .prismmap v14)
+    // v9: components em blocos [nome][versao][tamanho][bytes] (mesma mudanca do mapa v21);
+    // v7-v8 (formato antigo "flag + campos") ainda sao lidos. Gravacao atomica.
+    // Equivalencia com o formato de cena usada pelo leitor legado: prefab v7 = cena v19, v8 = v20.
+    static constexpr uint32_t kOldestReadablePrefabFormat = 7;
+    static constexpr uint32_t kPrefabFormatVersion = 9; // v9: blocos de component; v8: Camera render options + Environment; v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
     static constexpr char kMagic[4] = { 'P', 'P', 'F', 'B' };
 
     // --- helpers de escrita/leitura binaria - mesmas rotinas
@@ -107,7 +112,9 @@ namespace Prism {
         std::error_code ec;
         std::filesystem::create_directories(filepath.parent_path(), ec);
 
-        std::ofstream out(filepath, std::ios::binary | std::ios::trunc);
+        // Temporario + rename (ver Core/AtomicFile.h): nunca deixa o prefab pela metade.
+        const std::filesystem::path tempPath = AtomicTempPath(filepath);
+        std::ofstream out(tempPath, std::ios::binary | std::ios::trunc);
         if (!out.is_open()) {
             PRISM_CORE_ERROR("PrefabSerializer: nao foi possivel criar o arquivo de prefab: ", filepath.string());
             return false;
@@ -131,12 +138,7 @@ namespace Prism {
             // Mesmo mecanismo de SceneSerializer::Serialize - um bloco
             // flag+campos por Component registrado, na mesma ordem que
             // ComponentRegistry::GetAll() sempre retorna.
-            for (auto& info : ComponentRegistry::GetAll()) {
-                bool has = info.Has(entity);
-                WriteRaw(out, has);
-                if (has)
-                    info.Serialize(out, entity);
-            }
+            ComponentRegistry::WriteComponentBlocks(out, entity);
 
             int32_t parentIndex = -1;
             if (auto* rel = scene->GetRegistry().try_get<RelationshipComponent>(entity.GetHandle())) {
@@ -157,8 +159,18 @@ namespace Prism {
             if (!out) writeFailed = true;
         }
 
+        out.flush();
+        if (!out)
+            writeFailed = true;
+        out.close();
+
         if (writeFailed) {
             PRISM_CORE_ERROR("PrefabSerializer: falha ao escrever dados do prefab em: ", filepath.string());
+            DiscardAtomicFile(tempPath);
+            return false;
+        }
+        if (!CommitAtomicFile(tempPath, filepath)) {
+            PRISM_CORE_ERROR("PrefabSerializer: nao foi possivel substituir o arquivo de prefab: ", filepath.string());
             return false;
         }
 
@@ -184,11 +196,13 @@ namespace Prism {
         }
 
         uint32_t version = 0;
-        if (!ReadRaw(in, version) || version != kPrefabFormatVersion) {
+        if (!ReadRaw(in, version) || version < kOldestReadablePrefabFormat || version > kPrefabFormatVersion) {
             PRISM_CORE_ERROR("PrefabSerializer: versao de formato incompativel em '", filepath.string(),
-                "' (arquivo=v", version, ", esperado=v", kPrefabFormatVersion, ").");
+                "' (arquivo=v", version, ", a engine le v", kOldestReadablePrefabFormat, " a v", kPrefabFormatVersion, ").");
             return Entity();
         }
+        const bool legacyComponents = version < 9;
+        const uint32_t legacySceneFormat = version + 12; // v7 -> 19, v8 -> 20 (ver kPrefabFormatVersion)
 
         uint32_t entityCount = 0;
         if (!ReadRaw(in, entityCount)) {
@@ -233,14 +247,12 @@ namespace Prism {
                 return Entity();
             }
 
-            for (auto& info : ComponentRegistry::GetAll()) {
-                bool has = false;
-                if (!ReadRaw(in, has)) {
-                    PRISM_CORE_ERROR("PrefabSerializer: arquivo de prefab corrompido (flag de '", info.DisplayName, "' da entidade ", i, "): ", filepath.string());
-                    return Entity();
-                }
-                if (has && !info.Deserialize(in, entity, i))
-                    return Entity(); // mensagem especifica ja logada dentro do proprio Deserialize
+            bool componentsOk = legacyComponents
+                ? ComponentRegistry::ReadLegacyComponents(in, entity, i, legacySceneFormat)
+                : ComponentRegistry::ReadComponentBlocks(in, entity, i);
+            if (!componentsOk) {
+                PRISM_CORE_ERROR("PrefabSerializer: arquivo de prefab corrompido (components da entidade ", i, "): ", filepath.string());
+                return Entity();
             }
 
             int32_t parentIndex = -1;

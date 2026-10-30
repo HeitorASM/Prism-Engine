@@ -16,9 +16,17 @@ layout(location = 0) in vec3 a_Position;
 // (Mesh e compartilhado entre os dois shaders), so os atributos
 // usados diferem.
 
+#include "skinning.glsl"
+
 uniform mat4 u_LightSpaceMatrix; // Projection * View DA LUZ, nao da camera
 uniform mat4 u_Model;
 
+// Instancing (mesmo local de basic.vert): u_Instanced = 1 le a matriz de modelo do
+// atributo por instancia em vez do uniform. Malhas animadas nunca sao instanciadas.
+uniform int u_Instanced;
+layout(location = 8) in mat4 a_InstModel;
+
 void main() {
-    gl_Position = u_LightSpaceMatrix * u_Model * vec4(a_Position, 1.0);
+    mat4 model = (u_Instanced != 0) ? a_InstModel : u_Model;
+    gl_Position = u_LightSpaceMatrix * model * (SkinMatrix() * vec4(a_Position, 1.0));
 }

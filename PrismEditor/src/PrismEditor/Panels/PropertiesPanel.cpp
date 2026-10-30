@@ -45,6 +45,9 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MeshRendererComponent>())
             DrawMeshRendererUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::LevelMeshComponent>())
+            DrawLevelMeshUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MaterialComponent>())
             DrawMaterialUI();
 
@@ -60,11 +63,38 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::RaycastComponent>())
             DrawRaycastUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::JointComponent>())
+            DrawJointUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::CharacterControllerComponent>())
+            DrawCharacterControllerUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::CameraComponent>())
             DrawCameraUI();
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ScriptComponent>())
             DrawScriptUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::NativeScriptComponent>())
+            DrawNativeScriptUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::ParticleEmitterComponent>())
+            DrawParticleEmitterUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::UIDocumentComponent>())
+            DrawUIDocumentUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioSourceComponent>())
+            DrawAudioSourceUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioListenerComponent>())
+            DrawAudioListenerUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::AnimatorComponent>())
+            DrawAnimatorUI();
+
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::EnvironmentComponent>())
+            DrawEnvironmentUI();
 
         ImGui::Dummy(ImVec2(0, 8));
         RenderAddComponentButton();
@@ -164,12 +194,30 @@ namespace PrismEditor {
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::RigidBodyComponent>>(entity, displayName));
         else if (displayName == "Raycast")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::RaycastComponent>>(entity, displayName));
+        else if (displayName == "Joint")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::JointComponent>>(entity, displayName));
+        else if (displayName == "Character Controller")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::CharacterControllerComponent>>(entity, displayName));
         else if (displayName == "Script")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::ScriptComponent>>(entity, displayName));
         else if (displayName == "Camera")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::CameraComponent>>(entity, displayName));
         else if (displayName == "Material")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::MaterialComponent>>(entity, displayName));
+        else if (displayName == "Particle Emitter")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::ParticleEmitterComponent>>(entity, displayName));
+        else if (displayName == "UI Document")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::UIDocumentComponent>>(entity, displayName));
+        else if (displayName == "Native Script")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::NativeScriptComponent>>(entity, displayName));
+        else if (displayName == "Audio Source")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioSourceComponent>>(entity, displayName));
+        else if (displayName == "Audio Listener")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AudioListenerComponent>>(entity, displayName));
+        else if (displayName == "Animator")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::AnimatorComponent>>(entity, displayName));
+        else if (displayName == "Environment")
+            m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::EnvironmentComponent>>(entity, displayName));
         else {
             // Fallback generico SEM Undo - usado so se um Component for
             // registrado em ComponentRegistration.cpp mas esquecido aqui
@@ -217,8 +265,6 @@ namespace PrismEditor {
         }
 
         m_CameraPreviewFramebuffer->Bind();
-        Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
-
         float aspect = h > 0 ? (float)w / (float)h : 1.0f;
         auto& camera = cameraEntity.GetComponent<Prism::CameraComponent>();
         glm::mat4 worldTransform = m_Ctx.ActiveScene->GetWorldTransform(cameraEntity);
@@ -226,7 +272,7 @@ namespace PrismEditor {
         glm::mat4 projection = camera.GetProjection(aspect);
         glm::vec3 worldPos = glm::vec3(worldTransform[3]);
 
-        Prism::Renderer::DrawScene(*m_Ctx.ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos));
+        Prism::Renderer::DrawScene(*m_Ctx.ActiveScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos), Prism::CameraRenderSettings::From(camera));
 
         m_CameraPreviewFramebuffer->Unbind();
         return m_CameraPreviewFramebuffer->GetColorAttachmentID();
@@ -409,6 +455,8 @@ namespace PrismEditor {
             "--   OnCreate()            -- chamada uma vez, quando o Play comeca\n"
             "--   OnUpdate(deltaTime)   -- chamada toda frame enquanto o Play estiver ligado\n"
             "--   OnDestroy()           -- chamada uma vez quando o Play para\n"
+            "-- Tambem existe OnFixedUpdate(dt): passo fixo (1/60 s) antes da fisica - bom para forcas.\n"
+            "-- Com o Play ligado, salvar este arquivo o recarrega sozinho (hot reload).\n"
             "--\n"
             "-- A variavel global `entity` ja existe dentro do script - e a PROPRIA\n"
             "-- entidade dona deste ScriptComponent.\n"

@@ -32,6 +32,9 @@ namespace PrismEditor::ModelImport {
         Prism::AssetID Asset;             // AssetID do arquivo de modelo
         std::string Name;                 // nome do arquivo sem extensao
         std::vector<Part> Parts;          // um por material do modelo
+        bool HasRig = false;              // o modelo tem esqueleto e/ou animacoes (ganha um Animator)
+        std::string FirstClip;            // primeiro clipe de animacao ("" se nao houver)
+        size_t ClipCount = 0;
     };
 
     // Resolve o AssetID de 'absoluteModelPath' (o arquivo precisa estar dentro

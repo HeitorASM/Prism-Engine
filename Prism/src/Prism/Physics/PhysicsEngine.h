@@ -19,9 +19,11 @@
 #include "../Core/Base.h"
 #include <glm/glm.hpp>
 #include <entt/entt.hpp>
+#include <functional>
 #include <unordered_map>
 #include <memory>
 #include <cstdint>
+#include "PhysicsLayers.h"
 #include <vector>
 
 // Jolt exige varios headers "de infraestrutura" (job system, allocator,
@@ -98,7 +100,15 @@ namespace Prism {
         // cinematica movida, e entrega eventos de colisao (ver
         // ConsumeCollisionEvents) para o ScriptEngine chamar
         // OnCollisionEnter/OnCollisionExit dos scripts relevantes.
-        static void Simulate(Scene& scene, float deltaTime);
+        //
+        // 'onFixedStep' (opcional) e chamada ANTES de CADA passo fixo, com o
+        // timestep (GetFixedTimeStep()): e o gancho do OnFixedUpdate dos scripts
+        // (forcas/velocidades aplicadas ali valem no passo que vem em seguida).
+        // Pode ser chamada 0, 1 ou ate kMaxStepsPerFrame vezes por frame.
+        static void Simulate(Scene& scene, float deltaTime, const std::function<void(float)>& onFixedStep = {});
+
+        // Timestep fixo da fisica e dos scripts (OnFixedUpdate): 1/60 s.
+        static float GetFixedTimeStep();
 
         // Cria (ou recria, se ja existia) o corpo Jolt de UMA entidade a
         // partir do RigidBodyComponent+ColliderComponent dela. Chamado
@@ -142,7 +152,23 @@ namespace Prism {
         // simplesmente nao acertar nada dentro de maxDistance (ou so
         // acertar corpos em 'ignoreEntities') - chamador sempre deve
         // checar .Hit antes de usar os outros campos.
-        static RaycastHit Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 1000.0f, const std::vector<entt::entity>& ignoreEntities = {});
+        static RaycastHit Raycast(Scene& scene, const glm::vec3& origin, const glm::vec3& direction, float maxDistance = 1000.0f, const std::vector<entt::entity>& ignoreEntities = {}, uint32_t layerMask = Physics::kAllLayers);
+
+        // --- Juntas (JointComponent) -----------------------------------------
+        // Criadas em OnSceneStart depois de TODOS os corpos. Cria/recria a junta de 'entity' (precisa de
+        // RigidBody+Collider; a outra ponta, se nomeada, tambem). So durante o Play.
+        static void CreateJointForEntity(Scene& scene, Entity entity);
+        static void DestroyJointForEntity(Scene& scene, Entity entity);
+
+        // --- Personagem (CharacterControllerComponent) -----------------------
+        static void CreateCharacterForEntity(Scene& scene, Entity entity);
+        static void DestroyCharacterForEntity(Scene& scene, Entity entity);
+        // Velocidade horizontal desejada (m/s; o Y e ignorado). Vale ate a proxima chamada.
+        static void CharacterMove(Scene& scene, Entity entity, const glm::vec3& horizontalVelocity);
+        // Pede um pulo (velocidade vertical inicial, m/s) - so tem efeito no chao.
+        static void CharacterJump(Scene& scene, Entity entity, float jumpSpeed);
+        static bool CharacterIsGrounded(Scene& scene, Entity entity);
+        static glm::vec3 CharacterGetVelocity(Scene& scene, Entity entity);
 
     private:
         // Estado de fisica de UMA Scene "rodando" - guardado fora da Scene
@@ -150,6 +176,10 @@ namespace Prism {
         // header C++ de terceiros para todo arquivo que inclui Scene.h -
         // o mesmo motivo por tras de ScriptEngine viver separado). Uma
         // entrada por Scene* que esteja atualmente com IsRunning() == true.
+        // Coleta eventos de contato do Jolt (definicao em PhysicsEngine.cpp).
+        class ContactCollector;
+        struct Extras; // juntas e personagens (definido no .cpp)
+
         struct SceneState {
             // PhysicsSystem e o "mundo" do Jolt. O Jolt exige que o
             // consumidor tambem gerencie um TempAllocator (memoria
@@ -179,6 +209,15 @@ namespace Prism {
             // precisar de uma busca linear.
             std::unordered_map<uint32_t, JPH::BodyID> EntityToBody;
 
+            // Ouvinte de contatos registrado no PhysicsSystem, e a contagem
+            // de contatos ativos por PAR de entidades (um par pode ter varios
+            // contatos de sub-shape; Enter so no primeiro, Exit no ultimo).
+            std::unique_ptr<ContactCollector> Contacts;
+            std::unordered_map<uint64_t, int> ContactCounts;
+
+            // Juntas e personagens. Declarado POR ULTIMO: e destruido antes do PhysicsSystem.
+            std::unique_ptr<Extras> Ext;
+
             SceneState();
             ~SceneState();
             SceneState(SceneState&&) noexcept;
@@ -206,6 +245,13 @@ namespace Prism {
         };
 
         static SceneState* GetState(Scene& scene);
+
+        // Passo fixo dos personagens (antes do Update do Jolt) e copia da pose para o Transform (depois).
+        static void StepCharacters(Scene& scene, SceneState& state, float deltaTime);
+        static void SyncCharacters(Scene& scene, SceneState& state);
+        // BodyID do corpo da entidade: o corpo normal ou o corpo interno do personagem.
+        static JPH::BodyID FindBodyID(SceneState& state, uint32_t entity);
+        static void RemoveJointsReferencing(SceneState& state, uint32_t entity);
 
         // Definido no .cpp (nao inline aqui) pelo mesmo motivo do
         // comentario acima em SceneState: um unordered_map<Scene*,

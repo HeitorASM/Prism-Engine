@@ -20,6 +20,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <string>
+#include <vector>
 #include <cstdint>
 
 namespace Prism {
@@ -102,6 +103,60 @@ namespace Prism {
         // espaco do mundo (viewport, gizmos, fisica futura) - o
         // TransformComponent sozinho so tem o espaco LOCAL (relativo ao pai).
         glm::mat4 GetWorldTransform(Entity entity);
+
+        // Cache de matrizes de mundo VALIDO ENQUANTO UM SCOPE ESTIVER VIVO.
+        // Sem scope, GetWorldTransform recalcula a cadeia de ancestrais a
+        // cada chamada (custo O(profundidade) + trigonometria por nivel).
+        // Com um scope aberto, cada entidade e calculada UMA vez e os
+        // pais sao reaproveitados pelos filhos.
+        //
+        // REGRA: so abra um scope em trechos em que NENHUM TransformComponent
+        // (nem Parent/Children) muda - ex: o corpo de Renderer::DrawScene, que
+        // so le a cena. TransformComponent e uma struct publica, entao nao ha
+        // como saber quando alguem a altera; por isso o cache NAO e
+        // persistente entre quadros (cada scope externo comeca do zero).
+        // Scopes podem ser aninhados (so o mais externo invalida o cache).
+        class WorldTransformScope {
+        public:
+            explicit WorldTransformScope(Scene& scene) : m_Scene(scene) {
+                if (m_Scene.m_WorldCacheDepth++ == 0)
+                    ++m_Scene.m_WorldCacheEpoch; // invalida tudo de uma vez, sem limpar os vetores
+            }
+            ~WorldTransformScope() { --m_Scene.m_WorldCacheDepth; }
+            WorldTransformScope(const WorldTransformScope&) = delete;
+            WorldTransformScope& operator=(const WorldTransformScope&) = delete;
+        private:
+            Scene& m_Scene;
+        };
+
+        // --- Troca de cena em jogo (Scene.Load / Scene.Reload nos scripts) ------
+        // Scripts so PEDEM a troca (RequestLoadScene/RequestReloadScene); quem
+        // possui a cena em execucao (aba Game, janela de Play, PrismRuntime)
+        // aplica DEPOIS do OnUpdate com ApplyPendingLoad - nunca no meio de um
+        // callback de script.
+        //
+        // 'relativeMapPath': relativo a pasta de mapas do projeto, com ou sem
+        // ".prismmap" (ex: "Fase2" ou "Levels/Fase2.prismmap").
+        void RequestLoadScene(const std::string& relativeMapPath);
+        void RequestReloadScene();
+        bool HasPendingSceneLoad() const { return m_PendingLoadKind != PendingLoad::None; }
+
+        // Mapa de origem (relativo a pasta de mapas) quando a cena veio de LoadMap;
+        // vazio para a cena clonada do editor.
+        const std::string& GetSourceMap() const { return m_SourceMap; }
+        void SetSourceMap(const std::string& relativeMapPath) { m_SourceMap = relativeMapPath; }
+
+        // Le um mapa do projeto ativo para uma cena nova (ainda sem OnScriptsStart).
+        // nullptr + erro no log se nao existir/estiver invalido.
+        static Ref<Scene> LoadMap(const std::string& relativeMapPath);
+
+        // Se 'current' pediu uma troca, carrega a nova cena, para os scripts da
+        // antiga (OnScriptsStop), inicia os da nova (OnScriptsStart) e troca o
+        // ponteiro. 'pristine' (opcional) e uma copia intacta da cena de edicao,
+        // usada por Scene.Reload() quando a cena atual nao veio de um mapa
+        // (jogo iniciado do editor). Se o carregamento falhar, a cena atual
+        // continua rodando. Devolve true se trocou.
+        static bool ApplyPendingLoad(Ref<Scene>& current, const Ref<Scene>& pristine = nullptr);
 
         // true se 'possibleAncestor' e o proprio 'entity' ou um ancestral
         // dele (pai, avo, etc). Usado por SetParent para recusar ciclos e
@@ -220,9 +275,26 @@ namespace Prism {
         // que retorna cedo sem a Scene rodando fisica).
         void UpdateRaycastComponents();
 
+        // OnFixedUpdate de todos os scripts (Lua e C++), chamado por
+        // PhysicsEngine::Simulate antes de cada passo fixo da fisica.
+        void RunFixedUpdate(float fixedDeltaTime);
+
+        // Cache de GetWorldTransform (ver WorldTransformScope). Indexado pelo
+        // indice da entidade no EnTT; 'stamp == epoch' significa entrada valida.
+        glm::mat4 ComputeWorldTransformCached(entt::entity handle);
+        int m_WorldCacheDepth = 0;
+        uint32_t m_WorldCacheEpoch = 0;
+        std::vector<glm::mat4> m_WorldCache;
+        std::vector<uint32_t> m_WorldCacheStamp;
+
         std::string m_Name;
         entt::registry m_Registry;
         bool m_IsRunning = false;
+
+        enum class PendingLoad { None, Load, Reload };
+        PendingLoad m_PendingLoadKind = PendingLoad::None;
+        std::string m_PendingLoadPath;
+        std::string m_SourceMap;
 
         friend class Entity;
     };

@@ -2,11 +2,17 @@
 #include "Entity.h"
 #include "ComponentRegistry.h"
 #include "../Scripting/ScriptEngine.h"
+#include "../Scripting/NativeScripting.h"
 #include "../Physics/PhysicsEngine.h"
+#include "../Audio/AudioEngine.h"
+#include "../Animation/AnimationSystem.h"
+#include "SceneSerializer.h"
+#include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
 #include "../Renderer/Renderer.h"
 #include "../Core/Log.h"
+#include "../Core/Profiler.h"
 #include <algorithm>
 #include <filesystem>
 #include <limits>
@@ -26,6 +32,86 @@ namespace Prism {
         entity.AddComponent<TransformComponent>();
         entity.AddComponent<TagComponent>(name.empty() ? std::string("Entity") : name);
         return entity;
+    }
+
+    void Scene::RequestLoadScene(const std::string& relativeMapPath) {
+        if (relativeMapPath.empty()) {
+            PRISM_CORE_WARN("Scene.Load: caminho vazio ignorado.");
+            return;
+        }
+        m_PendingLoadKind = PendingLoad::Load;
+        m_PendingLoadPath = relativeMapPath;
+    }
+
+    void Scene::RequestReloadScene() {
+        m_PendingLoadKind = PendingLoad::Reload;
+        m_PendingLoadPath.clear();
+    }
+
+    Ref<Scene> Scene::LoadMap(const std::string& relativeMapPath) {
+        auto project = Project::GetActive();
+        if (!project) {
+            PRISM_CORE_ERROR("Scene.Load: nenhum projeto ativo.");
+            return nullptr;
+        }
+        std::filesystem::path relative = std::filesystem::path(relativeMapPath).lexically_normal();
+        // Nunca sair da pasta de mapas (sem caminho absoluto nem "..").
+        bool escapes = relative.empty() || relative.is_absolute() || relative.has_root_name();
+        for (const auto& part : relative)
+            if (part == "..")
+                escapes = true;
+        if (escapes) {
+            PRISM_CORE_ERROR("Scene.Load: caminho invalido '", relativeMapPath, "' (use um caminho relativo a pasta de mapas).");
+            return nullptr;
+        }
+        if (relative.extension() != ".prismmap")
+            relative += ".prismmap";
+
+        std::filesystem::path absolute = project->GetMapDirectory() / relative;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(absolute, ec)) {
+            PRISM_CORE_ERROR("Scene.Load: mapa '", relative.generic_string(), "' nao existe em ", project->GetMapDirectory().string());
+            return nullptr;
+        }
+        SceneSerializer serializer(Scene::Create());
+        if (!serializer.Deserialize(absolute)) {
+            PRISM_CORE_ERROR("Scene.Load: falha ao ler o mapa '", relative.generic_string(), "'.");
+            return nullptr;
+        }
+        Ref<Scene> loaded = serializer.GetScene();
+        loaded->SetSourceMap(relative.generic_string());
+        return loaded;
+    }
+
+    bool Scene::ApplyPendingLoad(Ref<Scene>& current, const Ref<Scene>& pristine) {
+        if (!current || current->m_PendingLoadKind == PendingLoad::None)
+            return false;
+
+        const PendingLoad kind = current->m_PendingLoadKind;
+        const std::string path = current->m_PendingLoadPath;
+        current->m_PendingLoadKind = PendingLoad::None;
+        current->m_PendingLoadPath.clear();
+
+        Ref<Scene> next;
+        if (kind == PendingLoad::Load) {
+            next = LoadMap(path);
+        }
+        else if (!current->m_SourceMap.empty()) {
+            next = LoadMap(current->m_SourceMap);
+        }
+        else if (pristine) {
+            next = pristine->Clone();
+        }
+        else {
+            PRISM_CORE_WARN("Scene.Reload: esta cena nao tem origem conhecida.");
+        }
+        if (!next)
+            return false; // erro ja logado; a cena atual continua
+
+        current->OnScriptsStop();
+        next->OnScriptsStart();
+        current = next;
+        return true;
     }
 
     Ref<Scene> Scene::Clone() {
@@ -167,6 +253,8 @@ namespace Prism {
         // nesta ordem.
         if (m_IsRunning && m_Registry.all_of<ScriptComponent>(handle))
             ScriptEngine::UnloadScript(entity);
+        if (m_IsRunning && m_Registry.all_of<NativeScriptComponent>(handle))
+            NativeScripting::UnloadScript(entity);
 
         // Mesma logica para o corpo fisico: destroi ANTES da entidade
         // sumir do registry, senao PhysicsEngine::DestroyBodyForEntity
@@ -176,6 +264,10 @@ namespace Prism {
         // com o padrao acima e para proteger contra mudancas futuras).
         if (m_IsRunning && m_Registry.all_of<RigidBodyComponent, ColliderComponent>(handle))
             PhysicsEngine::DestroyBodyForEntity(*this, entity);
+        if (m_IsRunning && m_Registry.all_of<CharacterControllerComponent>(handle))
+            PhysicsEngine::DestroyCharacterForEntity(*this, entity);
+        if (m_IsRunning && m_Registry.all_of<JointComponent>(handle))
+            PhysicsEngine::DestroyJointForEntity(*this, entity);
 
         // Se a entidade tem um pai, tira ela da lista de Children dele
         // primeiro - senao o pai ficaria com um entt::entity morto na
@@ -252,6 +344,11 @@ namespace Prism {
 
     glm::mat4 Scene::GetWorldTransform(Entity entity) {
         entt::entity handle = entity.GetHandle();
+
+        // Dentro de um WorldTransformScope (ver Scene.h): memoizado.
+        if (m_WorldCacheDepth > 0)
+            return ComputeWorldTransformCached(handle);
+
         glm::mat4 local = m_Registry.get<TransformComponent>(handle).GetTransform();
 
         auto* rel = m_Registry.try_get<RelationshipComponent>(handle);
@@ -259,6 +356,29 @@ namespace Prism {
             return local;
 
         return GetWorldTransform(Entity(rel->Parent, this)) * local;
+    }
+
+    // Mesma matematica do caminho sem cache, mas cada entidade e calculada uma
+    // vez por scope. Devolve por VALOR de proposito: a recursao pode redimensionar
+    // os vetores do cache e invalidar qualquer referencia.
+    glm::mat4 Scene::ComputeWorldTransformCached(entt::entity handle) {
+        const size_t index = (size_t)entt::entt_traits<entt::entity>::to_entity(handle);
+        if (index >= m_WorldCacheStamp.size()) {
+            const size_t newSize = index + 1 + (index >> 1); // cresce com folga
+            m_WorldCacheStamp.resize(newSize, 0u);           // 0 nunca e uma epoca valida (comecam em 1)
+            m_WorldCache.resize(newSize);
+        }
+        if (m_WorldCacheStamp[index] == m_WorldCacheEpoch)
+            return m_WorldCache[index];
+
+        glm::mat4 world = m_Registry.get<TransformComponent>(handle).GetTransform();
+        const auto* rel = m_Registry.try_get<RelationshipComponent>(handle);
+        if (rel && rel->Parent != entt::null && m_Registry.valid(rel->Parent))
+            world = ComputeWorldTransformCached(rel->Parent) * world;
+
+        m_WorldCache[index] = world;
+        m_WorldCacheStamp[index] = m_WorldCacheEpoch;
+        return world;
     }
 
     // Teste raio-vs-AABB classico ("slab method": trata a caixa como a
@@ -367,6 +487,28 @@ namespace Prism {
             }
         }
 
+        // Geometria de nivel: raio exato contra as faces (a caixa envolvente deixaria clicar "no ar"
+        // dentro de salas/escadas).
+        auto levelView = m_Registry.view<LevelMeshComponent>();
+        for (auto handle : levelView) {
+            const glm::mat4 world = GetWorldTransform(Entity(handle, this));
+            const glm::mat4 inverseWorld = glm::inverse(world);
+            const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(ray.Origin, 1.0f));
+            const glm::vec3 localDir = glm::vec3(inverseWorld * glm::vec4(ray.Direction, 0.0f));
+            float t = 0.0f;
+            int face = -1;
+            if (!levelView.get<LevelMeshComponent>(handle).Mesh.Raycast(localOrigin, localDir, t, face, true))
+                continue;
+            const glm::vec3 worldHitPoint = glm::vec3(world * glm::vec4(localOrigin + localDir * t, 1.0f));
+            const float worldDistance = glm::length(worldHitPoint - ray.Origin);
+            if (worldDistance < best.Distance) {
+                best.Hit = true;
+                best.Entity = handle;
+                best.Distance = worldDistance;
+                best.Point = worldHitPoint;
+            }
+        }
+
         return best;
     }
 
@@ -374,8 +516,11 @@ namespace Prism {
         // Scripts e fisica so rodam durante o modo Play (m_IsRunning) -
         // fora disso a Scene fica estatica, exibindo so o estado editado
         // (mesmo comportamento de Unity/Unreal/Godot fora do botao Play).
-        if (!m_IsRunning)
+        if (!m_IsRunning) {
+            // Cena parada no editor: so as PREVIAS de animacao (botao "Tocar" do Animator).
+            AnimationSystem::Update(*this, deltaTime, true);
             return;
+        }
 
         // Fisica ANTES dos scripts, de proposito: assim um script que leia
         // TransformComponent (via entity:GetTransform()) em OnUpdate() ve
@@ -383,7 +528,18 @@ namespace Prism {
         // do frame anterior - importante por exemplo para um script que
         // decide algo com base em "onde meu personagem esta depois da
         // fisica mover ele".
-        PhysicsEngine::Simulate(*this, deltaTime);
+        ScriptEngine::BeginFrame(deltaTime);
+
+        // Hot reload dos scripts Lua (arquivo salvo durante o Play), antes de qualquer
+        // callback do frame - ver ScriptEngine::PollHotReload.
+        ScriptEngine::PollHotReload(*this);
+        NativeScripting::PollHotReload(*this); // modulo C++ recompilado durante o Play
+
+        // OnFixedUpdate dos scripts roda dentro de Simulate, antes de cada passo fixo.
+        {
+            PRISM_PROFILE_SCOPE("Scene.Physics");
+            PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });
+        }
 
         // RaycastComponent tambem ANTES dos scripts, mesmo motivo: um
         // script que leia o resultado de um sensor de raycast da propria
@@ -391,13 +547,68 @@ namespace Prism {
         // frame, nao o do frame anterior.
         UpdateRaycastComponents();
 
-        auto view = m_Registry.view<ScriptComponent>();
-        for (auto entityHandle : view) {
-            // Copia o handle para uma Entity de curta duracao - so para
-            // repassar ao ScriptEngine, que trabalha em termos de Entity
-            // (nao entt::entity cru) para poder chamar GetComponent<T>()
-            // de dentro dos bindings Lua (ver ScriptEngine.cpp).
+        // Snapshot dos handles: scripts podem criar entidades (Scene.Create/
+        // Instantiate) durante a iteracao, o que invalidaria a view do EnTT.
+        // Entidades criadas neste frame comecam a atualizar no proximo.
+        std::vector<entt::entity> scriptEntities;
+        for (auto entityHandle : m_Registry.view<ScriptComponent>())
+            scriptEntities.push_back(entityHandle);
+        Profiler::Scope zLua("Scene.ScriptsLua");
+        for (auto entityHandle : scriptEntities) {
+            if (!m_Registry.valid(entityHandle))
+                continue; // destruida por um OnCollision/OnUpdate anterior
             ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
+        }
+        zLua.Stop();
+
+        // Scripts em C++ (NativeScriptComponent), mesma regra de snapshot.
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        Profiler::Scope zNative("Scene.ScriptsCpp");
+        for (auto entityHandle : nativeEntities) {
+            if (!m_Registry.valid(entityHandle))
+                continue;
+            NativeScripting::UpdateScript(Entity(entityHandle, this), deltaTime);
+        }
+        zNative.Stop();
+
+        // Destruicoes pedidas por scripts (entity:Destroy()) - so agora, com a iteracao encerrada.
+        ScriptEngine::FlushDestroyQueue(*this);
+
+        // Particulas depois dos scripts: ja enxergam posicao/campos alterados neste frame.
+        {
+            PRISM_PROFILE_SCOPE("Scene.Particles");
+            ParticleSystem::Update(*this, deltaTime);
+        }
+
+        // Animacao depois dos scripts: PlayAnimation() chamado neste frame ja vale nele.
+        {
+            PRISM_PROFILE_SCOPE("Scene.Animation");
+            AnimationSystem::Update(*this, deltaTime, false);
+        }
+
+        // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
+        // scripts neste frame e move o listener junto da camera/entidade.
+        AudioEngine::OnSceneUpdate(*this);
+    }
+
+    void Scene::RunFixedUpdate(float fixedDeltaTime) {
+        // Mesma regra de snapshot do OnUpdate: scripts podem criar/destruir entidades.
+        std::vector<entt::entity> scriptEntities;
+        for (auto entityHandle : m_Registry.view<ScriptComponent>())
+            scriptEntities.push_back(entityHandle);
+        for (auto entityHandle : scriptEntities) {
+            if (m_Registry.valid(entityHandle))
+                ScriptEngine::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
+        }
+
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        for (auto entityHandle : nativeEntities) {
+            if (m_Registry.valid(entityHandle))
+                NativeScripting::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
         }
     }
 
@@ -453,7 +664,7 @@ namespace Prism {
             }
 
             RaycastHit hit = (maxDistance > 0.0001f)
-                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance, ignoreEntities)
+                ? PhysicsEngine::Raycast(*this, worldOrigin, worldDirection, maxDistance, ignoreEntities, raycast.LayerMask)
                 : RaycastHit{}; // TargetPosition na origem (raio de comprimento zero) - nunca acerta nada
 
             raycast.Hit = hit.Hit;
@@ -474,7 +685,17 @@ namespace Prism {
         // se um script OnCreate() precisar aplicar uma forca/impulso
         // imediatamente (ver ScriptEngine::RegisterAPI, ApplyForce), o
         // corpo fisico ja precisa existir nesse momento.
+        ScriptEngine::ResetTime();
         PhysicsEngine::OnSceneStart(*this);
+        ParticleSystem::OnSceneStart(*this);
+
+        // Audio antes dos scripts: fontes com PlayOnStart ja estao tocando
+        // quando OnCreate() roda (que ainda pode para-las/reinicia-las).
+        AudioEngine::OnSceneStart(*this);
+
+        // Animacao antes dos scripts: Animators com PlayOnStart ja tocam em OnCreate()
+        // (que ainda pode trocar de clipe).
+        AnimationSystem::OnSceneStart(*this);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view) {
@@ -494,6 +715,16 @@ namespace Prism {
             std::filesystem::path absolutePath = project->GetScriptDirectory() / script.ScriptPath;
             ScriptEngine::LoadScript(Entity(entityHandle, this), absolutePath);
         }
+
+        // Scripts em C++: cria uma instancia por entidade (classe vem do modulo
+        // do projeto - ver NativeScripting::LoadProjectModule).
+        std::vector<entt::entity> nativeEntities;
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            nativeEntities.push_back(entityHandle);
+        for (auto entityHandle : nativeEntities) {
+            if (m_Registry.valid(entityHandle))
+                NativeScripting::LoadScript(Entity(entityHandle, this));
+        }
     }
 
     void Scene::OnScriptsStop() {
@@ -505,10 +736,16 @@ namespace Prism {
         for (auto entityHandle : view)
             ScriptEngine::UnloadScript(Entity(entityHandle, this));
 
+        for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
+            NativeScripting::UnloadScript(Entity(entityHandle, this));
+
         // Fisica DEPOIS dos scripts: OnDestroy() de um script ainda pode
         // querer ler a posicao final do corpo fisico (ex: salvar onde o
         // personagem parou) antes do mundo fisico ser destruido.
         PhysicsEngine::OnSceneStop(*this);
+
+        ParticleSystem::OnSceneStop(*this);
+        AudioEngine::OnSceneStop(*this);
     }
 
 }

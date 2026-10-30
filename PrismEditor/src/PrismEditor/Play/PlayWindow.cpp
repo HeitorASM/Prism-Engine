@@ -2,6 +2,7 @@
 // comentario extenso em Prism/src/Prism/Renderer/OpenGLContext.cpp).
 #include <glad/gl.h>
 #include "PlayWindow.h"
+#include <Prism/UI/UISystem.h>
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -29,6 +30,7 @@ namespace PrismEditor {
             return false;
         }
         m_PlayScene = clonedScene;
+        m_PristineScene = editorScene->Clone();
 
         // --- Cria a janela do SO, com contexto OpenGL COMPARTILHADO ---
         // O ultimo parametro de glfwCreateWindow (sharedContextWindow) e o
@@ -136,6 +138,7 @@ namespace PrismEditor {
         // OnCreate() (o caso de uso mais comum, ver script de exemplo
         // example_player_input_raycast.lua).
         Prism::Input::SetContext(m_Window);
+        Prism::UISystem::ResetInput();
 
         // Fisica/scripts comecam a rodar imediatamente - Play "de verdade"
         // comeca no instante em que a janela abre, sem um segundo botao
@@ -160,10 +163,12 @@ namespace PrismEditor {
         // de um GLFWwindow* que esta prestes a virar um ponteiro
         // pendurado (dangling) apos glfwDestroyWindow abaixo.
         Prism::Input::SetContext(nullptr);
+        Prism::UISystem::ResetInput();
 
         glfwDestroyWindow(m_Window);
         m_Window = nullptr;
         m_PlayScene = nullptr;
+        m_PristineScene = nullptr;
 
         PRISM_CORE_INFO("PlayWindow: fechada.");
     }
@@ -209,6 +214,10 @@ namespace PrismEditor {
         // --- Simulacao (scripts + fisica) da Scene CLONADA -----------------
         m_PlayScene->OnUpdate(deltaTime);
 
+        // Scene.Load / Scene.Reload pedidos por scripts: aplica depois do frame.
+        if (Prism::Scene::ApplyPendingLoad(m_PlayScene, m_PristineScene))
+            m_LoggedNoCameraWarning = false;
+
         // Avanca o estado "frame anterior" do Input DEPOIS que toda a
         // logica de gameplay deste frame ja rodou (scripts, dentro de
         // OnUpdate acima, ja consultaram Input::IsKeyDown/IsKeyPressed com
@@ -230,50 +239,29 @@ namespace PrismEditor {
             Prism::Renderer::SetViewport((uint32_t)framebufferWidth, (uint32_t)framebufferHeight);
         }
 
-        Prism::Renderer::Clear(0.05f, 0.05f, 0.07f, 1.0f);
+        // Desenho compartilhado com a aba Game e o Runtime (GameView): camera
+        // principal da Scene CLONADA + UI in-game por cima. O layout da UI usa
+        // o tamanho da JANELA (mesma unidade do mouse em Input).
+        {
+            int windowWidth = 0, windowHeight = 0;
+            glfwGetWindowSize(m_Window, &windowWidth, &windowHeight);
+            bool drewCamera = false;
+            if (framebufferWidth > 0 && framebufferHeight > 0)
+                drewCamera = Prism::GameView::Render(*m_PlayScene, (float)windowWidth, (float)windowHeight, true);
 
-        // Acha a entidade com CameraComponent::Primary=true na Scene
-        // CLONADA (nao na Scene de edicao) - mesma busca que
-        // PropertiesPanel::RenderCameraPreview ja fazia, agora usada aqui para
-        // a janela de Play de verdade em vez de so uma preview.
-        Prism::Entity primaryCameraEntity;
-        auto cameraView = m_PlayScene->GetRegistry().view<Prism::TransformComponent, Prism::CameraComponent>();
-        for (auto entityHandle : cameraView) {
-            auto& camera = cameraView.get<Prism::CameraComponent>(entityHandle);
-            if (camera.Primary) {
-                primaryCameraEntity = Prism::Entity(entityHandle, m_PlayScene.get());
-                break;
+            if (!drewCamera && !m_LoggedNoCameraWarning) {
+                // Log UMA vez so (nao a cada frame) avisando por que a tela
+                // fica vazia. Motivos tipicos: nenhuma entidade tem
+                // CameraComponent na cena, ou existe uma mas com Primary=false.
+                uint32_t cameraCount = 0;
+                auto cameraView = m_PlayScene->GetRegistry().view<Prism::CameraComponent>();
+                for (auto entityHandle : cameraView) { (void)entityHandle; ++cameraCount; }
+                PRISM_CORE_WARN("PlayWindow: nenhuma entidade com CameraComponent::Primary=true encontrada na Scene (",
+                    cameraCount, " CameraComponent(s) no total) - a tela ficara vazia ate existir uma. "
+                    "Confira o Properties panel da entidade camera.");
+                m_LoggedNoCameraWarning = true;
             }
         }
-
-        if (primaryCameraEntity) {
-            float aspect = framebufferHeight > 0 ? (float)framebufferWidth / (float)framebufferHeight : 1.0f;
-            auto& camera = primaryCameraEntity.GetComponent<Prism::CameraComponent>();
-
-            glm::mat4 worldTransform = m_PlayScene->GetWorldTransform(primaryCameraEntity);
-            glm::mat4 view = glm::inverse(worldTransform);
-            glm::mat4 projection = camera.GetProjection(aspect);
-            glm::vec3 worldPos = glm::vec3(worldTransform[3]);
-
-            Prism::Renderer::DrawScene(*m_PlayScene, glm::value_ptr(view), glm::value_ptr(projection), glm::value_ptr(worldPos));
-        } else if (!m_LoggedNoCameraWarning) {
-            // Log UMA vez so (nao a cada frame) avisando por que a tela
-            // fica preta - ajuda a diagnosticar sem inundar o console.
-            // Motivos tipicos: nenhuma entidade tem CameraComponent na
-            // cena, ou existe uma mas com Primary=false (o default do
-            // component e Primary=true - ver Components.h - entao isso so
-            // acontece se o usuario desmarcou manualmente no Properties
-            // panel, ou se ha mais de uma camera e outra "ganhou").
-            uint32_t cameraCount = 0;
-            for (auto entityHandle : cameraView) { (void)entityHandle; ++cameraCount; }
-            PRISM_CORE_WARN("PlayWindow: nenhuma entidade com CameraComponent::Primary=true encontrada na Scene (",
-                cameraCount, " CameraComponent(s) no total) - a tela ficara preta ate existir uma. "
-                "Confira o Properties panel da entidade camera.");
-            m_LoggedNoCameraWarning = true;
-        }
-        // Sem CameraComponent::Primary na cena: so o Clear() acima aparece
-        // (tela solida) - mesma limitacao que RenderCameraPreview ja tinha
-        // (ver EditorLayer.cpp), nao e novo desta janela.
 
         glfwSwapBuffers(m_Window);
 

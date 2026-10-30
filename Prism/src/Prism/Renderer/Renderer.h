@@ -23,13 +23,21 @@
 #include "../Assets/AssetID.h"
 #include "Shader.h"
 #include "Mesh.h"
-#include "ShadowMap.h"
+#include "GPULight.h"
+#include "Culling.h"
+#include "ShadowSystem.h"
+#include "EnvironmentIBL.h"
 #include "GeometryBuffer.h"
 #include "SSAO.h"
 #include "Texture.h"
+#include "ShaderParams.h"
+#include "SkyTexture.h"
+#include "PostProcess.h"
 #include "../Project/Project.h"
+#include "../Animation/ModelRig.h"
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <utility> 
 #include <string>
@@ -40,53 +48,54 @@ struct GLFWwindow;
 
 namespace Prism {
 
-    // Representacao de UMA luz PRONTA PARA A GPU - a "traducao" de um
-    // LightComponent (dado de editor, ver Components.h) para o formato
-    // generico que o shader consome via array de uniforms.
-    //
-    // Esta struct existe para que o shader NUNCA precise saber sobre
-    // LightType especificamente: toda luz, seja qual for seu tipo, vira
-    // um GPULight com os mesmos campos - o shader so olha 'Type' (como
-    // int) para decidir COMO usar Position/Direction/Cone. Isso e o que
-    // torna adicionar um tipo novo (ver comentario grande sobre Area/IES
-    // em LightType, Components.h) uma mudanca pequena: 1) um novo case em
-    // CollectGPULights preenchendo estes mesmos campos, 2) o shader
-    // interpretando um novo valor de Type. Nenhuma outra funcao muda de
-    // assinatura.
-    //
-    // Layout pensado para bater 1:1 com o std140 do array de uniforms no
-    // shader (ver shaders/basic.frag em Renderer.cpp) - todo vec3 alinhado a
-    // 16 bytes, sem "buracos" inesperados.
-    struct GPULight {
-        int   Type = 0;          // == (int)LightType - Point=0, Spot=1, Directional=2, ...
-        glm::vec3 Position = { 0.0f, 0.0f, 0.0f };   // world space - ignorado por Directional
-        glm::vec3 Direction = { 0.0f, -1.0f, 0.0f }; // world space, normalizada - so Spot/Directional (e Area no futuro)
-        glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
-        float Intensity = 1.0f;
-        float Range = 10.0f;               // Point/Spot - Directional ignora
-        float CosOuterAngle = -1.0f;       // cos(SpotAngle) pre-calculado - so Spot
-        float CosInnerAngle = -1.0f;       // cos(InnerSpotAngle) pre-calculado - so Spot
 
-        // Identidade da entidade EnTT dona deste LightComponent (ver
-        // Renderer::CollectGPULights) - existe SO para permitir achar de
-        // volta, dentro de 'lights', qual elemento corresponde a qual
-        // entidade (ver Renderer::DrawScene, que usa isto para casar o
-        // resultado de RenderShadowPass - que sabe a entidade shadow
-        // caster, nao so o Type - com o indice certo em u_Lights[]). Sem
-        // isto, uma cena com DUAS luzes Directional (so uma delas com
-        // CastShadows=true) aplicaria a sombra na luz errada se a
-        // primeira Directional da lista nao fosse a shadow caster.
-        uint32_t SourceEntityId = 0;
+    // Opcoes de render de UMA camera, passadas a Renderer::DrawScene. O
+    // Renderer NAO guarda configuracao do usuario: tudo que muda o visual
+    // vem da CENA (EnvironmentComponent: ambiente e skybox) ou da CAMERA
+    // (CameraComponent: fundo, exposicao, SSAO). Os padroes abaixo sao os do
+    // CameraComponent - e o que a viewport livre do editor usa.
+    struct CameraRenderSettings {
+        CameraClearMode ClearMode = CameraClearMode::Skybox;
+        float ClearColor[3] = { 0.05f, 0.05f, 0.07f }; // sRGB, so ClearMode == SolidColor
+        float Exposure = 1.0f;
+        bool SSAO = true;
+        // Pos-processamento (ver PostProcess.h).
+        bool Bloom = false;
+        float BloomThreshold = 1.0f;
+        float BloomIntensity = 0.15f;
+        bool FXAA = true;
+        float Saturation = 1.0f;
+        float Contrast = 1.0f;
+        // Camadas enxergadas (Culling.h / CameraComponent::CullMask). Padrao: todas.
+        uint32_t CullMask = Culling::kAllLayers;
+
+        // GUARDA DE LAYOUT (sempre o ULTIMO campo). Esta struct e passada por
+        // referencia entre arquivos .cpp; se algum .cpp ficou compilado com uma
+        // versao ANTIGA do header (build incremental que nao recompilou), o
+        // DrawScene leria lixo da memoria alem do objeto (ex: saturacao 0 =
+        // imagem cinza). Com a guarda, o DrawScene percebe, avisa no log e usa
+        // valores neutros.
+        static constexpr uint32_t kLayoutMagic = 0x50525345u;
+        uint32_t LayoutMagic = kLayoutMagic;
+
+        static CameraRenderSettings From(const CameraComponent& camera) {
+            CameraRenderSettings r;
+            r.ClearMode = camera.ClearMode;
+            r.ClearColor[0] = camera.ClearColor.x;
+            r.ClearColor[1] = camera.ClearColor.y;
+            r.ClearColor[2] = camera.ClearColor.z;
+            r.Exposure = camera.Exposure;
+            r.SSAO = camera.SSAO;
+            r.Bloom = camera.Bloom;
+            r.BloomThreshold = camera.BloomThreshold;
+            r.BloomIntensity = camera.BloomIntensity;
+            r.FXAA = camera.FXAA;
+            r.Saturation = camera.Saturation;
+            r.Contrast = camera.Contrast;
+            r.CullMask = camera.CullMask;
+            return r;
+        }
     };
-
-    // Numero maximo de luzes simultaneas que uma cena pode enviar ao
-    // shader em um unico frame - array de tamanho fixo no lado GLSL (ver
-    // "uniform GPULight u_Lights[MAX_LIGHTS]" em shaders/basic.frag). O
-    // Renderer::Init injeta este valor no GLSL como '#define MAX_LIGHTS', entao
-    // C++ e shader nunca divergem: se um mapa precisar de mais luzes
-    // simultaneas no mesmo draw call, e so aumentar este numero (nao ha custo
-    // alem do maior array copiado por frame).
-    static constexpr uint32_t MAX_LIGHTS = 16;
 
     class Renderer {
     public:
@@ -125,17 +134,9 @@ namespace Prism {
         // tem uma lista de GPULight a mao (ex: previews avulsas). Passar
         // as luzes coletadas via CollectGPULights() para iluminacao de
         // verdade - ver DrawScene(), que ja faz isso automaticamente.
-        // 'shadowMap'/'lightSpaceMatrix' sao opcionais (ambos nullptr por
-        // padrao = "sem sombra"): quando fornecidos, o fragment shader amostra
-        // 'shadowMap' para decidir se cada fragmento esta na sombra da luz
-        // Directional que gerou 'lightSpaceMatrix' (ver CalculateShadow em
-        // shaders/basic.frag). DrawScene() preenche os dois
-        // automaticamente a partir de RenderShadowPass(); chamadores
-        // manuais de DrawMesh (ex: previews avulsas) continuam
-        // funcionando sem eles, so sem sombra na preview.
-        // 'shadowCasterLightIndex' identifica, dentro de 'lights', qual
-        // luz corresponde a 'shadowMap' (ver comentario em UploadLights) -
-        // ignorado se 'shadowMap' for nullptr.
+        // 'shadows' e opcional (nullptr = sem sombra): mapas de sombra do quadro
+        // (ver ShadowSystem.h). DrawScene() o preenche; chamadores avulsos
+        // (previews) funcionam sem ele.
         // 'ssao' e opcional (nullptr por padrao = "sem AO"): quando
         // fornecida, o
         // termo de luz ambiente e multiplicado por (1 - oclusao) lida da
@@ -154,7 +155,7 @@ namespace Prism {
         // ANTES caso 'material' seja nullptr (MeshRendererComponent sem
         // MaterialComponent, ex: gizmos/previews) - quando 'material' E
         // fornecido, 'color' e ignorado em favor de material->AlbedoTint.
-        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+        static void DrawMesh(PrimitiveMesh mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
 
         // Mesma funcao de DrawMesh acima, mas recebendo o Mesh (GPU) ja
         // resolvido diretamente, em vez de um PrimitiveMesh (enum) a
@@ -168,7 +169,8 @@ namespace Prism {
         // diferente. 'mesh' nulo e um no-op silencioso (mesmo
         // comportamento de "primitiva ainda nao carregada" da outra
         // sobrecarga).
-        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowMap* shadowMap = nullptr, int shadowCasterLightIndex = -1, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr);
+        static void DrawMesh(Mesh* mesh, const float* viewProjection, const float* model, const float* color = nullptr, const std::vector<GPULight>* lights = nullptr, const ShadowFrame* shadows = nullptr, const SSAO* ssao = nullptr, const MaterialComponent* material = nullptr,
+                             const glm::mat4* bones = nullptr, uint32_t boneCount = 0);
 
         // Retorna o Mesh (GPU) do modelo IMPORTADO identificado por
         // 'modelAsset' (ver MeshRendererComponent::ModelAsset,
@@ -198,6 +200,24 @@ namespace Prism {
         // dobro de VRAM com modelos usados so por submesh.
         static Mesh* GetOrLoadModelMesh(AssetID modelAsset, int submeshIndex = -1);
 
+        // Esqueleto + clipes de animacao do modelo (nulo se o modelo nao tem ossos
+        // nem animacao, ou se a importacao falhou). Cache por AssetID, MESMA
+        // invalidacao de GetOrLoadModelMesh. NAO cria nada na GPU (so le o arquivo
+        // na primeira vez) - seguro de chamar de qualquer contexto, ex: da
+        // atualizacao da cena. O ponteiro devolvido e o mesmo enquanto o cache valer.
+        static std::shared_ptr<const ModelRig> GetOrLoadModelRig(AssetID modelAsset);
+
+        // Paleta de ossos (matrizes prontas para o shader) com que a entidade
+        // 'entity' deve ser desenhada: a do Animator (na propria entidade ou em
+        // um ancestral, do MESMO modelo) ou, sem Animator, a pose de bind do rig.
+        // count == 0 / data == nullptr: malha sem skinning (nao precisa de paleta).
+        // O ponteiro vale ate o proximo AnimationSystem::Update / InvalidateModelCache.
+        struct BonePalette {
+            const glm::mat4* Data = nullptr;
+            uint32_t Count = 0;
+        };
+        static BonePalette ResolveBonePalette(class Scene& scene, entt::entity entity, const MeshRendererComponent& meshRenderer, const Mesh* mesh);
+
         // Resolve QUAL Mesh (GPU) desenhar/testar picking para um
         // MeshRendererComponent: um modelo IMPORTADO (ModelAsset valido)
         // tem prioridade sobre a primitiva embutida 'Mesh' - mesma regra
@@ -210,6 +230,24 @@ namespace Prism {
         // tambem precisa da MESMA resolucao para picking bater com o que
         // e desenhado - ver comentario grande em Scene.cpp.
         static Mesh* ResolveMesh(const MeshRendererComponent& meshRenderer);
+
+        // --- Level Builder ---------------------------------------------------------
+        // Malha GPU de um LevelMeshComponent: uma parte (Mesh) por slot de material USADO. O cache e
+        // indexado por LevelMeshComponent::Revision (conteudo identico = mesma GPU) e descarta sozinho
+        // o que nao e visto ha ~5 minutos de quadros. Precisa de contexto OpenGL.
+        // A referencia devolvida vale ate a proxima chamada de DrawScene.
+        struct LevelMeshPart {
+            Mesh* MeshPtr = nullptr;
+            uint32_t MaterialSlot = 0;
+        };
+        struct LevelMeshGpu {
+            std::vector<LevelMeshPart> Parts;
+            glm::vec3 BoundsMin{ 0.0f };
+            glm::vec3 BoundsMax{ 0.0f };
+            std::vector<Scope<Mesh>> Owned;
+            uint64_t LastUsed = 0;
+        };
+        static const LevelMeshGpu& ResolveLevelMesh(const LevelMeshComponent& levelMesh);
 
         // Remove 'modelAsset' do cache acima (sucesso OU falha), forcando
         // a proxima GetOrLoadModelMesh com o mesmo ID a reler o arquivo
@@ -247,6 +285,11 @@ namespace Prism {
         // o cache.
         static Texture2D* GetOrLoadTexture(const std::string& path, bool isSRGB);
 
+        // Parametros (uniforms) declarados no shader de material 'shaderPath' (relativo ao projeto),
+        // na ordem do arquivo. Vazio se o caminho for vazio, o arquivo nao existir ou nao declarar nenhum.
+        // O ponteiro vale ate a proxima chamada de Renderer/hot reload; nao guarde.
+        static const std::vector<ShaderParamDecl>& GetShaderParams(const std::string& shaderPath);
+
         // Define a posicao (world space, 3 floats xyz) da camera usada
         // pelo teste de "face interna transparente" dentro de DrawMesh() -
         // ver comentario la. Chamar uma vez por framebuffer renderizado
@@ -255,54 +298,10 @@ namespace Prism {
         // antes de qualquer DrawMesh() daquele framebuffer.
         static void SetCameraPosition(const float* worldPos);
 
-        // Exposicao (multiplicador de brilho aplicado em espaco LINEAR,
-        // ANTES do tone mapping ACES - ver ToneMapACES em shaders/basic.frag,
-        // Renderer.cpp). 1.0 = neutro (padrao). Valores > 1 clareiam a
-        // cena, < 1 escurecem; 0 (ou negativo) e ignorado e mantem o valor
-        // anterior, porque exposicao 0 deixaria a cena inteira preta.
-        //
-        // E estado GLOBAL do Renderer (nao por cena/por chamada), igual a
-        // SetCameraPosition: vale para toda DrawMesh/DrawScene seguinte, em
-        // qualquer framebuffer (viewport, preview de camera, janela de
-        // Play). Ainda nao exposto na UI do editor.
-        static void SetExposure(float exposure);
-        static float GetExposure();
-
-        // Intensidade do AMBIENTE (o gradiente de 3 cores abaixo). Padrao
-        // 0.10 = brilho MEDIO do ambiente, o mesmo do cinza uniforme que o
-        // gradiente substituiu: cenas existentes mantem o brilho medio, e
-        // ganham variacao ceu/chao nas superficies e, principalmente, reflexo
-        // nos metais (antes eles ficavam pretos sem luz direta). Aceita 0
-        // (cena sem ambiente: so luzes iluminam), mas ignora valores
-        // negativos. Multiplicado pelo albedo (difuso) e pelo SSAO.
-        // Estado GLOBAL, igual a SetExposure. Ainda nao exposto na UI.
-        static void SetAmbient(float ambient);
-        static float GetAmbient();
-
-        // Cores do gradiente de ambiente, em sRGB (o que o color picker
-        // mostra; o shader converte para linear). zenith = ceu (direcao +Y),
-        // horizon = linha do horizonte, ground = chao (direcao -Y). Cada
-        // ponteiro aponta para 3 floats (RGB); nullptr mantem a cor atual.
-        //
-        // O shader NAO precisa ser reajustado ao trocar as cores: a
-        // irradiancia e linear nelas (ver EnvironmentIrradiance em
-        // Renderer.cpp). Valores fora de [0,1] sao limitados a esse intervalo.
-        //
-        // E um gradiente ANALITICO, nao um skybox: nao ha reflexo de objetos
-        // da cena nem de imagem HDR. Quando existir IBL de verdade, as
-        // funcoes Environment* do shader sao o ponto de troca.
-        static void SetEnvironmentColors(const float* zenith, const float* horizon, const float* ground);
-        static void GetEnvironmentColors(float* outZenith, float* outHorizon, float* outGround);
-
-        // Aplica de uma vez os ajustes de renderizacao de um projeto
-        // (exposicao, intensidade e cores do ambiente - ver RenderSettings em
-        // Project.h). Equivale a chamar SetExposure, SetAmbient e
-        // SetEnvironmentColors com os campos de 'settings', com as mesmas
-        // regras de cada uma (valores invalidos sao ignorados). O editor
-        // chama isto ao abrir um projeto e a cada edicao no menu
-        // "Renderizacao"; um futuro modo Runtime deve chama-lo ao carregar o
-        // projeto, para o jogo exportado ter o mesmo visual do editor.
-        static void ApplyRenderSettings(const RenderSettings& settings);
+        // (Exposicao, ambiente e skybox NAO sao mais configurados aqui: vem do
+        // CameraRenderSettings e do EnvironmentComponent da cena passados a
+        // DrawScene - ver o comentario dela. Valores invalidos/fora de faixa
+        // sao limitados pelo Renderer, que nunca confia no dado.)
 
         // Desenha uma lista de segmentos de linha soltos (cada par de
         // pontos consecutivos em 'points' e um segmento - GL_LINES, nao
@@ -332,7 +331,39 @@ namespace Prism {
         // da profundidade (unproject). viewProjection = projection * view
         // e calculada internamente, ja que o pass de cor final ainda
         // precisa dela combinada.
-        static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos);
+        //
+        // 'camera' = opcoes de render desta camera (fundo, exposicao, SSAO);
+        // o ambiente (luz ambiente + skybox) vem do EnvironmentComponent da
+        // cena (o primeiro encontrado; sem nenhum, valem os padroes do
+        // component). Chamadores sem CameraComponent (viewport livre do
+        // editor) usam o argumento padrao. NAO precisa de Clear() antes: DrawScene
+        // limpa cor e profundidade do destino e o fundo cobre a tela inteira.
+        // Estatistica do ULTIMO DrawScene (passe principal): quantas malhas foram desenhadas,
+        // descartadas pelo frustum e escondidas pela camada da camera.
+        struct CullStats { uint32_t Drawn = 0, FrustumCulled = 0, LayerHidden = 0; };
+        static const CullStats& GetCullStats();
+
+        static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera = CameraRenderSettings{});
+
+        // Desenha as particulas de todos os emissores da cena (billboards com
+        // blend, sem escrever profundidade). Chamado no fim de DrawScene, depois
+        // da geometria opaca; exposto para quem desenha a cena por conta propria.
+        static void DrawParticles(class Scene& scene, const float* view, const float* projection);
+
+        // UI in-game: um quad em espaco de tela (pixels, origem no canto superior
+        // esquerdo). Layout igual ao struct UIQuad de ui.vert (std430).
+        struct UIQuad {
+            glm::vec4 Rect;   // x, y, largura, altura
+            glm::vec4 UV;     // u0, v0, u1, v1
+            glm::vec4 Color;
+            glm::vec4 Params; // x = modo: 0 cor, 1 textura, 2 glifo de fonte
+        };
+        // Desenha 'count' quads por cima do que ja esta no framebuffer atual
+        // (blend normal, sem profundidade). 'texture' serve aos quads de modo 1
+        // (pode ser nullptr); 'fontTexture' e o id GL do atlas R8 dos de modo 2.
+        // Chamado pelo UISystem; o chamador cuida do viewport.
+        static void DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
+                                const Texture2D* texture, uint32_t fontTexture);
 
         // Varre 'scene' por toda entidade com TransformComponent +
         // LightComponent e traduz cada uma para um GPULight (ver comentario
@@ -349,23 +380,6 @@ namespace Prism {
         // traducao/coleta.
         static std::vector<GPULight> CollectGPULights(class Scene& scene);
 
-        // --- Shadow mapping (directional, uma luz por vez) --------------
-        // Ver comentario grande em Renderer.cpp acima de RenderShadowPass
-        // para o pipeline completo. Chamado automaticamente de dentro de
-        // DrawScene() - nenhum chamador (EditorLayer, PlayWindow) precisa
-        // saber que este pass existe ou chama-lo separadamente.
-        //
-        // Publica (nao so uso interno) pelo mesmo motivo de
-        // CollectGPULights: uma ferramenta de editor (ex: um futuro painel
-        // de debug que mostra o shadow map como imagem, tipo o "shadow map
-        // viewer" de engines maiores) pode precisar do resultado sem
-        // duplicar a logica de "qual luz projeta sombra e qual matriz ela
-        // usa".
-        //
-        // Retorna nullptr se nenhuma luz da cena tem
-        // LightComponent::CastShadows == true (sem shadow map, sem sombra).
-        static ShadowMap* RenderShadowPass(class Scene& scene);
-
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
         // Ver comentario grande em SSAO.h para o pipeline completo (3
         // sub-passes: geometria -> SSAO bruto -> blur). Todos chamados
@@ -378,7 +392,27 @@ namespace Prism {
         // Publicas pelo mesmo motivo de RenderShadowPass/CollectGPULights:
         // permitir que ferramentas de editor (ex: um futuro "AO buffer
         // viewer" de debug) reusem o resultado sem duplicar logica.
-        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height);
+        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, uint32_t cullMask = Culling::kAllLayers);
+
+        // Um objeto que ENTRA na imagem de uma camera (passou por camada e frustum), com tudo que os
+        // passes de desenho precisam ja resolvido: malha, material, matriz de mundo e paleta de ossos.
+        // DrawScene monta esta lista UMA vez por quadro e a usa no pre-passe do SSAO e no passe
+        // principal (antes, cada passe repetia o percurso da cena, a matriz de mundo e a busca da malha).
+        // Os ponteiros valem ate a cena mudar (so durante o quadro).
+        struct VisibleMesh {
+            entt::entity Entity = entt::null;
+            Mesh* MeshPtr = nullptr;
+            glm::vec3 BaseColor{ 1.0f };                  // cor solida usada quando Material e nulo (MeshRendererComponent::Color)
+            const MaterialComponent* Material = nullptr; // nulo = entidade sem MaterialComponent
+            glm::mat4 Model{ 1.0f };
+            BonePalette Palette;
+        };
+        // Preenche 'out' (limpa antes) e atualiza GetCullStats(). Entidades cujo modelo falhou ao carregar
+        // contam como desenhadas (como antes) mas nao entram na lista.
+        static void CollectVisibleMeshes(class Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out);
+        // Mesmo pre-passe, a partir de uma lista ja coletada. Objetos transluscidos/recortados ficam de fora do
+        // SSAO; copias iguais da mesma malha sao desenhadas por instancing.
+        static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, const std::vector<VisibleMesh>& visible);
         static SSAO* RenderSSAOPass(GeometryBuffer& gBuffer, const float* projection, uint32_t width, uint32_t height);
         static void RenderSSAOBlurPass(SSAO& ssao);
 
@@ -387,44 +421,55 @@ namespace Prism {
         // u_LightCount + u_Lights[i].*. Uso interno de DrawMesh/DrawScene,
         // mas exposta para o caso raro de um caller externo precisar
         // desenhar com s_BasicShader fora do fluxo normal de DrawMesh.
-        // 'shadowCasterLightIndex' e o indice dentro de 'lights' da UNICA
-        // luz (identificada por entidade, ver GPULight::SourceEntityId e
-        // Renderer::DrawScene) cuja sombra foi desenhada em
-        // RenderShadowPass (-1 = nenhuma, valor padrao) - repassado ao
-        // shader para CalculateLight() saber em qual luz aplicar
-        // CalculateShadow().
-        static void UploadLights(const std::vector<GPULight>& lights, int shadowCasterLightIndex = -1);
+        static void UploadLights(const std::vector<GPULight>& lights);
+
+        // Desenho instanciado (varios objetos com a mesma malha e material numa chamada so) no
+        // passe principal. Ligado por padrao; desligar serve para comparar no profiler.
+        static void SetInstancingEnabled(bool enabled);
+        static bool IsInstancingEnabled();
 
     private:
+        // Estado por QUADRO / por MATERIAL / por OBJETO do shader principal (DrawMesh envia os tres;
+        // DrawScene envia o primeiro 1x e os outros so quando mudam). O shader precisa estar ligado.
+        static void BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao);
+        static void BindMaterialState(const MaterialComponent* material);
+        static void SetBaseColor(const MaterialComponent* material, const float* color);
+        static void BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount);
+        static uint32_t GetInstanceBufferForCurrentContext();
+        static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_InstanceBuffersByContext;
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
 
-        // Shader "depth-only" usado exclusivamente por RenderShadowPass -
-        // so precisa de posicao (nem normal, nem cor) e nao tem fragment
-        // shader com logica nenhuma (so existe para a GPU ter algo para
-        // linkar - ver shaders/shadow_depth.frag). Programa
-        // SEPARADO de s_BasicShader, nao um "modo" dele, porque os dois
-        // tem conjuntos de uniforms/atributos completamente diferentes.
-        static Ref<Shader> s_ShadowDepthShader;
+        // Particulas: shader (particle.vert/.frag) + um SSBO reescrito por
+        // emissor a cada frame com {posicao+tamanho, cor} de cada particula.
+        // O quad e gerado no vertex shader (sem VBO), com um VAO vazio por contexto.
+        static Ref<Shader> s_ParticleShader;
+        static uint32_t s_ParticleSSBO;
 
-        // Um unico ShadowMap, reusado a cada frame (recriado so se a
-        // engine ganhar shadow maps por-luz/CSM no futuro - ver comentario
-        // em ShadowMap.h). Alocado sob demanda na primeira vez que
-        // RenderShadowPass encontra uma luz com CastShadows=true (nao em
-        // Init()), para nao gastar os ~16MB de VRAM em cenas que nunca
-        // usam sombra.
-        static Scope<ShadowMap> s_ShadowMap;
+        // UI in-game: shader (ui.vert/.frag) + SSBO reescrito a cada lote.
+        static Ref<Shader> s_UIShader;
+        static uint32_t s_UISSBO;
 
-        // Identidade EnTT (ver GPULight::SourceEntityId) da entidade cuja
-        // luz foi desenhada em s_ShadowMap neste frame - preenchido por
-        // RenderShadowPass, lido por DrawScene logo em seguida para achar
-        // o indice correto dentro do 'lights' ja coletado (ver comentario
-        // em GPULight::SourceEntityId sobre o bug que isto evita).
-        // s_HasShadowCasterEntity distingue "nenhuma luz encontrada" de
-        // "encontrada, id == 0" sem depender do valor numerico exato de
-        // entt::null (que nao e garantido ser 0 em toda versao do EnTT).
-        static uint32_t s_ShadowCasterEntityId;
-        static bool s_HasShadowCasterEntity;
+        // Estado POR QUADRO do ambiente e do fundo: reescrito por inteiro no
+        // inicio de cada DrawScene (ApplyFrameState) a partir do
+        // EnvironmentComponent da cena e do CameraRenderSettings. NAO e
+        // configuracao do usuario - nada fora de DrawScene deve escreve-lo.
+        // O panorama e carregado sob demanda e recarregado quando o caminho
+        // ABSOLUTO muda (nao o AssetID: trocar de projeto com o mesmo ID nao
+        // reaproveita a textura do projeto anterior).
+        static void ApplyFrameState(class Scene& scene, const CameraRenderSettings& camera);
+        static SkyTexture* ResolvePanorama(); // carrega sob demanda o panorama de s_SkyTexturePath (nullptr se invalido)
+        static bool s_IBLActive;              // este quadro usa os mapas de EnvironmentIBL
+        static void DrawSky(const float* view, const float* projection, const float* cameraWorldPos);
+        static Ref<Shader> s_SkyShader;
+        static SkyMode s_SkyMode;
+        static float s_SkyColor[3];
+        static std::string s_SkyTexturePath;  // caminho ABSOLUTO resolvido ("" = sem textura)
+        static float s_SkyRotation;
+        static float s_SkyIntensity;
+        static Scope<SkyTexture> s_SkyTexture;
+        static std::string s_SkyLoadedPath;   // caminho de s_SkyTexture ("" = nenhum tentado)
+
 
         // --- SSAO: shaders e recursos, mesmo padrao de s_ShadowDepthShader/
         // s_ShadowMap acima -----------------------------------------------
@@ -471,6 +516,12 @@ namespace Prism {
 
         static float s_CameraWorldPos[3];
         static float s_Exposure;
+        // true so DENTRO de DrawScene com pos-processamento: os shaders de cena
+        // (basic/sky/particle) escrevem HDR linear (u_OutputMode = 1) em vez da
+        // imagem final. Fora disso (DrawMesh avulso) tudo sai como sempre.
+        static bool s_OutputHDR;
+        // O ceu do quadro precisa de exposicao/ACES (panorama HDR)? Ver DrawSky.
+        static bool s_SkyNeedsToneMap;
         static float s_Ambient;
         static float s_EnvZenith[3];
         static float s_EnvHorizon[3];
@@ -521,6 +572,19 @@ namespace Prism {
             bool MergedTried = false;
         };
         static std::unordered_map<AssetID, ModelCacheEntry> s_ModelMeshCache;
+
+        // Rigs (esqueleto + clipes) por AssetID. 'Tried' distingue "nunca
+        // carreguei" de "carreguei e nao tem rig / falhou" (Rig nulo).
+        struct RigCacheEntry {
+            bool Tried = false;
+            std::shared_ptr<ModelRig> Rig;
+        };
+        static std::unordered_map<AssetID, RigCacheEntry> s_RigCache;
+
+        // Cache de LevelMeshComponent por Revision (ver ResolveLevelMesh).
+        static std::unordered_map<uint64_t, LevelMeshGpu> s_LevelMeshCache;
+        static uint64_t s_LevelMeshStamp;
+        static void CollectLevelMeshGarbage();
     };
 
 }

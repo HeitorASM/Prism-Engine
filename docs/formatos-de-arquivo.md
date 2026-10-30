@@ -20,30 +20,31 @@ AssetDirectory=Assets
 ScriptDirectory=Scripts
 MapDirectory=Maps
 StartMap=Cena.prismmap
-Exposure=1
-Ambient=0.1
-EnvZenith=0.36,0.55,0.95
-EnvHorizon=0.8,0.85,0.9
-EnvGround=0.22,0.2,0.18
+EngineVersion=0.1.0
 ```
 
 `StartMap` é o mapa aberto automaticamente ao carregar o projeto.
 
-`Exposure`, `Ambient`, `EnvZenith`, `EnvHorizon` e `EnvGround` são os ajustes de renderização do projeto (menu **Renderização** do editor; ver [Renderização](renderizacao.md)). As cores são `r,g,b` em sRGB, de 0 a 1.
+`Layer0=` … `Layer31=` (opcionais) são os nomes das camadas de visibilidade 1 a 32; sem a chave, o nome é "Camada N".
 
-- Sempre escritos com **ponto decimal**, independente do idioma do sistema (um Windows em português não muda o formato do arquivo).
-- Chaves ausentes usam o valor padrão, então projetos criados antes destas chaves existirem abrem com o visual de sempre.
-- Valor inválido (texto, número de componentes errado, `nan`) é ignorado com um aviso no log e a chave volta ao padrão, sem afetar as outras.
-- Valores fora da faixa são limitados: `Exposure` a 0.05–16 (zero deixaria a cena preta), `Ambient` a 0–2 e cada canal de cor a 0–1.
+`EngineVersion` é a versão da engine (`Version.py`) que criou o projeto. Só serve para o editor avisar quando difere da atual; projetos sem a chave abrem normalmente. O arquivo é gravado de forma atômica (arquivo temporário + rename), então um crash no meio do save não o corrompe. Um projeto novo também recebe um `.gitignore` com `Cache/` e `Binaries/`.
+
+> As opções de render **não ficam mais no projeto**: o ambiente e o skybox são do `EnvironmentComponent` da cena (gravado no `.prismmap`) e exposição, fundo e SSAO são do `CameraComponent`. Chaves antigas (`Exposure`, `Ambient`, `Env*`, `Sky*`) em um `.prismproj` existente são ignoradas ao ler e desaparecem no próximo save.
 
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **14** (`kSceneFormatVersion` em `SceneSerializer.cpp`)
+- Versão atual: **21** (`kSceneFormatVersion` em `SceneSerializer.cpp`). Mapas **v19 e v20** ainda são lidos (e regravados no formato atual ao salvar); formatos anteriores são recusados.
 
-> Sera resetada futuramente, atualmente so e upada para motivos de desenvolvimento
+Contém o nome da cena e, para cada entidade: tag, transform, os components como **blocos** e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
 
-Contém o nome da cena e, para cada entidade: tag, transform, os components opcionais (na ordem em que foram registrados no `ComponentRegistry`) e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
+Cada component presente é um bloco `[nome][versão][tamanho][bytes]` (`ComponentRegistry::WriteComponentBlocks`). O nome é o `DisplayName` do registro e a versão é a do component (`ComponentTypeInfo::Version`). Como o bloco tem tamanho:
+
+- um component **desconhecido** (de uma engine mais nova) é pulado com um aviso, e o resto do mapa abre;
+- um bloco com dados inválidos descarta **só aquele component** (erro no Console);
+- **campo novo no fim de um component** é só subir a `Version` dele e ler o campo novo quando `ComponentRegistry::CurrentBlockVersion()` for suficiente: **não** precisa subir `kSceneFormatVersion` nem invalida mapas antigos.
+
+A gravação é atômica (arquivo temporário + rename): um crash no meio do save nunca corrompe o mapa existente.
 
 O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` de cada component em `ComponentRegistration.cpp`, e o histórico de versões está nos comentários de `kSceneFormatVersion`. Resumo:
 
@@ -58,8 +59,18 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v12 | `PrefabInstanceRoot`/`PrefabInstanceMember` (vínculo vivo com prefab, bloco à parte) |
 | v13 | `MeshRenderer::ModelAsset` (modelo importado) |
 | v14 | `MeshRenderer::SubmeshIndex` (qual material/submesh do modelo a entidade desenha; `-1` = malha mesclada) |
+| v15 | `AudioSource` e `AudioListener` |
+| v16 | `Script::Properties` (variáveis públicas editadas) |
+| v17 | `NativeScript` (nome da classe do script C++) |
+| v18 | `ParticleEmitter` (emissor de partículas) |
+| v19 | `UIElement` (UI antiga; **removido** - o leitor legado descarta o bloco) |
+| v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
+| (bloco Camera v3) | `Camera` ganha `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast` no fim do bloco; **sem** subir a versão do mapa |
+| (bloco Camera v4) | `Camera` ganha `CullMask` (camadas que enxerga) no fim do bloco; **sem** subir a versão do mapa |
+| (bloco MeshRenderer v2) | `MeshRenderer` ganha `Layers` (camadas em que está) no fim do bloco; **sem** subir a versão do mapa |
+| v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |
 
-> O número da versão **vive no código**. Ao subir `kSceneFormatVersion`, atualize "Versão atual" acima e esta tabela.
+> O número da versão **vive no código**. Ao subir `kSceneFormatVersion` (só quando a estrutura **fora** dos blocos muda), atualize "Versão atual" acima e esta tabela.
 
 Do `RaycastComponent` só `TargetPosition`, `Enabled` e `IgnoreParentAndSiblings` são gravados; os campos de resultado (`Hit`, `HitPoint` etc.) são de runtime.
 
@@ -72,21 +83,22 @@ Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **po
 - A textura roughness/metallic só é importada de glTF (canal G = roughness, canal B = metallic).
 - UVs seguem a convenção OpenGL (V para cima), igual às texturas carregadas pela engine; **não** use `aiProcess_FlipUVs`.
 - Arrastar um modelo para o painel *Mesh Renderer* de uma entidade existente aplica o material dele quando o modelo tem um único material; com vários materiais usa a malha mesclada, sem materiais.
-- Ainda **não** importados: esqueleto/animação, câmeras e luzes do arquivo.
+- Esqueleto e animações são importados (ver [animacao.md](animacao.md)): vértices ganham até 4 ossos/pesos, malhas skinadas **não** têm a transformação de nó gravada, e nós animados rígidos usam um osso sintético. O component `Animator` é um bloco próprio (versão 1: modelo, clipe, `PlayOnStart`, `Loop`, `Speed`).
+- Ainda **não** importados: câmeras e luzes do arquivo, *morph targets*.
 
 ## `.prismprefab`
 
 - Magic: `PPFB`
-- Versão atual: **2** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`)
+- Versão atual: **9** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`). Prefabs v7–v8 ainda são lidos.
 
-Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa: `MeshRenderer::SubmeshIndex`), mas sem nome de cena. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
+Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — a v6 a v18 — `ParticleEmitter` — a v7 a v19 — `UIElement` — a v8 a v20 — `Environment`/opções de câmera — e a v9 a v21 — blocos de component), mas sem nome de cena. Gravação atômica, como no mapa. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
 
 ## `.prismmat`
 
 - Magic: `PMAT`
-- Versão atual: **1** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`)
+- Versão atual: **4** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`); a v1 (sem os campos de superfície) ainda é lida
 
-Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`.
+Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`. A v2 acrescenta, no fim, a **superfície**: `BlendMode`, `Opacity`, `AlphaCutoff`, `UVTiling`, `UVOffset`, `EmissiveColor`, `EmissiveIntensity` e `DoubleSided`. A v3 acrescenta `ShaderPath` (shader de material, ver [shaders-customizados.md](shaders-customizados.md)) e a v4 os valores dos parâmetros desse shader (nome + 4 floats cada). O bloco `Material` das cenas/prefabs tem a mesma ampliação (bloco v4); valores inválidos (NaN, fora de faixa) são corrigidos na leitura.
 
 ## `.meta`
 
@@ -122,4 +134,13 @@ Mover ou renomear um asset **sempre junto com o seu `.meta`** preserva o ID, e p
 
 ## Compatibilidade
 
-**Atualmente** Não há migração automática. Um arquivo de versão diferente da atual é recusado, com uma mensagem indicando a versão encontrada e a esperada. Sempre que o formato de `.prismmap` muda (novo component ou novo campo), `kSceneFormatVersion` sobe e os mapas antigos precisam ser recriados ou resalvos por uma versão compatível do editor.
+- **Mapas e prefabs** (v21 / v9 em diante): component novo, campo novo no fim de um component e component desconhecido **não** quebram arquivos existentes (ver os blocos em `.prismmap`). Os formatos anteriores mais recentes (mapa v19–v20, prefab v7–v8) são lidos e regravados no formato atual ao salvar; formatos mais antigos são recusados com uma mensagem clara. Um arquivo **mais novo** que a engine é recusado.
+- **Mudança que quebra** (reordenar/remover campos, renomear o `DisplayName` de um component): exige subir a versão do component ou escrever uma migração.
+- **`.prismproj` e `.meta`**: texto, chaves desconhecidas são ignoradas.
+
+## Física: camadas, juntas e personagem (formato de cena 22)
+
+- `Collider` bloco v2: acrescenta `Layer` (0..31, fora do intervalo vira 0).
+- `Raycast` bloco v2: acrescenta `LayerMask` (uint32; padrão = todas).
+- Novos blocos `Joint` (tipo, entidade conectada pelo **nome/Tag**, âncora, eixo, limites, mola, colidir entre si) e `Character Controller` (raio, altura, degrau, inclinação máxima, massa, escala da gravidade, colar no chão). Cenas antigas continuam abrindo: os campos novos ficam no valor padrão.
+- `.prismproj`: `PhysicsLayer<i>=nome` e `PhysicsMask<i>=uint32` (máscara de colisão da camada i; só gravadas quando diferentes do padrão).

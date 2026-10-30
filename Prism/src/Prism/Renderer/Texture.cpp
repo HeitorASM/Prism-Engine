@@ -67,6 +67,23 @@ namespace Prism {
         stbi_image_free(pixels);
     }
 
+    Texture2D::Texture2D(uint32_t width, uint32_t height, const uint8_t* rgba, bool isSRGB, const std::string& label)
+        : m_Path(label) {
+        if (!rgba || width == 0 || height == 0)
+            return; // fica invalida (IsValid() == false)
+        m_Width = width;
+        m_Height = height;
+
+        glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
+        glBindTexture(GL_TEXTURE_2D, m_RendererID);
+        glTexImage2D(GL_TEXTURE_2D, 0, isSRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8, (GLsizei)width, (GLsizei)height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    }
+
     Texture2D::~Texture2D() {
         if (m_RendererID)
             glDeleteTextures(1, &m_RendererID);

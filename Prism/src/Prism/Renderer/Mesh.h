@@ -4,7 +4,7 @@
 // Mesh.h
 // Wrapper generico de uma malha na GPU (VAO + VBO + EBO). Layout de vertice:
 // posicao (3 floats) + normal (3 floats) + UV (2 floats) + tangente (3
-// floats) - ver MeshVertex abaixo. UV/Tangente sao usados pelo sistema de
+// floats) + 4 ids de osso + 4 pesos de osso (so modelos animados) - ver MeshVertex abaixo. UV/Tangente sao usados pelo sistema de
 // Material/PBR (MaterialComponent, Components.h) para amostrar texturas
 // (albedo/normal/roughness-metallic) e orientar normal mapping
 // corretamente em qualquer superficie, plana ou curva.
@@ -48,6 +48,13 @@ namespace Prism {
         // Position/UV dos 3 vertices (ver
         // PrimitiveMeshFactory::CalculateTangents) - nunca em runtime.
         float Tangent[3];
+
+        // Skinning (animacao esqueletica): ate 4 ossos por vertice. Ids sao
+        // indices na paleta do rig (ModelRig::Bones, maximo kMaxBones) e os
+        // pesos somam 1 - OU todos 0 = vertice SEM skinning (primitivas e
+        // malhas estaticas; o shader usa a matriz identidade). Atributos 4/5.
+        int32_t BoneIds[4] = { 0, 0, 0, 0 };
+        float BoneWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     };
 
     class Mesh {
@@ -59,6 +66,10 @@ namespace Prism {
         Mesh& operator=(const Mesh&) = delete;
 
         void Bind() const;
+
+        // true se algum vertice tem peso de osso (malha de modelo animado).
+        // So essas malhas recebem paleta de ossos no desenho.
+        bool IsSkinned() const { return m_Skinned; }
         uint32_t GetIndexCount() const { return m_IndexCount; }
 
         static Scope<Mesh> Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices);
@@ -110,6 +121,7 @@ namespace Prism {
         uint32_t m_VBO = 0;
         uint32_t m_EBO = 0;
         uint32_t m_IndexCount = 0;
+        bool m_Skinned = false;
         glm::vec3 m_LocalBoundsMin{ 0.0f };
         glm::vec3 m_LocalBoundsMax{ 0.0f };
         std::vector<glm::vec3> m_CpuPositions;

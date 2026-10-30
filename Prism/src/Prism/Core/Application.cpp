@@ -1,10 +1,16 @@
 #include <glad/gl.h> // sempre primeiro - ver OpenGLContext.cpp
 #include "Application.h"
+#include "../UI/UISystem.h"
+#include "../Audio/AudioEngine.h"
 
 #include "Log.h"
 #include "LogBuffer.h"
 #include "../Renderer/Renderer.h"
+#include "../Renderer/GpuTimer.h"
+#include "Profiler.h"
+#include <PrismVersion.h>
 #include "../Scripting/ScriptEngine.h"
+#include "../Scripting/NativeScripting.h"
 #include <GLFW/glfw3.h>
 
 namespace Prism {
@@ -38,6 +44,11 @@ namespace Prism {
         // uso em OnAttach(), sem precisar se preocupar com a ordem de
         // inicializacao.
         ScriptEngine::Init();
+        NativeScripting::Init();
+
+        // Audio (miniaudio): abre o dispositivo de som padrao. Sem
+        // dispositivo, so avisa e o jogo roda mudo (ver AudioEngine.h).
+        AudioEngine::Init();
 
         m_ImGuiLayer = new ImGuiLayer();
         PushOverlay(m_ImGuiLayer);
@@ -51,7 +62,11 @@ namespace Prism {
         // o resto do shutdown, ele nao chame codigo de uma Layer morta.
         m_CloseRequestHandler = nullptr;
 
+        NativeScripting::Shutdown(); // antes da VM Lua: instancias C++ podem usar a API
         ScriptEngine::Shutdown();
+        AudioEngine::Shutdown();
+        GpuTimer::Shutdown();
+        UISystem::Shutdown();
         Renderer::Shutdown();
         s_Instance = nullptr;
     }
@@ -145,12 +160,25 @@ namespace Prism {
     }
 
     void Application::Run() {
-        PRISM_CORE_INFO("Prism Engine - loop principal iniciado.");
+        PRISM_CORE_INFO(Version::Full(), " - loop principal iniciado.");
+
+        // Sem isto o PRIMEIRO quadro veria deltaTime = tempo desde o inicio do
+        // processo (segundos de carregamento), nao o de um quadro.
+        m_LastFrameTime = (float)glfwGetTime();
 
         while (m_Running) {
             float time = (float)glfwGetTime();
             float deltaTime = time - m_LastFrameTime;
             m_LastFrameTime = time;
+
+            // Limita o passo de tempo: uma pausa longa (arrastar a janela no
+            // Windows, breakpoint, janela minimizada, carregamento pesado) nao
+            // pode virar UM unico passo gigante para camera do editor, fisica e
+            // scripts. Acima de 0,1 s o jogo apenas "desacelera" por aquele quadro.
+            if (!(deltaTime >= 0.0f))
+                deltaTime = 0.0f; // relogio andou para tras / NaN
+            else if (deltaTime > 0.1f)
+                deltaTime = 0.1f;
 
             // Aplica pushes/pops de Layer pedidos no frame ANTERIOR antes de
             // comecar um novo frame. Isso precisa acontecer aqui, no topo do
@@ -167,22 +195,35 @@ namespace Prism {
             // deste frame usar o ImGui.
             ProcessPendingLayerOps();
 
+            Profiler::BeginFrame();
+            GpuTimer::BeginFrame(); // depois do Profiler: publica as zonas de GPU de quadros anteriores
+
             if (!m_Minimized) {
                 // Hot reload de shaders (consulta o disco no maximo a cada
                 // 0,5 s). Aqui o contexto da janela principal e o atual - a
                 // janela de Play restaura o do editor ao terminar de desenhar.
                 Renderer::ReloadChangedShaders();
 
-                for (Layer* layer : m_LayerStack)
-                    layer->OnUpdate(deltaTime);
+                {
+                    PRISM_PROFILE_SCOPE("Layers.OnUpdate");
+                    for (Layer* layer : m_LayerStack)
+                        layer->OnUpdate(deltaTime);
+                }
 
-                m_ImGuiLayer->Begin();
-                for (Layer* layer : m_LayerStack)
-                    layer->OnImGuiRender();
-                m_ImGuiLayer->End();
+                {
+                    PRISM_PROFILE_SCOPE("ImGui");
+                    m_ImGuiLayer->Begin();
+                    for (Layer* layer : m_LayerStack)
+                        layer->OnImGuiRender();
+                    m_ImGuiLayer->End();
+                }
             }
 
-            m_Window->OnUpdate();
+            {
+                PRISM_PROFILE_SCOPE("Window.Swap"); // inclui a espera do V-Sync
+                m_Window->OnUpdate();
+            }
+            Profiler::EndFrame();
         }
 
         PRISM_CORE_INFO("Prism Engine - loop principal encerrado.");

@@ -24,10 +24,23 @@ in vec3 v_Normal;
 in vec3 v_WorldPos;
 in vec2 v_UV;
 in vec3 v_Tangent;
+flat in vec3 v_InstColor; // cor por instancia (desenho instanciado)
 out vec4 o_Color;
 
 uniform vec3 u_BaseColor;
+uniform int u_Instanced;
+
+// Superficie do material (ver MaterialComponent): UV = uv * tiling + offset; modo de alfa
+// 0 = opaco, 1 = recorte, 2 = translucido; emissao em LINEAR (cor sRGB ja convertida x intensidade).
+uniform vec2 u_UVTiling;
+uniform vec2 u_UVOffset;
+uniform float u_Opacity;
+uniform int u_AlphaMode;
+uniform float u_AlphaCutoff;
+uniform vec3 u_Emissive;
+uniform int u_DoubleSided;
 uniform vec3 u_CameraWorldPos;
+uniform float u_Time; // segundos desde o inicio (para shaders de material)
 
 // --- Material (albedo/normal/roughness-metallic) -----------------
 // u_Has*Map=false (o padrao) significa nenhuma amostragem de
@@ -64,6 +77,15 @@ uniform vec3 u_EnvGround;
 // paleta especifica (com o azul padrao, 1.45x errada).
 uniform float u_EnvScale;
 
+// IBL (EnvironmentIBL): quando u_UseIBL, o ambiente vem do panorama (irradiancia difusa
+// + especular pre-filtrado) em vez do gradiente analitico. Units 8 e 9.
+uniform int u_UseIBL;
+uniform samplerCube u_IrradianceMap;
+uniform samplerCube u_PrefilterMap;
+uniform float u_IBLScale;     // SkyIntensity * Ambient / 0.10
+uniform float u_IBLRotation;  // radianos em torno de Y (mesma convencao de sky.frag)
+uniform float u_IBLMaxLod;
+
 #ifndef MAX_LIGHTS
 #error "MAX_LIGHTS deve ser injetado pelo Renderer (ver Renderer::Init) - nao defina aqui."
 #endif
@@ -80,109 +102,186 @@ struct GPULight {
     float Range;
     float CosOuterAngle;
     float CosInnerAngle;
+    int   ShadowSlot;   // -1 = sem sombra; Directional: 0 (cascatas); Spot/Point: indice no mapa
 };
 
 uniform int u_LightCount;
 uniform GPULight u_Lights[MAX_LIGHTS];
 
-// --- Shadow mapping (directional, uma luz por vez) --------------
-// u_HasShadow=false (o padrao, ver Renderer::DrawMesh) e o
-// comportamento antigo exato: nenhuma amostragem de textura
-// acontece, sem custo extra. Ver comentario grande em
-// Renderer::RenderShadowPass (Renderer.cpp) para o pipeline
-// completo dos 2 passes.
-uniform sampler2D u_ShadowMap;
-uniform mat4 u_LightSpaceMatrix;
-uniform bool u_HasShadow;
-// Raio do frustum ortho da luz (ver comentario em
-// texelWorldSize, CalculateShadow abaixo) - so tem valor
-// significativo quando u_HasShadow=true (RenderShadowPass e
-// quem calcula e propaga isto, ver Renderer.cpp).
-uniform float u_ShadowFrustumRadius;
-// Indice dentro de u_Lights[] da UNICA luz que gerou u_ShadowMap
-// neste frame (-1 = nenhuma, embora u_HasShadow=false ja cubra
-// esse caso) - ver Renderer::RenderShadowPass/UploadLights, que
-// preenchem isso a partir da mesma busca "primeira luz Directional
-// com CastShadows=true" usada para desenhar o shadow map em si,
-// garantindo que os dois nunca discordem sobre qual luz e essa.
-uniform int u_ShadowCasterLightIndex;
+// --- Sombras (ver Renderer/ShadowSystem.h) -----------------------
+//   Directional: cascatas (CASCADE_COUNT camadas de um array 2D)
+//   Spot:        perspectiva (um array 2D, uma camada por luz)
+//   Point:       cubemap de DISTANCIA / alcance (um cube array)
+// CASCADE_COUNT / MAX_SPOT_SHADOWS / MAX_POINT_SHADOWS vem do C++ (defines).
+#ifndef CASCADE_COUNT
+#error "CASCADE_COUNT deve ser injetado pelo Renderer (ver Renderer::Init)."
+#endif
+uniform sampler2DArray u_CascadeShadow;
+uniform sampler2DArray u_SpotShadow;
+uniform samplerCubeArray u_PointShadow;
 
-// Retorna um fator de sombra: 0.0 = totalmente iluminado, 1.0 =
-// totalmente na sombra. 'worldPos' e 'normal' sao do fragmento
-// ATUAL (espaco de mundo); a funcao mesma faz a projecao para o
-// espaco da luz via u_LightSpaceMatrix.
-float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
-    // Normal offset bias: desloca o PONTO DE MUNDO ao longo da
-    // normal (nao so a profundidade comparada, como uma versao
-    // anterior desta funcao fazia) antes de projetar para o
-    // espaco da luz - tecnica mais robusta que um bias de
-    // profundidade simples para superficies CURVAS (esferas,
-    // capsulas, cilindros): num cubo/plano a normal e constante
-    // por face inteira, entao um bias fixo por pixel funciona
-    // bem; numa capsula a normal varia suavemente vertice a
-    // vertice, e o bias de profundidade sozinho deixava um
-    // padrao visivel de faixas/listras na sombra da propria
-    // superficie curva (shadow acne mais pronunciado em
-    // geometria arredondada). Deslocar a AMOSTRA (nao so o
-    // limiar de comparacao) ao longo da normal empurra o ponto
-    // testado para fora da superficie de forma proporcional a
-    // "largura" de um texel do shadow map em unidades de mundo,
-    // o que se adapta melhor a curvatura continua. Ver
-    // "Normal Offset Shadows" (tecnica classica, usada por
-    // engines como Unity) para a referencia desta abordagem.
-    // texelWorldSize: quanto (em unidades de mundo) um texel do
-    // shadow map cobre, usado para escalar o normal offset acima
-    // de forma proporcional - um shadow map de resolucao fixa
-    // (ver ShadowMap::ShadowMap) cobrindo um frustum GRANDE
-    // (cena com objetos espalhados) tem texels fisicamente
-    // maiores que o mesmo shadow map cobrindo uma cena pequena;
-    // sem escalar por u_ShadowFrustumRadius, um offset fixo
-    // ficaria exagerado (sombra "descolada" do objeto, peter-
-    // panning) em cenas pequenas ou insuficiente (acne de volta)
-    // em cenas grandes. u_ShadowFrustumRadius e o mesmo
-    // 'sceneRadius' que RenderShadowPass calculou para
-    // dimensionar o frustum ortho da luz (ver Renderer.cpp).
-    float texelWorldSize = (2.0 * u_ShadowFrustumRadius) / float(textureSize(u_ShadowMap, 0).x);
-    vec3 offsetWorldPos = worldPos + normal * texelWorldSize * 1.5;
+uniform int u_CascadeCount;                 // 0 = sem sombra direcional
+uniform mat4 u_CascadeMatrix[CASCADE_COUNT];
+uniform float u_CascadeSplit[CASCADE_COUNT];   // onde cada cascata termina (distancia ao longo do olhar)
+uniform float u_CascadeTexel[CASCADE_COUNT];   // tamanho de um texel em unidades de mundo
+uniform float u_CascadeRange[CASCADE_COUNT];   // profundidade do ortho (para converter bias de mundo -> profundidade)
+uniform vec3 u_CameraForward;
 
-    vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(offsetWorldPos, 1.0);
+uniform int u_SpotCount;
+uniform mat4 u_SpotMatrix[MAX_SPOT_SHADOWS];
+uniform float u_SpotTexelAt1[MAX_SPOT_SHADOWS];
+uniform float u_SpotNear[MAX_SPOT_SHADOWS];
+uniform float u_SpotFar[MAX_SPOT_SHADOWS];
 
-    // Perspective divide (sem efeito real aqui ja que a projecao
-    // da luz e ORTHO - ver RenderShadowPass - mas mantido pelo
-    // padrao de qualquer implementacao de shadow mapping, caso a
-    // engine ganhe luzes Spot/Point com sombra via projecao
-    // perspective no futuro) + remapeia de [-1,1] (NDC) para
-    // [0,1] (coordenadas de textura/profundidade).
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
+uniform int u_PointCount;
+uniform float u_PointFar[MAX_POINT_SHADOWS];
 
-    // Fora do frustum ortho da luz (ver GL_CLAMP_TO_BORDER +
-    // borda branca em ShadowMap.cpp) - nao deveria acontecer na
-    // pratica (RenderShadowPass calcula o frustum para cobrir a
-    // cena inteira), mas serve de seguranca contra artefatos caso
-    // uma entidade esteja bem fora do bounding box calculado.
-    if (projCoords.z > 1.0)
+// Retorna 0.0 = totalmente iluminado ... 1.0 = totalmente na sombra.
+
+// PCF suave: 16 amostras de um disco de Poisson, giradas por pixel com ruido
+// (interleaved gradient noise). O ruido troca o "degrau" do PCF fixo por uma
+// borda macia, e o TAA/FXAA e o proprio olho o integram.
+const vec2 kPoisson16[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
+    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790));
+
+float ShadowNoise() {
+    return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+}
+
+mat2 ShadowRotation() {
+    float a = ShadowNoise() * 6.2831853;
+    float c = cos(a), s = sin(a);
+    return mat2(c, s, -s, c);
+}
+
+// Uma cascata: 0 = iluminado ... 1 = sombra. 'valid' = false se o ponto cai fora do mapa.
+float CascadeSample(int cascade, vec3 worldPos, vec3 normal, float NdotL, mat2 rotation, out bool valid) {
+    float texelWorld = u_CascadeTexel[cascade];
+    vec3 p = worldPos + normal * texelWorld * 1.5;
+    vec4 ls = u_CascadeMatrix[cascade] * vec4(p, 1.0);
+    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
+    valid = !(proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0);
+    if (!valid)
         return 0.0;
 
-    // O normal offset acima ja faz a maior parte do trabalho de
-    // evitar acne; este bias residual, pequeno, cobre so o erro de
-    // precisao de ponto flutuante remanescente.
-    float bias = max(0.0006 * (1.0 - dot(normal, lightDir)), 0.00015);
+    // Bias em unidades de mundo (cresce em angulos rasantes), convertido em profundidade do ortho.
+    float bias = texelWorld * (0.5 + 1.5 * (1.0 - NdotL)) / u_CascadeRange[cascade];
+    vec2 texel = 1.0 / vec2(textureSize(u_CascadeShadow, 0).xy);
+    float radius = 1.75; // texels: penumbra macia, sem borrar demais
 
-    // PCF (Percentage-Closer Filtering) 3x3: amostra a vizinhanca
-    // do texel em vez de um unico texel, e faz a MEDIA do
-    // resultado - suaviza a borda serrilhada que uma unica
-    // comparacao de profundidade produziria (sombra com "escada"
-    // visivel pixel a pixel).
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(u_ShadowMap, 0);
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float closestDepth = texture(u_ShadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += (projCoords.z - bias) > closestDepth ? 1.0 : 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * kPoisson16[i] * radius * texel;
+        float closest = texture(u_CascadeShadow, vec3(proj.xy + offset, float(cascade))).r;
+        shadow += (proj.z - bias) > closest ? 1.0 : 0.0;
+    }
+    return shadow / 16.0;
+}
+
+// Luz direcional: escolhe a cascata pela distancia ao longo do olhar da camera,
+// mistura com a proxima perto do limite (sem "degrau" visivel entre cascatas) e
+// some suavemente no fim da distancia de sombra.
+float CascadeShadow(vec3 worldPos, vec3 normal, float NdotL) {
+    float along = dot(worldPos - u_CameraWorldPos, u_CameraForward);
+    int cascade = -1;
+    for (int i = 0; i < CASCADE_COUNT; i++) {
+        if (i < u_CascadeCount && along <= u_CascadeSplit[i]) {
+            cascade = i;
+            break;
         }
     }
-    return shadow / 9.0;
+    if (cascade < 0)
+        return 0.0; // alem da distancia de sombra
+
+    mat2 rotation = ShadowRotation();
+    bool valid;
+    float shadow = CascadeSample(cascade, worldPos, normal, NdotL, rotation, valid);
+
+    // Mistura com a proxima cascata nos ultimos 12% da faixa atual.
+    float splitStart = (cascade == 0) ? 0.0 : u_CascadeSplit[cascade - 1];
+    float band = max((u_CascadeSplit[cascade] - splitStart) * 0.12, 0.001);
+    float toEnd = u_CascadeSplit[cascade] - along;
+    if (cascade + 1 < u_CascadeCount && toEnd < band) {
+        bool validNext;
+        float next = CascadeSample(cascade + 1, worldPos, normal, NdotL, rotation, validNext);
+        if (validNext)
+            shadow = mix(next, shadow, smoothstep(0.0, band, toEnd));
+    }
+
+    // Fade final (ultima cascata): os 10% finais desvanecem a sombra.
+    float last = u_CascadeSplit[u_CascadeCount - 1];
+    float fadeStart = last * 0.9;
+    shadow *= 1.0 - smoothstep(fadeStart, last, along);
+    return shadow;
+}
+
+// Profundidade da projecao perspectiva -> distancia linear (view-space).
+float LinearizeDepth(float d, float n, float f) {
+    return (2.0 * n * f) / (f + n - (2.0 * d - 1.0) * (f - n));
+}
+
+// Spot: compara distancias lineares (a profundidade perspectiva nao e linear).
+float SpotShadow(int slot, vec3 worldPos, vec3 normal, float distanceToLight, float NdotL) {
+    float texelWorld = u_SpotTexelAt1[slot] * distanceToLight;
+    vec3 p = worldPos + normal * texelWorld * 1.5;
+    vec4 ls = u_SpotMatrix[slot] * vec4(p, 1.0);
+    if (ls.w <= 0.0)
+        return 0.0;
+    vec3 proj = ls.xyz / ls.w * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0)
+        return 0.0;
+
+    float bias = texelWorld * (0.7 + 2.0 * (1.0 - NdotL));
+    float fragDistance = ls.w; // profundidade view-space do fragmento
+    float nearP = u_SpotNear[slot];
+    float farP = u_SpotFar[slot];
+
+    mat2 rotation = ShadowRotation();
+    float shadow = 0.0;
+    vec2 texel = 1.0 / vec2(textureSize(u_SpotShadow, 0).xy);
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * kPoisson16[i] * 1.75 * texel;
+        float stored = texture(u_SpotShadow, vec3(proj.xy + offset, float(slot))).r;
+        shadow += (fragDistance - bias) > LinearizeDepth(stored, nearP, farP) ? 1.0 : 0.0;
+    }
+    return shadow / 16.0;
+}
+
+// Ponto: o cubemap guarda distancia/alcance; PCF girando um disco no plano
+// perpendicular a direcao da amostra.
+float PointShadow(int slot, vec3 worldPos, vec3 normal, vec3 lightPos, float NdotL) {
+    float farP = u_PointFar[slot];
+    vec3 toFragment = worldPos - lightPos;
+    float distanceToLight = length(toFragment);
+    if (distanceToLight >= farP)
+        return 0.0;
+
+    float offset = 0.03 + 0.012 * distanceToLight; // normal offset proporcional ao tamanho de um texel
+    vec3 toSample = (worldPos + normal * offset) - lightPos;
+    float sampleDistance = length(toSample);
+    float bias = 0.02 + 0.015 * distanceToLight * (1.0 - NdotL);
+
+    vec3 dir = toSample / max(sampleDistance, 0.0001);
+    vec3 tangent = normalize(cross(dir, abs(dir.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 bitangent = cross(dir, tangent);
+    float radius = 0.010 + 0.0010 * distanceToLight; // abertura angular do PCF
+
+    mat2 rotation = ShadowRotation();
+    float shadow = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 d = rotation * kPoisson16[i];
+        vec3 sampleDir = normalize(dir + (tangent * d.x + bitangent * d.y) * radius);
+        float stored = texture(u_PointShadow, vec4(sampleDir, float(slot))).r * farP;
+        shadow += (sampleDistance - bias) > stored ? 1.0 : 0.0;
+    }
+    return shadow / 16.0;
 }
 
 // Atenuacao por distancia estilo "smooth falloff" (usada por
@@ -201,11 +300,8 @@ float AttenuateByDistance(float distance, float range) {
 // intensidade, atenuacao de distancia/cone e o termo difuso de
 // Lambert) para o fragmento atual. 'normal' e 'viewWorldPos' sao
 // por-fragmento; 'light' e um elemento do array de uniforms.
-// 'applyShadow' e true apenas para a UNICA luz (Directional) que
-// gerou u_ShadowMap neste frame (ver main() - o chamador decide
-// isso comparando o indice do loop com o indice retornado por
-// Renderer::RenderShadowPass/DrawScene). Point/Spot e outras
-// luzes Directional sem CastShadows nunca chamam CalculateShadow.
+// A sombra (se light.ShadowSlot >= 0) e calculada aqui, depois do
+// early-out de NdotL/atenuacao, por tipo de luz.
 // --- BRDF Cook-Torrance (PBR metallic/roughness) ------------------
 // Especular = D * G * F / (4 * N.L * N.V), com:
 //   D: distribuicao de normais GGX/Trowbridge-Reitz (forma do brilho)
@@ -239,7 +335,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0) {
 // 'albedo', 'roughness' e 'metallic' sao por-fragmento (ja resolvidos
 // em main() a partir de textura/fatores); 'viewDir' aponta do
 // fragmento para a camera.
-vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, float roughness, float metallic, vec3 worldPos, bool applyShadow) {
+vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, float roughness, float metallic, vec3 worldPos) {
     vec3 lightDir;
     float attenuation = 1.0;
 
@@ -269,13 +365,22 @@ vec3 CalculateLight(GPULight light, vec3 normal, vec3 viewDir, vec3 albedo, floa
 
     float NdotL = max(dot(normal, lightDir), 0.0);
 
-    float shadow = 0.0;
-    if (applyShadow && u_HasShadow)
-        shadow = CalculateShadow(worldPos, normal, lightDir);
-
-    // Sem contribuicao (de costas para a luz): evita divisao/calculo inutil.
-    if (NdotL <= 0.0)
+    if (NdotL <= 0.0 || attenuation <= 0.0)
         return vec3(0.0);
+
+    float shadow = 0.0;
+    if (light.ShadowSlot >= 0) {
+        if (light.Type == LIGHT_TYPE_DIRECTIONAL) {
+            if (u_CascadeCount > 0)
+                shadow = CascadeShadow(worldPos, normal, NdotL);
+        } else if (light.Type == LIGHT_TYPE_SPOT) {
+            if (light.ShadowSlot < u_SpotCount)
+                shadow = SpotShadow(light.ShadowSlot, worldPos, normal, length(light.Position - worldPos), NdotL);
+        } else {
+            if (light.ShadowSlot < u_PointCount)
+                shadow = PointShadow(light.ShadowSlot, worldPos, normal, light.Position, NdotL);
+        }
+    }
 
     vec3 halfVec = normalize(viewDir + lightDir);
     float NdotV  = max(dot(normal, viewDir), 0.0001); // nunca 0: aparece no denominador
@@ -346,6 +451,11 @@ uniform vec2 u_ScreenSize;
 // u_Exposure: multiplicador de brilho antes do tone mapping (1.0 =
 // neutro). Ainda nao exposto no editor - ver Renderer::SetExposure.
 uniform float u_Exposure;
+
+// 0 = saida final (exposicao + ACES + sRGB, como sempre); 1 = HDR LINEAR, sem
+// exposicao/tone mapping/gamma: o passe de pos-processamento (PostProcess)
+// termina o trabalho. So o Renderer::DrawScene liga o modo 1.
+uniform int u_OutputMode;
 
 vec3 SrgbToLinear(vec3 c) {
     // Curva sRGB exata (nao o atalho pow(c, 2.2)): trecho linear
@@ -462,6 +572,33 @@ vec3 EnvironmentSpecular(vec3 R, float roughness) {
     return mix(EnvironmentColor(R.y), EnvironmentIrradiance(R.y), w);
 }
 
+// Direcao do mundo -> direcao no cubemap (o panorama e assado sem rotacao).
+vec3 IBLDirection(vec3 dir) {
+    float c = cos(u_IBLRotation);
+    float s = sin(u_IBLRotation);
+    return vec3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+}
+
+// --- Gancho de superficie (shaders de material do projeto) ---------------
+// 's' chega com os valores resolvidos (textura * fator) e volta para a
+// iluminacao. 'i' e so leitura. Cores em LINEAR. O arquivo incluido e
+// prism_surface.glsl (vazio) ou o .glsl do material (ver prism_surface.glsl).
+struct PrismSurface {
+    vec3  albedo;
+    float alpha;
+    float roughness;
+    float metallic;
+    vec3  emissive;
+    vec3  normal;     // espaco do mundo, ja normalizada (com normal map)
+};
+struct PrismSurfaceInput {
+    vec3  worldPos;
+    vec3  viewDir;    // do ponto para a camera
+    vec2  uv;         // ja com tiling/offset
+    float time;
+};
+#include "prism_surface.glsl"
+
 void main() {
     vec3 normal = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraWorldPos - v_WorldPos);
@@ -469,8 +606,13 @@ void main() {
     // Face voltada para "dentro" (de costas para a camera) - ver
     // comentario grande no topo de basic.vert sobre o motivo de
     // usar discard em vez de glCullFace aqui.
-    if (dot(normal, viewDir) < 0.0)
-        discard;
+    // Com u_DoubleSided a face de tras NAO some: ela recebe a normal invertida (iluminada como frente).
+    if (dot(normal, viewDir) < 0.0) {
+        if (u_DoubleSided == 0)
+            discard;
+        normal = -normal;
+    }
+    vec2 uv = v_UV * u_UVTiling + u_UVOffset;
 
     // Normal mapping (TBN): so troca 'normal' se houver mapa -
     // sem u_HasNormalMap, 'normal' continua sendo so a
@@ -483,7 +625,7 @@ void main() {
         vec3 bitangent = cross(normal, tangent);
         mat3 TBN = mat3(tangent, bitangent, normal);
 
-        vec3 tangentNormal = texture(u_NormalMap, v_UV).rgb * 2.0 - 1.0;
+        vec3 tangentNormal = texture(u_NormalMap, uv).rgb * 2.0 - 1.0;
         normal = normalize(TBN * tangentNormal);
     }
 
@@ -506,20 +648,48 @@ void main() {
     // ANTES de multiplicar por luz/textura. A textura de albedo
     // NAO passa por SrgbToLinear: ja chega linear da GPU
     // (GL_SRGB8_ALPHA8), converter de novo seria conversao dupla.
-    vec3 albedo = SrgbToLinear(u_BaseColor);
-    if (u_HasAlbedoMap)
-        albedo *= texture(u_AlbedoMap, v_UV).rgb;
-
+    vec3 albedo = SrgbToLinear((u_Instanced != 0) ? v_InstColor : u_BaseColor);
+    float alpha = u_Opacity;
+    if (u_HasAlbedoMap) {
+        vec4 albedoSample = texture(u_AlbedoMap, uv);
+        albedo *= albedoSample.rgb;
+        alpha *= albedoSample.a;
+    }
     // Roughness/metallic: convencao glTF (G = roughness, B = metallic),
     // texturas LINEARES. Os fatores multiplicam o mapa; sem mapa,
     // valem sozinhos.
     float roughness = u_Roughness;
     float metallic  = u_Metallic;
     if (u_HasRoughnessMetallicMap) {
-        vec3 rm = texture(u_RoughnessMetallicMap, v_UV).rgb;
+        vec3 rm = texture(u_RoughnessMetallicMap, uv).rgb;
         roughness *= rm.g;
         metallic  *= rm.b;
     }
+
+    // Gancho de superficie: o shader do material (se houver) altera o resultado.
+    PrismSurface surf;
+    surf.albedo = albedo;
+    surf.alpha = alpha;
+    surf.roughness = roughness;
+    surf.metallic = metallic;
+    surf.emissive = u_Emissive;
+    surf.normal = normal;
+    PrismSurfaceInput surfIn;
+    surfIn.worldPos = v_WorldPos;
+    surfIn.viewDir = viewDir;
+    surfIn.uv = uv;
+    surfIn.time = u_Time;
+    prism_surface(surf, surfIn);
+    albedo = max(surf.albedo, vec3(0.0));
+    alpha = clamp(surf.alpha, 0.0, 1.0);
+    roughness = clamp(surf.roughness, 0.0, 1.0);
+    metallic = clamp(surf.metallic, 0.0, 1.0);
+    if (dot(surf.normal, surf.normal) > 1e-6)
+        normal = normalize(surf.normal);
+
+    // Recorte: some antes de gastar a iluminacao (depois do gancho: o shader pode mudar o alfa).
+    if (u_AlphaMode == 1 && alpha < u_AlphaCutoff)
+        discard;
 
     // Ambiente = difuso + especular do gradiente (ver
     // EnvironmentColor e cia, acima).
@@ -554,16 +724,26 @@ void main() {
     vec3 Fenv = F0env * envAB.x + vec3(envAB.y);
 
     vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metallic);
-    vec3 ambientDiffuse = kDenv * albedo * EnvironmentIrradiance(normal.y) * u_EnvScale * ao;
-
     vec3 R = reflect(-viewDir, normal);
-    vec3 ambientSpecular = Fenv * EnvironmentSpecular(R, clamp(roughness, 0.04, 1.0)) * u_EnvScale * ao;
+    float envRoughness = clamp(roughness, 0.04, 1.0);
+
+    vec3 irradiance;
+    vec3 prefiltered;
+    if (u_UseIBL != 0) {
+        irradiance = texture(u_IrradianceMap, IBLDirection(normal)).rgb * u_IBLScale;
+        prefiltered = textureLod(u_PrefilterMap, IBLDirection(R), envRoughness * u_IBLMaxLod).rgb * u_IBLScale;
+    } else {
+        irradiance = EnvironmentIrradiance(normal.y) * u_EnvScale;
+        prefiltered = EnvironmentSpecular(R, envRoughness) * u_EnvScale;
+    }
+
+    vec3 ambientDiffuse = kDenv * albedo * irradiance * ao;
+    vec3 ambientSpecular = Fenv * prefiltered * ao;
 
     vec3 ambient = ambientDiffuse + ambientSpecular;
 
     for (int i = 0; i < u_LightCount; i++) {
-        bool applyShadow = (i == u_ShadowCasterLightIndex);
-        lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos, applyShadow);
+        lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos);
     }
 
     // u_BaseColor ja chega pronto do lado C++ como AlbedoTint
@@ -575,8 +755,14 @@ void main() {
     // Cor final em linear -> exposicao -> tone mapping -> sRGB.
     // 'lightAccum' ja e radiancia refletida (BRDF aplicado por luz);
     // so o ambiente (ja multiplicado por albedo acima) soma por fora.
-    vec3 color = (ambient + lightAccum) * u_Exposure;
+    vec3 color = (ambient + lightAccum) + max(surf.emissive, vec3(0.0));
+    const float outAlpha = (u_AlphaMode == 2) ? alpha : 1.0;
+    if (u_OutputMode != 0) {
+        o_Color = vec4(color, outAlpha);
+        return;
+    }
+    color *= u_Exposure;
     color = ToneMapACES(color);
     color = LinearToSrgb(color);
-    o_Color = vec4(color, 1.0);
+    o_Color = vec4(color, outAlpha);
 }

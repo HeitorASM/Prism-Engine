@@ -16,8 +16,8 @@ namespace PrismEditor {
         // copia depois que o mapa que a originou deixou de ser o ativo no
         // editor. EditorContext::ActiveScene em si NUNCA roda scripts/fisica, entao
         // trocar de mapa e uma operacao simples, sem nada para "desfazer".
-        if (m_Ctx.Play->IsOpen())
-            m_Ctx.Play->Close();
+        if (m_Ctx.IsPlaying())
+            m_Ctx.StopPlaying();
 
         Prism::SceneSerializer serializer(Prism::Scene::Create());
         if (!serializer.Deserialize(mapPath)) {
@@ -49,14 +49,16 @@ namespace PrismEditor {
         // NewMap() em si descarta a cena sem perguntar - quem pergunta e
         // o CHAMADOR, via RunAfterUnsavedCheck (ver RenderMenuBar). Assim
         // chamadas internas/programaticas nao ficam presas num popup.
-        if (m_Ctx.Play->IsOpen())
-            m_Ctx.Play->Close(); // ver comentario identico em LoadScene()
+        if (m_Ctx.IsPlaying())
+            m_Ctx.StopPlaying(); // ver comentario identico em LoadScene()
 
         // Ver comentario identico em LoadScene() sobre por que isto vem
         // ANTES de substituir EditorContext::ActiveScene.
         m_Ctx.MaterialLinks.FlushSave();
 
         m_Ctx.ActiveScene = Prism::Scene::Create("Nova Cena");
+        // Todo mapa novo nasce com um Ambiente (luz ambiente + skybox da cena).
+        m_Ctx.ActiveScene->CreateEntity("Ambiente").AddComponent<Prism::EnvironmentComponent>();
         m_Ctx.CurrentMapPath.clear(); // sem arquivo associado ainda - "Salvar Mapa" vai se comportar como "Salvar Como"
         m_Ctx.SelectedEntity = {};
         m_Ctx.MaterialLinks.ForgetPending(); // ver comentario em LoadScene()
@@ -103,6 +105,8 @@ namespace PrismEditor {
         m_Ctx.ActiveScene = Prism::Scene::Create("Cena de exemplo");
         m_Ctx.CurrentMapPath.clear();
         m_Ctx.MaterialLinks.ForgetPending();
+
+        m_Ctx.ActiveScene->CreateEntity("Ambiente").AddComponent<Prism::EnvironmentComponent>();
 
         Prism::Entity cube = m_Ctx.ActiveScene->CreateEntity("Cubo");
         cube.GetComponent<Prism::TransformComponent>().Translation = { -1.2f, 0.0f, 0.0f };

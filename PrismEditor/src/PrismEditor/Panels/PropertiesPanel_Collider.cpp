@@ -1,4 +1,5 @@
 #include "PropertiesPanel.h"
+#include "PhysicsLayerWidget.h"
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 #include "ContentBrowserPanel.h"
@@ -117,6 +118,12 @@ namespace PrismEditor {
 
             if (ImGui::Checkbox("E um Trigger", &collider.IsTrigger))
                 CommitComponentEdit(m_Ctx, before, collider, "Collider");
+
+            if (DrawPhysicsLayerCombo("Camada de fisica", collider.Layer))
+                CommitComponentEdit(m_Ctx, before, collider, "Collider");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Com quem este collider colide e definido pela matriz de colisao do projeto.");
+            DrawPhysicsMatrixButton();
             ImGui::TextDisabled("Precisa de um Rigid Body para participar da fisica.");
         }
         if (!keepOpen)

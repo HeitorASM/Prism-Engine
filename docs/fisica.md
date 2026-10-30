@@ -59,8 +59,22 @@ Disponível pelo Lua (`Physics.Raycast`) e pelo `RaycastComponent`, que dispara 
 ## Limitações conhecidas
 
 - **Física e parenting não se combinam.** O corpo é criado na posição de mundo da entidade, mas a sincronização escreve a posição de mundo direto no transform **local**. Isso é correto para entidades sem pai (o caso comum) e errado para uma entidade física que seja filha de outra.
-- Sem callbacks de colisão em Lua. `CollisionEvent` existe no C++, mas o `ContactListener` do Jolt ainda não foi ligado.
+- Eventos de contato (`OnCollisionEnter/Exit`, `OnTriggerEnter/Exit`) são coletados pelo `ContactListener` do Jolt (threads de job), enfileirados e entregues aos scripts na thread principal após a simulação. Ver [scripting-lua.md](scripting-lua.md).
 - Sem joints expostos no editor (o Jolt os suporta).
 - Camadas de colisão fixas, sem máscaras por camada de gameplay.
 - Sem visualização de depuração do mundo físico além do gizmo estático de collider.
 - Propriedades de física não são acessíveis em runtime pelo Lua além de força, impulso e velocidade.
+
+## Camadas e matriz de colisão
+
+Cada `Collider` tem uma **camada de física** (0..31; a 0 se chama "Padrão"). Quem colide com quem é definido por uma **matriz simétrica do projeto** (como na Unity): no painel do Collider, botão "Camadas de física / matriz de colisão...". Nomes e matriz são salvos no `.prismproj`. Por padrão todas colidem com todas. Não há máscara por corpo, só por consulta: o `Raycast` (componente e Lua/nativo) aceita uma máscara de camadas.
+
+## Juntas (`Joint`)
+
+Tipos: Fixa, Dobradiça, Deslizante, Distância (com mola opcional) e Ponto. A outra ponta é uma entidade pelo **nome (Tag)**; vazio = presa ao mundo. As duas precisam de Rigid Body + Collider. As juntas são criadas ao iniciar o Play, depois de todos os corpos, e desfeitas junto com a entidade. Limites da dobradiça em graus (min ≤ 0 ≤ max).
+
+## Character Controller
+
+Cápsula cinemática (Jolt `CharacterVirtual`) com degraus, rampas e "colar no chão". Controle por script: `CharacterMove`, `CharacterJump`, `IsGrounded`. Não combine com Rigid Body (o corpo é ignorado, com aviso no log).
+
+Limitações da v1: o personagem **não empurra** corpos dinâmicos; a pose é gravada no Transform local (mesma limitação da sincronização atual); sem gizmo da cápsula no editor.

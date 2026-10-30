@@ -2,68 +2,81 @@
 
 // ============================================================================
 // ScriptEditorPanel.h
-// Painel de edicao de texto para scripts Lua, com syntax highlight via
-// ImGuiColorTextEdit (fork goossens - ver vendor/CMakeLists.txt para o
-// porque dessa lib especifica). A classe TextEditor da lib cuida
-// internamente do buffer de texto e do redimensionamento.
+// "Editor de Codigo": painel de edicao de texto com VARIOS arquivos abertos ao
+// mesmo tempo. Uma lateral a esquerda lista os arquivos abertos (clique troca,
+// "x" fecha); o texto do arquivo ativo fica a direita.
 //
-// Fluxo tipico: Properties panel (ScriptComponent) tem um botao "Editar"
-// que chama Open(caminho) aqui - ver PropertiesPanel::OnImGuiRender().
-// O painel entao aparece dockado no editor (ImGui::Begin de janela normal,
-// mesmo padrao de ConsolePanel/ContentBrowserPanel) mostrando o conteudo
-// daquele arquivo com highlight de Lua.
+// Abre scripts Lua, C++ e qualquer outro arquivo de texto (.md, .txt...).
+// Syntax highlight so para Lua e C/C++ (por extensao) via ImGuiColorTextEdit
+// (fork goossens - ver vendor/CMakeLists.txt); o resto abre como texto puro.
 //
-// Salvamento: so grava de volta no disco quando o usuario pede
-// explicitamente (Ctrl+S ou botao Salvar), nunca a cada tecla - m_Dirty
-// rastreia mudancas nao salvas (mostrado no titulo da janela).
+// Fluxo tipico: duplo clique num arquivo do Conteudo do Projeto, ou o botao
+// "Editar" do component Script (ver PropertiesPanel_Script.cpp), chamam
+// Open(caminho). Abrir um arquivo que ja esta aberto so o ativa.
+//
+// Salvamento: so grava no disco quando o usuario pede (Ctrl+S, "Salvar" ou
+// "Salvar tudo"), nunca a cada tecla. Cada arquivo rastreia suas alteracoes
+// nao salvas (marcadas com "*"); fechar um arquivo com alteracoes pergunta
+// antes (Salvar / Descartar / Cancelar).
 // ============================================================================
 
 #include <TextEditor.h>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace PrismEditor {
 
     class ScriptEditorPanel {
     public:
-        // Abre 'scriptAbsolutePath' para edicao: le o conteudo do disco e
-        // chama m_Editor.SetText() com ele, tornando este o arquivo ativo
-        // do painel. Se o arquivo nao existir ainda (ex: acabou de ser
-        // criado por PropertiesPanel::CreateNewScript), abre com texto vazio -
-        // o primeiro Salvar cria o arquivo.
-        //
-        // Se ja havia um arquivo DIFERENTE aberto com mudancas nao salvas
-        // (m_Dirty == true), a troca acontece mesmo assim (a UI que chama
-        // Open, no EditorLayer, e responsavel por perguntar antes se quiser
-        // - esta primeira versao nao pergunta sozinha, para manter o painel
-        // simples).
-        void Open(const std::filesystem::path& scriptAbsolutePath);
+        // Abre 'path' (ou ativa, se ja estiver aberto). Se o arquivo nao existir
+        // ainda (ex: script recem criado), abre vazio - o primeiro Salvar cria.
+        // Retorna false se foi recusado (parece binario ou passa de 4 MB).
+        bool Open(const std::filesystem::path& path);
 
-        // true se ha um arquivo aberto no momento (m_CurrentPath nao vazio) -
-        // usado por EditorLayer para decidir se abre/foca a janela do painel
-        // ao clicar "Editar" (ver RenderPropertiesPanel).
-        bool IsOpen() const { return !m_CurrentPath.empty(); }
+        // Heuristica: tamanho razoavel e sem bytes NUL no inicio do arquivo.
+        static bool LooksLikeTextFile(const std::filesystem::path& path);
 
-        // Caminho do arquivo atualmente aberto (vazio se IsOpen() == false).
-        const std::filesystem::path& GetCurrentPath() const { return m_CurrentPath; }
+        // true se ha algum arquivo aberto.
+        bool IsOpen() const { return !m_Documents.empty(); }
 
-        // Grava o texto atual do m_Editor de volta em m_CurrentPath.
-        // Retorna false se IsOpen() == false ou a escrita falhar (ex: sem
-        // permissao) - erro concreto vai para PRISM_CORE_ERROR/Console,
-        // mesmo padrao do resto do editor.
+        // Caminho do arquivo ativo (vazio se nao ha nenhum).
+        const std::filesystem::path& GetCurrentPath() const;
+
+        // Grava o arquivo ativo / todos os que tem alteracoes. Erros vao para o Console.
         bool Save();
+        bool SaveAll();
 
         void OnImGuiRender();
 
+        // true se o painel tinha o foco no ultimo frame - o EditorLayer usa para nao
+        // tratar Ctrl+Z/Ctrl+S/Delete como atalhos da CENA enquanto se digita codigo.
+        bool IsFocused() const { return m_Focused; }
+
     private:
-        std::filesystem::path m_CurrentPath;
+        bool m_Focused = false;
 
-        // TextEditor gerencia o texto/buffer internamente (undo/redo,
-        // highlight, selecao etc) - nao precisamos mais de um buffer
-        // proprio como a primeira versao deste painel tinha.
-        TextEditor m_Editor;
+        struct Document {
+            std::filesystem::path Path;
+            TextEditor Editor; // guarda texto, undo/redo, selecao e rolagem deste arquivo
+            bool Dirty = false;
+            // O TextEditor guarda so '\n': arquivos CRLF sao convertidos de volta ao salvar.
+            bool Crlf = false;
+        };
 
-        bool m_Dirty = false; // true desde a ultima edicao ate o proximo Save() bem-sucedido
+        static void LoadInto(Document& document, const std::filesystem::path& path);
+        static bool SaveDocument(Document& document);
+        int FindDocument(const std::filesystem::path& path) const;
+        void CloseDocument(int index);
+        bool AnyDirty() const;
+
+        std::vector<std::unique_ptr<Document>> m_Documents;
+        int m_Active = -1;
+
+        // Fechamento pendente de um arquivo com alteracoes (popup de confirmacao).
+        int m_PendingClose = -1;
+        bool m_OpenClosePopup = false;
     };
 
 }

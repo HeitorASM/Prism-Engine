@@ -1,39 +1,72 @@
 #include "EditorLayer.h"
+#include "ProjectManagerLayer.h"
+#include <PrismVersion.h>
+#include "../Core/LevelEditing.h"
 #include "../Core/EntityOps.h"
+#include "../Core/FileDialog.h"
+#include "../Core/EditorIcons.h"
+#include "../Core/EditorTheme.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
+#include <imgui_internal.h> // DockBuilder (layout padrao dos paineis)
 #include <ImGuizmo.h>
 #include <GLFW/glfw3.h>
+#include <Prism/Core/Paths.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 #include <string>
 
 namespace PrismEditor {
 
-    EditorLayer::EditorLayer()
-        : Layer("EditorLayer"), m_Document(m_Ctx), m_Viewport(m_Ctx), m_Hierarchy(m_Ctx), m_Properties(m_Ctx) {}
+    EditorLayer::EditorLayer(bool buildNativeOnOpen)
+        : Layer("EditorLayer"), m_Document(m_Ctx), m_Viewport(m_Ctx), m_Hierarchy(m_Ctx), m_Properties(m_Ctx),
+          m_BuildNativeOnOpen(buildNativeOnOpen), m_Game(m_Ctx) {}
 
     void EditorLayer::OnAttach() {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
             Prism::Project::GetActive()->GetConfig().Name);
 
-        // Visual do projeto (exposicao, ambiente): o Renderer e estatico e
-        // guarda o ultimo valor aplicado, entao SEMPRE reaplica ao abrir um
-        // projeto - senao ele herdaria os ajustes do projeto anterior.
-        Prism::Renderer::ApplyRenderSettings(Prism::Project::GetActive()->GetRenderSettings());
-
         // Liga os ponteiros do contexto compartilhado aos paineis que outros
         // paineis precisam chamar (ver EditorContext.h).
         m_Ctx.Play = &m_PlayWindow;
+        m_Ctx.IsPlaying = [this]() { return IsPlaying(); };
+        m_Ctx.StopPlaying = [this]() { StopPlaying(); };
         m_Ctx.ContentBrowser = &m_ContentBrowser;
         m_Ctx.ScriptEditor = &m_ScriptEditor;
 
         m_Viewport.Init();
 
         m_ContentBrowser.ResetToProjectRoot();
+        m_ContentBrowser.SetOnTextFileDoubleClicked([this](const std::filesystem::path& filePath) {
+            if (m_ScriptEditor.Open(filePath))
+                ImGui::SetWindowFocus("###ScriptEditorPanel"); // traz a aba do Editor de Codigo para frente
+            });
+        // Arquivo/pasta movido ou excluido pelo Content Browser: o que aponta
+        // para o caminho antigo precisa acompanhar.
+        m_ContentBrowser.SetOnPathMoved([this](const std::filesystem::path& from, const std::filesystem::path& to) {
+            std::error_code ec;
+            auto& current = m_Ctx.CurrentMapPath;
+            if (!current.empty()) {
+                std::filesystem::path rel = current.lexically_normal().lexically_relative(from.lexically_normal());
+                if (!rel.empty() && *rel.begin() != "..")
+                    current = (to / (rel == "." ? std::filesystem::path() : rel)).lexically_normal();
+            }
+            if (from.extension() == ".lua" || from.extension() == ".cpp" || from.extension() == ".h" || std::filesystem::is_directory(to, ec))
+                PRISM_WARN("Scripts movidos/renomeados: Script components que apontam para o caminho antigo ('", from.filename().string(), "') precisam ser reapontados.");
+            });
+        m_ContentBrowser.SetOnPathDeleted([this](const std::filesystem::path& path) {
+            auto& current = m_Ctx.CurrentMapPath;
+            if (!current.empty()) {
+                std::filesystem::path rel = current.lexically_normal().lexically_relative(path.lexically_normal());
+                if (!rel.empty() && *rel.begin() != "..")
+                    current.clear(); // o mapa aberto foi excluido: "Salvar" passa a pedir um novo arquivo
+            }
+            });
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             // Copia do path: o Content Browser pode reaproveitar o buffer
             // dele antes do popup "Salvar alteracoes?" ser respondido (a
@@ -50,7 +83,26 @@ namespace PrismEditor {
         // O menu de contexto de entidade e ligado no construtor do HierarchyPanel
         // (ver HierarchyPanel::HierarchyPanel).
 
+        // Scripts C++ ja compilados em uma sessao anterior (Binaries/NativeScripts.*).
+        Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
+
+        // Clicar num erro/aviso da Saida de Build abre o arquivo no Editor de Codigo.
+        m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*Prism::Project::GetActive()));
+        m_BuildOutput.SetOnOpenFile([this](const std::filesystem::path& filePath) {
+            if (m_ScriptEditor.Open(filePath))
+                ImGui::SetWindowFocus("###ScriptEditorPanel");
+            });
+
+        // Projeto criado por outra versao da engine: so avisa (nao ha migracao automatica).
+        const std::string& projectVersion = Prism::Project::GetActive()->GetConfig().EngineVersion;
+        if (!projectVersion.empty() && projectVersion != Prism::Version::Number)
+            PRISM_WARN("Este projeto foi criado com a Prism ", projectVersion, " e a engine atual e a ", Prism::Version::Number,
+                ". Mapas e prefabs de outra versao podem nao abrir (ver docs/formatos-de-arquivo.md).");
+
         m_Document.LoadOrCreateScene();
+
+        if (m_BuildNativeOnOpen)
+            StartNativeBuild();
     }
 
     void EditorLayer::OnDetach() {
@@ -88,17 +140,17 @@ namespace PrismEditor {
         // e exatamente o que o comentario original desta funcao ja aceitava.
         m_Ctx.Camera.LookActive = false;
 
-        // Ajuste de renderizacao e edicao de material vinculado ainda pendentes
-        // (a espera do debounce nao acabou): gravados agora, porque nao vem mais
-        // nenhum frame. Nenhum dos dois usa Application::Get() - ver o comentario
-        // grande no topo desta funcao e RenderSettingsPanel::FlushOnShutdown /
-        // MaterialLinkSync::WritePendingOnShutdown.
-        m_RenderSettings.FlushOnShutdown();
+        // Edicao de material vinculado ainda pendente (a espera do debounce
+        // nao acabou): gravada agora, porque nao vem mais nenhum frame. Nao
+        // usa Application::Get() - ver o comentario grande no topo desta
+        // funcao e MaterialLinkSync::WritePendingOnShutdown.
         m_Ctx.MaterialLinks.WritePendingOnShutdown();
     }
 
     void EditorLayer::OnUpdate(float deltaTime) {
         m_Viewport.ResizeIfNeeded();
+        PollNativeBuild();
+        PollGameExport();
 
         // EditorContext::ActiveScene->OnUpdate() aqui NAO roda scripts/fisica na pratica
         // (Scene::OnUpdate so simula quando IsRunning() e true - ver
@@ -109,7 +161,14 @@ namespace PrismEditor {
         // precise rodar por frame mesmo fora do Play).
         m_Ctx.ActiveScene->OnUpdate(deltaTime);
 
+        // Preview do emissor de particulas selecionado (a cena de edicao nao roda o Play).
+        Prism::ParticleSystem::UpdatePreview(*m_Ctx.ActiveScene, deltaTime, m_Ctx.SelectedEntity);
+
         m_Viewport.RenderScene(deltaTime);
+
+        // Aba Game: simula e desenha a COPIA da cena no framebuffer dela (no
+        // contexto do editor, sem trocar de contexto). No-op se nao ha Play.
+        m_Game.OnUpdate(deltaTime);
 
         // Nao chamamos mais PropertiesPanel::RenderCameraPreview() aqui - agora ela e
         // chamada sob demanda dentro de PropertiesPanel::OnImGuiRender().
@@ -183,7 +242,17 @@ namespace PrismEditor {
 
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+            RenderToolbar();
+
             ImGuiID dockspaceId = ImGui::GetID("PrismDockspace");
+            // Layout padrao: na primeira abertura (sem imgui.ini com este dockspace,
+            // ou com um dockspace vazio de uma sessao antiga quebrada) e ao pedir reset.
+            ImGuiDockNode* existingNode = ImGui::DockBuilderGetNode(dockspaceId);
+            bool emptyDockspace = existingNode == nullptr || (existingNode->IsLeafNode() && existingNode->Windows.Size == 0);
+            if (m_ResetLayoutRequested || emptyDockspace) {
+                m_ResetLayoutRequested = false;
+                BuildDefaultLayout(dockspaceId, viewport->WorkSize.x, viewport->WorkSize.y);
+            }
             ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
         }
 
@@ -192,7 +261,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
+        if (!io.WantTextInput && !m_Game.IsCapturingInput() && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_Ctx.History.Undo();
@@ -207,6 +276,8 @@ namespace PrismEditor {
             // convencao de Unity (Delete) e Blender (X/Delete); cobrimos os
             // dois para nao depender de um teclado especifico (alguns
             // notebooks nao tem uma tecla Delete dedicada facil de achar).
+            else if (ImGui::IsKeyPressed(ImGuiKey_F1, false))
+                m_Docs.Open();
             else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && m_Ctx.SelectedEntity)
                 EntityOps::DuplicateEntity(m_Ctx, m_Ctx.SelectedEntity);
             else if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && m_Ctx.SelectedEntity)
@@ -225,17 +296,132 @@ namespace PrismEditor {
         // Paineis - cada um e sua propria janela ImGui, e o dockspace acima
         // permite que o usuario os arraste/organize livremente.
         m_Viewport.OnImGuiRender();
+        m_Game.OnImGuiRender();
         m_Hierarchy.OnImGuiRender();
         m_Properties.OnImGuiRender();
         RenderConsolePanel();
+        m_Profiler.OnImGuiRender();
+        m_BuildOutput.OnImGuiRender();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
+        m_Docs.OnImGuiRender();
         // REMOVIDO: RenderCameraPreviewPanel() - agora integrado ao painel de Propriedades
     }
 
-    void EditorLayer::RenderMenuBar() {
-        m_RenderSettings.FlushSave();
+    void EditorLayer::BuildDefaultLayout(unsigned int dockspaceId, float width, float height) {
+        ImGuiID root = dockspaceId;
+        ImGui::DockBuilderRemoveNode(root);
+        ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(root, ImVec2(width, height));
 
+        ImGuiID center = root;
+        ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.17f, nullptr, &center);
+        ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+        ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+
+        ImGui::DockBuilderDockWindow("Hierarquia", left);
+        ImGui::DockBuilderDockWindow("Propriedades", right);
+        ImGui::DockBuilderDockWindow("Viewport", center);
+        ImGui::DockBuilderDockWindow("Game", center);                 // aba ao lado da Viewport: o jogo rodando no editor
+        ImGui::DockBuilderDockWindow("###ScriptEditorPanel", center); // aba ao lado do Viewport (ID fixo, ver ScriptEditorPanel)
+        ImGui::DockBuilderDockWindow("###DocsPanel", center);         // painel de documentacao (aparece como aba quando aberto)
+        ImGui::DockBuilderDockWindow("Conteudo do Projeto", bottom);
+        ImGui::DockBuilderDockWindow("Console", bottom);
+        ImGui::DockBuilderDockWindow("###BuildOutputPanel", bottom); // saida da compilacao dos scripts C++ (aba ao lado do Console)
+        ImGui::DockBuilderFinish(root);
+
+        // Viewport em foco (a aba do editor de script fica atras).
+        ImGui::SetWindowFocus("Viewport");
+    }
+
+    void EditorLayer::RenderToolbar() {
+        const float height = 38.0f;
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 0.0f);
+        ImVec2 origin = ImGui::GetCursorScreenPos();
+        float width = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height),
+            ImGui::GetColorU32(ImGuiCol_MenuBarBg));
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(origin.x, origin.y + height - 1.0f), ImVec2(origin.x + width, origin.y + height - 1.0f),
+            ImGui::GetColorU32(ImGuiCol_Border));
+
+        float startY = ImGui::GetCursorPosY();
+        ImGui::SetCursorPos(ImVec2(10.0f, startY + 6.0f));
+
+        const EditorTheme& theme = EditorTheme::Get();
+
+        if (IconButton("##save", ToolIcon::Save, "Salvar mapa (Ctrl+S)"))
+            m_Document.SaveActiveScene();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_Ctx.History.CanUndo());
+        if (IconButton("##undo", ToolIcon::Undo, "Desfazer (Ctrl+Z)"))
+            m_Ctx.History.Undo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_Ctx.History.CanRedo());
+        if (IconButton("##redo", ToolIcon::Redo, "Refazer (Ctrl+Y)"))
+            m_Ctx.History.Redo();
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        RenderBuildToolbarGroup();
+
+        // Play/Parar centralizado.
+        const float playButtonWidth = 90.0f;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX((width - playButtonWidth) * 0.5f);
+        ImGui::SetCursorPosY(startY + 6.0f);
+        if (IsPlaying()) {
+            ImGui::PushStyleColor(ImGuiCol_Button, theme.Stop);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.StopHot);
+            if (ImGui::Button("      Parar", ImVec2(playButtonWidth, 0)))
+                OnStopButtonClicked();
+            ImGui::PopStyleColor(2);
+            {   // icone de parar sobre o botao
+                ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                float h = b.y - a.y;
+                DrawToolIcon(ImGui::GetWindowDrawList(), ToolIcon::Stop, ImVec2(a.x + 10.0f, a.y + h * 0.22f), ImVec2(a.x + 10.0f + h * 0.56f, b.y - h * 0.22f), IM_COL32_WHITE);
+            }
+        }
+        else {
+            ImGui::PushStyleColor(ImGuiCol_Button, theme.Play);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.PlayHot);
+            if (ImGui::Button("      Play", ImVec2(playButtonWidth, 0)))
+                OnPlayButtonClicked();
+            ImGui::PopStyleColor(2);
+            {   // icone de play sobre o botao
+                ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                float h = b.y - a.y;
+                DrawToolIcon(ImGui::GetWindowDrawList(), ToolIcon::Play, ImVec2(a.x + 10.0f, a.y + h * 0.22f), ImVec2(a.x + 10.0f + h * 0.56f, b.y - h * 0.22f), IM_COL32_WHITE);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Roda o jogo na aba Game.");
+            ImGui::SameLine();
+            if (ImGui::Button("Em janela"))
+                OnPlayWindowButtonClicked();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Roda o jogo numa janela separada do sistema.");
+        }
+
+        // Direita: Documentacao (F1) e Restaurar layout.
+        const char* docsLabel = "Documentacao (F1)";
+        const char* resetLabel = "Restaurar layout";
+        const float framePadding = ImGui::GetStyle().FramePadding.x * 2.0f;
+        float resetWidth = ImGui::CalcTextSize(resetLabel).x + framePadding;
+        float docsWidth = ImGui::CalcTextSize(docsLabel).x + framePadding;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(width - resetWidth - docsWidth - ImGui::GetStyle().ItemSpacing.x - 10.0f);
+        ImGui::SetCursorPosY(startY + 6.0f);
+        if (ImGui::Button(docsLabel))
+            m_Docs.Open();
+        ImGui::SameLine();
+        if (ImGui::Button(resetLabel))
+            m_ResetLayoutRequested = true;
+
+        // Reserva a altura da barra: o dockspace comeca abaixo dela.
+        ImGui::SetCursorPos(ImVec2(0.0f, startY + height));
+    }
+
+    void EditorLayer::RenderMenuBar() {
         // Vinculo vivo de Material (ver comentario grande em
         // MaterialSerializer.h e EditorLayer.h): grava a edicao pendente
         // desta entidade (se o debounce ja passou) e depois releva
@@ -259,8 +445,15 @@ namespace PrismEditor {
                     m_Document.SaveActiveSceneAs();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Fechar Projeto")) {
-                    // TODO: voltar ao ProjectManagerLayer em vez de fechar
+                {
+                    const bool canExport = Prism::Project::GetActive() != nullptr && !m_GameExporter.IsRunning() && !m_NativeBuilder.IsRunning();
+                    if (ImGui::MenuItem("Exportar Jogo...", nullptr, false, canExport))
+                        StartGameExport();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Fechar Projeto"))
+                    m_Document.RunAfterUnsavedCheck([this]() { CloseProject(); });
+                if (ImGui::MenuItem("Sair do Editor")) {
                     m_Document.RunAfterUnsavedCheck([this]() {
                         m_Document.SetAllowWindowClose(true);
                         Prism::Application::Get().Close();
@@ -291,6 +484,42 @@ namespace PrismEditor {
                     CreatePresetEntityCommand* raw = command.get();
                     m_Ctx.History.Execute(std::move(command));
                     m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                }
+                {
+                    // Ambiente da cena (luz ambiente + skybox): so um por cena.
+                    auto environmentView = m_Ctx.ActiveScene->GetRegistry().view<Prism::EnvironmentComponent>();
+                    bool hasEnvironment = environmentView.begin() != environmentView.end();
+                    if (ImGui::MenuItem("Criar Ambiente", nullptr, false, !hasEnvironment)) {
+                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, "Ambiente", "Ambiente",
+                            [](Prism::Entity entity) { entity.AddComponent<Prism::EnvironmentComponent>(); });
+                        CreatePresetEntityCommand* raw = command.get();
+                        m_Ctx.History.Execute(std::move(command));
+                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                    }
+                    if (hasEnvironment && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("A cena ja tem um Ambiente.");
+                }
+                // Level Builder (estilo ProBuilder): geometria editavel direto na viewport. Depois de criar,
+                // Tab (ou o botao da viewport) liga a edicao de vertices/arestas/faces.
+                if (ImGui::BeginMenu("Criar Level Builder")) {
+                    const LevelEditing::Shape shapes[] = { LevelEditing::Shape::Box, LevelEditing::Shape::Room, LevelEditing::Shape::Plane,
+                                                           LevelEditing::Shape::Cylinder, LevelEditing::Shape::Stairs, LevelEditing::Shape::Ramp };
+                    for (LevelEditing::Shape shape : shapes) {
+                        if (!ImGui::MenuItem(LevelEditing::ShapeLabel(shape)))
+                            continue;
+                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, LevelEditing::ShapeLabel(shape), "Level Mesh",
+                            [shape](Prism::Entity entity) {
+                                auto& level = entity.AddComponent<Prism::LevelMeshComponent>();
+                                level.Mesh = LevelEditing::MakeShape(shape);
+                                level.Materials.front().AlbedoTint = glm::vec3(0.75f);
+                                level.Touch();
+                            });
+                        CreatePresetEntityCommand* raw = command.get();
+                        m_Ctx.History.Execute(std::move(command));
+                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                        LevelEditing::SetActive(m_Ctx, false);
+                    }
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Criar Character")) {
                     // Preset de conveniencia: combo comum para um NPC/player
@@ -331,6 +560,49 @@ namespace PrismEditor {
                     if (m_Ctx.SelectedEntity)
                         EntityOps::SetPrimaryCamera(m_Ctx, m_Ctx.SelectedEntity); // garante unicidade - desmarca qualquer Primary anterior
                 }
+                if (ImGui::BeginMenu("Criar UI")) {
+                    if (ImGui::MenuItem("Documento de UI (.prismui)")) {
+                        // Cria Assets/UI/<nome>.prismui com um modelo e uma entidade que aponta para ele.
+                        auto project = Prism::Project::GetActive();
+                        if (project) {
+                            namespace fs = std::filesystem;
+                            fs::path directory = project->GetAssetDirectory() / "UI";
+                            std::error_code ec;
+                            fs::create_directories(directory, ec);
+                            fs::path file;
+                            for (int n = 0; n < 1000; n++) {
+                                file = directory / (n == 0 ? std::string("NovaUI.prismui") : "NovaUI" + std::to_string(n) + ".prismui");
+                                if (!fs::exists(file, ec))
+                                    break;
+                            }
+                            static const char* kTemplate =
+                                "<UI scale=\"height\" reference=\"1920x1080\">\n"
+                                "  <!-- Painel no canto superior direito. Salve o arquivo e a UI atualiza sozinha. -->\n"
+                                "  <Panel id=\"hud\" anchor=\"top-right\" margin=\"24\" padding=\"16\" layout=\"column\" gap=\"12\" color=\"#000000AA\">\n"
+                                "    <Text id=\"score\" size=\"36\" color=\"#FFCC00\">Pontos: 0</Text>\n"
+                                "    <Button id=\"pause\" onClick=\"OnPause\" width=\"220\" color=\"#3F73D9\">Pausar</Button>\n"
+                                "  </Panel>\n"
+                                "</UI>\n";
+                            bool written = false;
+                            {
+                                std::ofstream out(file, std::ios::binary);
+                                if (out) { out << kTemplate; written = out.good(); }
+                            }
+                            if (written) {
+                                std::string relative = fs::relative(file, project->GetProjectDirectory(), ec).generic_string();
+                                auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, "UI Documento", "UI Documento",
+                                    [relative](Prism::Entity entity) { entity.AddComponent<Prism::UIDocumentComponent>().Path = relative; });
+                                CreatePresetEntityCommand* raw = command.get();
+                                m_Ctx.History.Execute(std::move(command));
+                                m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                            }
+                            else {
+                                PRISM_CORE_ERROR("Nao foi possivel criar '", file.generic_string(), "'.");
+                            }
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
                 if (ImGui::MenuItem("Criar Entidade Vazia")) {
                     // So Transform (todo Scene::CreateEntity ja da isso) -
                     // ponto de partida para montar qualquer combinacao de
@@ -349,37 +621,34 @@ namespace PrismEditor {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Janela")) {
-                ImGui::MenuItem("Viewport", nullptr, true, false);
-                ImGui::MenuItem("Hierarquia", nullptr, true, false);
-                ImGui::MenuItem("Propriedades", nullptr, true, false);
-                ImGui::MenuItem("Console", nullptr, true, false);
-                ImGui::MenuItem("Conteudo do Projeto", nullptr, true, false);
-                ImGui::MenuItem("Editor de Script", nullptr, true, false);
+                if (ImGui::MenuItem("Restaurar layout padrao"))
+                    m_ResetLayoutRequested = true;
+                if (ImGui::MenuItem("Desempenho (profiler)", nullptr, m_Profiler.IsOpen()))
+                    m_Profiler.Toggle();
+                ImGui::TextDisabled("Arraste as abas para reorganizar os paineis.");
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();
             }
 
-            m_RenderSettings.OnImGuiRenderMenu();
-
-            // Botao Play/Parar: abre/fecha a PlayWindow (janela SEPARADA
-            // do SO, ver Play/PlayWindow.h) rodando uma copia clonada da
-            // Scene ativa - scripts/fisica nunca tocam a Scene de edicao
-            // (EditorContext::ActiveScene) diretamente. Alinhado a direita da menu bar
-            // via um espacador.
-            float playButtonWidth = 90.0f;
-            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - playButtonWidth - 16.0f);
-            bool isRunning = m_PlayWindow.IsOpen();
-            if (isRunning) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.2f, 1.0f));
-                if (ImGui::Button("Parar", ImVec2(playButtonWidth, 0)))
-                    OnStopButtonClicked();
-                ImGui::PopStyleColor();
-            }
-            else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
-                if (ImGui::Button("Play", ImVec2(playButtonWidth, 0)))
-                    OnPlayButtonClicked();
-                ImGui::PopStyleColor();
+            if (ImGui::BeginMenu("Ajuda")) {
+                if (ImGui::MenuItem("Documentacao da engine", "F1"))
+                    m_Docs.Open();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Visao geral"))
+                    m_Docs.Open("00-visao-geral.md");
+                if (ImGui::MenuItem("Primeiros passos"))
+                    m_Docs.Open("01-primeiros-passos.md");
+                if (ImGui::MenuItem("Scripting em Lua"))
+                    m_Docs.Open("04-scripting-lua.md");
+                if (ImGui::MenuItem("Scripting em C++"))
+                    m_Docs.Open("05-scripting-cpp.md");
+                if (ImGui::MenuItem("API de scripting (Lua e C++)"))
+                    m_Docs.Open("06-api-de-scripting.md");
+                if (ImGui::MenuItem("UI in-game"))
+                    m_Docs.Open("10-ui-in-game.md");
+                if (ImGui::MenuItem("Como a engine funciona"))
+                    m_Docs.Open("11-como-a-engine-funciona.md");
+                ImGui::EndMenu();
             }
 
             ImGui::EndMenuBar();
@@ -392,15 +661,218 @@ namespace PrismEditor {
     // compartilhar - ver comentario extenso sobre isso no topo de
     // PlayWindow.h.
     void EditorLayer::OnPlayButtonClicked() {
-        if (m_PlayWindow.IsOpen())
-            return; // ja aberta - o botao vira "Parar" nesse caso, ver RenderDockspace, entao isto nao deveria ser alcancavel na pratica
+        if (IsPlaying())
+            return; // ja rodando - o botao vira "Parar" nesse caso, ver RenderDockspace, entao isto nao deveria ser alcancavel na pratica
+
+        // Modulo compilado por fora do editor (ou antes de abrir): garante carregado.
+        if (!Prism::NativeScripting::IsModuleLoaded())
+            Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
+
+        m_Game.Open(m_Ctx.ActiveScene);
+    }
+
+    void EditorLayer::OnPlayWindowButtonClicked() {
+        if (IsPlaying())
+            return;
+
+        if (!Prism::NativeScripting::IsModuleLoaded())
+            Prism::NativeScripting::LoadProjectModule(*Prism::Project::GetActive());
 
         GLFWwindow* editorWindow = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow();
         m_PlayWindow.Open(m_Ctx.ActiveScene, editorWindow);
     }
 
-    void EditorLayer::OnStopButtonClicked() {
+    bool EditorLayer::IsPlaying() const {
+        return m_PlayWindow.IsOpen() || m_Game.IsOpen();
+    }
+
+    void EditorLayer::StopPlaying() {
         m_PlayWindow.Close();
+        m_Game.Close();
+    }
+
+    void EditorLayer::StartNativeBuild() {
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return;
+
+        // Projeto sem Source/ (ex: aberto de uma versao antiga): gera so se faltar.
+        // Nao regrava um CMakeLists.txt existente, para nunca apagar edicoes do usuario.
+        std::error_code ec;
+        if (!std::filesystem::exists(Prism::NativeScripting::GetSourceDirectory(*project) / "CMakeLists.txt", ec)) {
+            std::string message;
+            if (Prism::NativeScripting::GenerateProjectFiles(*project, message))
+                PRISM_INFO(message);
+            else {
+                PRISM_ERROR(message);
+                return;
+            }
+        }
+
+        m_BuildOutput.BeginBuild();
+        std::string error;
+        if (m_NativeBuilder.Start(*project, error)) {
+            m_LastNativeBuildFailed = false;
+            PRISM_INFO("Compilando scripts C++...");
+        }
+        else {
+            m_BuildOutput.AddLine(error);
+            m_BuildOutput.EndBuild(false);
+            m_LastNativeBuildFailed = true;
+            PRISM_ERROR(error);
+        }
+    }
+
+    // Arquivo > Exportar Jogo...: o exportador copia ARQUIVOS DO DISCO, entao um mapa com
+    // alteracoes nao salvas ficaria de fora - pergunta antes (Salvar / Nao salvar / Cancelar).
+    void EditorLayer::StartGameExport() {
+        if (!Prism::Project::GetActive() || m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+        m_Document.RunAfterUnsavedCheck([this]() { BeginGameExport(); });
+    }
+
+    void EditorLayer::BeginGameExport() {
+        auto project = Prism::Project::GetActive();
+        if (!project || m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+
+        // Onde exportar: dialogo de pasta (abre na ultima usada, ou ao lado do projeto).
+        std::filesystem::path startIn = m_LastExportParent.empty() ? project->GetProjectDirectory().parent_path() : m_LastExportParent;
+        std::filesystem::path chosen = FileDialog::PickFolder(startIn);
+        if (chosen.empty())
+            return; // cancelou
+        m_LastExportParent = chosen.parent_path();
+
+        Prism::GameExportOptions options;
+        options.ProjectDirectory = project->GetProjectDirectory();
+        options.StartMap = project->GetConfig().StartMap;
+        options.MapDirectory = project->GetConfig().MapDirectory;
+        options.RuntimeDirectory = Prism::GetExecutableDirectory() / "Runtime";
+        options.GameName = project->GetConfig().Name;
+        options.EngineVersion = std::string(Prism::Version::Number);
+
+        // Pasta escolhida ja tem outras coisas (ex: Documentos) e nao e uma exportacao anterior:
+        // exporta numa subpasta com o nome do jogo, em vez de recusar ou misturar.
+        std::error_code ec;
+        std::filesystem::path target = chosen;
+        if (std::filesystem::exists(target, ec) && !std::filesystem::is_empty(target, ec)
+            && !std::filesystem::exists(target / ".prism-export", ec))
+            target = chosen / FileDialog::FromUtf8(Prism::SanitizeGameName(options.GameName));
+        options.OutputDirectory = target;
+
+        m_BuildOutput.BeginBuild();
+        m_BuildOutput.AddLine("Exportando '" + options.GameName + "' para " + FileDialog::ToUtf8(target));
+        std::string error;
+        if (m_GameExporter.Start(std::move(options), error)) {
+            PRISM_INFO("Exportando o jogo para ", FileDialog::ToUtf8(target), "...");
+        }
+        else {
+            m_BuildOutput.AddLine("ERRO: " + error);
+            m_BuildOutput.EndBuild(false);
+            PRISM_ERROR(error);
+        }
+    }
+
+    void EditorLayer::PollGameExport() {
+        std::vector<GameExportRunner::Line> lines;
+        bool justFinished = false;
+        bool success = false;
+        std::filesystem::path outputDirectory;
+        m_GameExporter.Poll(lines, justFinished, success, outputDirectory);
+
+        for (const auto& line : lines)
+            m_BuildOutput.AddLine(line.Text);
+
+        if (justFinished) {
+            m_BuildOutput.EndBuild(success);
+            if (success)
+                PRISM_INFO("Jogo exportado em ", FileDialog::ToUtf8(outputDirectory), ".");
+            else
+                PRISM_ERROR("Falha ao exportar o jogo (veja a aba Saida de Build).");
+        }
+    }
+
+    // Botao "Compilar" + estado dos scripts C++, na barra de ferramentas.
+    void EditorLayer::RenderBuildToolbarGroup() {
+        const bool building = m_NativeBuilder.IsRunning();
+        const bool playing = IsPlaying();
+        const bool hasProject = Prism::Project::GetActive() != nullptr;
+
+        // Compilar tambem com o Play rodando: o modulo novo entra por hot reload (NativeScripting::PollHotReload).
+        ImGui::BeginDisabled(!hasProject || building || m_GameExporter.IsRunning()); // a aba Saida de Build e compartilhada com a exportacao
+        if (ImGui::Button(building ? "Compilando..." : "Compilar"))
+            StartNativeBuild();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", playing ? "Compila os scripts C++ e troca o codigo com o jogo rodando (hot reload: os scripts C++ recomecam, o mundo continua)."
+                : "Compila os scripts C++ (pasta Source/) e recarrega o modulo.");
+
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        if (building) {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Compilando scripts C++...");
+        }
+        else if (m_LastNativeBuildFailed) {
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Erro de build (ver Saida de Build)");
+        }
+        else if (Prism::NativeScripting::IsModuleLoaded()) {
+            ImGui::TextDisabled("Scripts C++: %d classe(s)", (int)Prism::NativeScripting::GetClassNames().size());
+        }
+        else {
+            ImGui::TextDisabled("Scripts C++: nao compilados");
+        }
+    }
+
+    void EditorLayer::PollNativeBuild() {
+        std::vector<NativeBuilder::Line> lines;
+        bool justFinished = false;
+        bool success = false;
+        m_NativeBuilder.Poll(lines, justFinished, success);
+
+        // A saida detalhada vai para a aba "Saida de Build"; o Console recebe so o resumo.
+        for (const auto& line : lines)
+            m_BuildOutput.AddLine(line.Text);
+
+        if (justFinished) {
+            m_BuildOutput.EndBuild(success);
+            if (success) {
+                m_LastNativeBuildFailed = false;
+                PRISM_INFO("Scripts C++ compilados com sucesso.");
+                m_NativeReloadPending = true;
+            }
+            else {
+                m_LastNativeBuildFailed = true;
+                PRISM_ERROR("Falha ao compilar os scripts C++ (veja a aba Saida de Build).");
+            }
+        }
+
+        // Recarrega quando nao ha Play (instancias vivas usam o codigo do modulo).
+        if (m_NativeReloadPending && !IsPlaying()) {
+            m_NativeReloadPending = false;
+            if (auto project = Prism::Project::GetActive())
+                Prism::NativeScripting::LoadProjectModule(*project);
+        }
+    }
+
+    void EditorLayer::CloseProject() {
+        StopPlaying();
+
+        // O modulo C++ e as instancias de script pertencem a este projeto.
+        Prism::NativeScripting::UnloadModule();
+
+        // O gancho de fechar janela captura 'this' (ver OnAttach): precisa
+        // sumir antes desta Layer ser destruida. NAO fazer isso no OnDetach -
+        // la Application::Get() pode ja ser nulo (shutdown do app).
+        Prism::Application& app = Prism::Application::Get();
+        app.SetCloseRequestHandler(nullptr);
+
+        // Troca de tela: ver o comentario em ProjectManagerLayer::EnterEditor.
+        app.PushLayer(new ProjectManagerLayer());
+        app.PopLayer(this);
+    }
+
+    void EditorLayer::OnStopButtonClicked() {
+        StopPlaying();
     }
 
     void EditorLayer::RenderConsolePanel() {

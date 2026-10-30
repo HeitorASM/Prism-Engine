@@ -29,6 +29,10 @@ namespace Prism {
 
     using ShaderDefines = std::vector<std::pair<std::string, std::string>>;
 
+    // '#include "nome"' -> arquivo: troca o include de nome 'nome' por outro arquivo
+    // (usado pelos shaders de material do projeto, ver Renderer.cpp).
+    using ShaderIncludeOverrides = std::vector<std::pair<std::string, std::filesystem::path>>;
+
     struct ShaderSourceResult {
         bool Ok = false;
         std::string Error;   // preenchido quando Ok == false
@@ -42,7 +46,8 @@ namespace Prism {
 
     class ShaderSource {
     public:
-        static ShaderSourceResult Load(const std::filesystem::path& file, const ShaderDefines& defines = {});
+        static ShaderSourceResult Load(const std::filesystem::path& file, const ShaderDefines& defines = {},
+                                       const ShaderIncludeOverrides& overrides = {});
 
         static constexpr int kMaxIncludeDepth = 16;
     };

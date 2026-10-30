@@ -7,6 +7,7 @@
 #include "../Commands/EditorCommands.h"
 #include "../Core/EntityOps.h"
 #include "ComponentEditUtils.h"
+#include "LayerMaskWidget.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -65,6 +66,54 @@ namespace PrismEditor {
             }
             if (!isPrimary)
                 ImGui::TextDisabled("Nao e a camera principal - o modo Play/viewport nao vai usar esta.");
+
+            ImGui::SeparatorText("Render");
+            const char* clearNames[] = { "Skybox da cena", "Cor chapada" };
+            int clearIndex = (int)camera.ClearMode;
+            if (ImGui::Combo("Fundo##Cam", &clearIndex, clearNames, IM_ARRAYSIZE(clearNames))) {
+                camera.ClearMode = (Prism::CameraClearMode)clearIndex;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            if (camera.ClearMode == Prism::CameraClearMode::SolidColor) {
+                ImGui::ColorEdit3("Cor de fundo##Cam", glm::value_ptr(camera.ClearColor));
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
+            ImGui::DragFloat("Exposicao##Cam", &camera.Exposure, 0.01f, 0.05f, 16.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            bool ssao = camera.SSAO;
+            if (ImGui::Checkbox("Oclusao de ambiente (SSAO)##Cam", &ssao)) {
+                camera.SSAO = ssao;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+
+            ImGui::SeparatorText("Pos-processamento");
+            bool bloom = camera.Bloom;
+            if (ImGui::Checkbox("Bloom##Cam", &bloom)) {
+                camera.Bloom = bloom;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            if (camera.Bloom) {
+                ImGui::DragFloat("Limiar do bloom##Cam", &camera.BloomThreshold, 0.01f, 0.0f, 32.0f);
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+                ImGui::DragFloat("Intensidade do bloom##Cam", &camera.BloomIntensity, 0.005f, 0.0f, 4.0f);
+                TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            }
+            bool fxaa = camera.FXAA;
+            if (ImGui::Checkbox("FXAA (suavizar bordas)##Cam", &fxaa)) {
+                camera.FXAA = fxaa;
+                CommitComponentEdit(m_Ctx, before, camera, "Camera");
+            }
+            ImGui::DragFloat("Saturacao##Cam", &camera.Saturation, 0.01f, 0.0f, 3.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+            ImGui::DragFloat("Contraste##Cam", &camera.Contrast, 0.01f, 0.1f, 3.0f);
+            TrackContinuousEdit(m_Ctx, m_CameraBeforeEdit, camera, "Camera");
+
+            // Camadas que esta camera enxerga (Mesh Renderer > Camadas).
+            {
+                auto beforeMask = camera;
+                if (DrawLayerMask("Enxerga camadas##Cam", camera.CullMask))
+                    CommitComponentEdit(m_Ctx, beforeMask, camera, "Camera");
+            }
 
             // --- Pre-visualizacao da camera (integrada) ---
             ImGui::Separator();

@@ -2,19 +2,20 @@
 
 Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking), EnTT, Lua (sol2) e Jolt Physics.
 
-> Ainda em fase incial de desenvolvimento
+> Ainda em fase inicial de desenvolvimento
 
 ## Recursos
 
-- Editor com viewport, hierarquia em árvore, propriedades, console, content browser e editor de scripts
-- Menu de renderização no editor (exposição e ambiente), salvo por projeto
+- Editor com viewport, hierarquia em árvore, propriedades, console, content browser, editor de código (vários arquivos) e documentação embutida (F1)
+- Ambiente e skybox por cena (component Environment) e opções de render por câmera
 - Gizmo de mover/rotacionar/escalar (ImGuizmo) e seleção por clique na viewport
 - Undo/redo para as operações principais e aviso de alterações não salvas ao fechar o editor ou trocar de mapa
 - ECS com EnTT: transform, mesh, material, câmera, luz, collider, rigid body, script e raycast
 - Iluminação PBR multi-luz (Point/Spot/Directional) com roughness/metallic, normal map, sombras direcionais e SSAO
 - Física com Jolt (corpos estáticos, cinemáticos e dinâmicos)
-- Scripting em Lua com acesso a transform, física, input e raycast
-- Modo Play em janela separada, rodando uma cópia da cena
+- Scripting em Lua com acesso a transform, física, input, raycast e áudio
+- Áudio (miniaudio): Audio Source/Listener com som 3D
+- Modo Play na aba Game (ou em janela separada), rodando uma cópia da cena, e o executável PrismRuntime para rodar um projeto sem o editor
 - Mapas (`.prismmap`), prefabs (`.prismprefab`) e materiais (`.prismmat`)
 
 > Muitos recursos ainda estão em fase incial de desenvolvimento e são sucetiveis a erros/poblemas
@@ -53,9 +54,11 @@ Prism/            engine (biblioteca estática)
     Assets/       AssetID, AssetMeta, AssetRegistry (identidade dos assets, .meta)
   shaders/        shaders GLSL (.vert/.frag), com #include e hot reload
 PrismEditor/      executável do editor (ver "Estrutura do editor" em docs/arquitetura.md)
+PrismRuntime/     executável que roda um projeto sem o editor
 tests/            testes automatizados, opt-in (ver docs/arquitetura.md)
 vendor/           dependências (glad e stb locais; o resto via FetchContent)
-docs/             documentação detalhada
+docs/             documentação técnica (GitHub)
+  inengine/       guias para quem usa a engine (abrem no editor com F1)
 ```
 
 ## Documentação De desenvolvimento de desiçoes
@@ -63,9 +66,14 @@ docs/             documentação detalhada
 - [Arquitetura](docs/arquitetura.md)
 - [Editor](docs/editor.md)
 - [Scripting Lua](docs/scripting-lua.md)
+- [Scripting C++](docs/scripting-cpp.md)
 - [Física](docs/fisica.md)
+- [Desempenho e profiler](docs/desempenho.md)
 - [Renderização](docs/renderizacao.md)
+- [Áudio](docs/audio.md)
+- [Animação](docs/animacao.md)
 - [Formatos de arquivo](docs/formatos-de-arquivo.md)
+- [Exportar o jogo](docs/exportacao.md)
 
 ## Licença
 
@@ -76,16 +84,29 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 ## Roadmap
 
 - [x] Importação de modelos 3D (OBJ/FBX/glTF/GLB) pelo editor (via Assimp), com um material por submesh e texturas embutidas extraídas
-- [ ] Áudio 
-- [ ] API de scripting Lua mais completa
-- [ ] Scripts em C++ (módulo nativo com hot reload)
+- [x] Áudio: Audio Source/Listener, som 3D, API Lua (miniaudio; ver [docs/audio.md](docs/audio.md))
+- [x] API de scripting Lua mais completa (colisão/trigger, `Properties`, `Time`, `Scene`)
+- [x] Scripts em C++ (módulo nativo DLL/.so; ver [docs/scripting-cpp.md](docs/scripting-cpp.md)); falta hot reload durante o Play
 - [ ] BSP/CSG e ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
-- [ ] Reflexão de ambiente com IBL de verdade (skybox HDR, irradiance/prefiltered maps)
-- [ ] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
-- [ ] Sombras para luzes Point/Spot e Cascaded Shadow Maps
+- [x] Skybox visível (cor, gradiente ou panorama HDR)
+
+- [x] UI in-game (painéis, texto, imagens e botões; a UI antiga por componente foi removida, ver `docs/ui-prismui.md`)
+- [x] Reflexão de ambiente com IBL de verdade (irradiance/prefiltered maps a partir do panorama)
+- [x] Callbacks de colisão em Lua (`OnCollisionEnter/Exit`)
+- [x] Sombras para luzes Point/Spot e Cascaded Shadow Maps
 - [ ] Editor de código com autocomplete e debugger
-- [ ] Vínculo vivo entre instâncias e seus prefabs/materiais
+- [x] Vínculo vivo entre instâncias e seus prefabs/materiais
 - [x] Aviso de alterações não salvas (dirty flag)
-- [ ] Modo Runtime (jogo exportado, sem editor)
+- [x] PrismRuntime: executável que roda um projeto sem o editor
+- [x] Exportar/empacotar o jogo (Arquivo → Exportar Jogo: pasta distribuível com o Runtime + projeto; ver [docs/exportacao.md](docs/exportacao.md))
+- [x] Módulo C++: `CMakeLists.txt` do usuário nunca sobrescrito, para usar bibliotecas de terceiros
+- [x] UI em formato de texto (`.prismui`), com layout flex, ids e hot reload (ver `docs/ui-prismui.md`)
+- [x] Camadas de visibilidade na malha e "Culling Mask" na câmera (estilo Godot; ver `docs/renderizacao.md`) — camadas por luz ainda não
+- [x] Frustum culling no renderer
+- [x] Instancing no renderer (passe principal; ver `docs/desempenho.md`)
+- [x] Materiais: translucidez (Blend/Mask), UV tiling/offset, emissão e dupla face (ver `docs/renderizacao.md`)
+- [x] Profiler (painel Desempenho: CPU, GPU, desenhos e triângulos; ver `docs/desempenho.md`)
+- [x] Física: camadas/máscaras configuráveis, juntas e character controller
+- [x] Testes de serialização, do ComponentRegistry e do PrefabSyncer

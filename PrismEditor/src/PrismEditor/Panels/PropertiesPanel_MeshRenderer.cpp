@@ -5,6 +5,8 @@
 #include "ScriptEditorPanel.h"
 #include "../Play/PlayWindow.h"
 #include "../Commands/EditorCommands.h"
+#include "ComponentEditUtils.h"
+#include "LayerMaskWidget.h"
 #include "../Core/EntityOps.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -98,6 +100,15 @@ namespace PrismEditor {
             }
 
             ImGui::Separator();
+
+            {
+                // Camadas (estilo Godot): so cameras com alguma destas camadas na "Enxerga camadas" desenham o objeto.
+                auto beforeLayers = meshRenderer;
+                if (DrawLayerMask("Camadas##Mesh", meshRenderer.Layers))
+                    CommitComponentEdit(m_Ctx, beforeLayers, meshRenderer, "Mesh Renderer");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Em quais camadas este objeto esta. Uma camera so o desenha se enxergar alguma delas.");
+            }
 
             ImGui::ColorEdit3("Cor", glm::value_ptr(meshRenderer.Color));
             if (ImGui::IsItemActivated())

@@ -4,10 +4,12 @@ OpenGL 4.5 Core, com glad como carregador. O `Renderer` é uma API estática enx
 
 ## Pipeline de `DrawScene`
 
-1. **Sombras** (se alguma luz Directional projeta sombra): desenha a cena do ponto de vista da luz num `ShadowMap`.
+1. **Sombras** (`ShadowSystem`, se alguma luz tem `CastShadows`): cascatas da luz Directional, mapas das luzes Spot e cubemaps das luzes Point.
 2. **Pré-passe de geometria**: normais em view-space e profundidade, do ponto de vista da câmera (`GeometryBuffer`).
 3. **SSAO**: calcula a oclusão a partir do pré-passe, seguida de blur.
-4. **Passe de cor**: desenha cada entidade com `Transform` + `MeshRenderer`, usando a transform de mundo (`Scene::GetWorldTransform`).
+4. **Fundo (skybox)** (`Renderer::DrawSky`): preenche a tela antes da geometria. Ver a seção "Skybox".
+5. **Passe de cor**: desenha cada entidade com `Transform` + `MeshRenderer`, usando a transform de mundo (`Scene::GetWorldTransform`).
+6. **Partículas** (`Renderer::DrawParticles`): billboards com blend, sem escrever profundidade (mas testando contra a geometria opaca). Ver a seção "Partículas".
 
 Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 
@@ -28,6 +30,13 @@ Nenhum chamador (`EditorLayer`, `PlayWindow`) precisa conhecer esses passes.
 | `NormalPath` | normal map em tangent-space (linear) |
 | `RoughnessMetallicPath`, `RoughnessFactor`, `MetallicFactor` | mapa em convenção glTF (G = roughness, B = metallic, linear); os fatores multiplicam o mapa ou valem sozinhos sem ele |
 
+| `BlendMode`, `Opacity`, `AlphaCutoff` | **Opaco** (ignora o alfa), **Recorte** (descarta pixels com alfa < corte) ou **Translucido** (mistura com o fundo). Alfa final = `Opacity` × alfa da textura de albedo |
+| `UVTiling`, `UVOffset` | `uv * tiling + offset`, para as três texturas |
+| `EmissiveColor`, `EmissiveIntensity` | luz própria somada depois da iluminação (acima de 1 alimenta o Bloom) |
+| `DoubleSided` | desenha a face de trás com a normal invertida; desligado, a face de dentro de uma malha some |
+
+**Translucidos**: desenhados depois dos opacos e antes das partículas, **de trás para frente** pelo centro do objeto (distância à câmera), com mistura e sem escrever profundidade. Não são instanciados, não projetam sombra e não entram no SSAO. Recortes entram nas sombras e no SSAO como se fossem sólidos. Limitação: a ordenação é por objeto, não por pixel; dois objetos translúcidos que se atravessam podem se misturar fora de ordem.
+
 Caminhos são relativos a `Assets/`; vazio significa "sem textura". Texturas são carregadas com stb_image e mantidas em cache por (caminho, sRGB).
 
 ## Ambiente
@@ -38,7 +47,9 @@ O ambiente é um **gradiente vertical analítico** de 3 cores (zênite, horizont
 - **Especular**: `F * mix(env(R), irradiância(R.y), roughness^1.25)`. É o que impede o metal preto: sem luz direta, um metal reflete o ambiente.
 - **Termo BRDF** `(A, B)`: aproximação de Karis (Unreal 4) mais uma correção polinomial própria, restrita fisicamente (`A` em [0,1], `A+B <= 1`).
 
-API: `Renderer::SetEnvironmentColors(zenith, horizon, ground)` (sRGB, o que o color picker mostra; o shader converte para linear) e `Renderer::SetAmbient` (a **intensidade**). O editor edita tudo isso no menu **Renderização** e guarda no `.prismproj` (`RenderSettings` em `Project.h`); `Renderer::ApplyRenderSettings` aplica o conjunto de uma vez, e um modo Runtime deve chamá-la ao carregar o projeto para o jogo ter o mesmo visual do editor. O padrão é 0.10, e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`).
+Os valores vêm do **`EnvironmentComponent` da cena** (o primeiro encontrado; sem nenhum valem os padrões do component). Cores em sRGB, o que o color picker mostra; o shader converte para linear. `Ambient` é a **intensidade** (padrão 0.10) e `u_Ambient` vale o brilho **médio** do ambiente com qualquer paleta: a normalização é calculada na CPU a partir das cores atuais (`u_EnvScale`). O Renderer não guarda configuração do usuário: `Renderer::DrawScene` reescreve o estado do quadro (`ApplyFrameState`) a cada chamada e limita tudo (exposição 0.05–16, `Ambient` 0–2, cores 0–1, NaN/inf viram o padrão).
+
+As opções da **câmera** chegam por `CameraRenderSettings::From(camera)`: `ClearMode` (skybox da cena ou cor chapada), `ClearColor`, `Exposure`, `SSAO` (desligar poupa dois passes de tela cheia) e as opções de pós-processamento (veja abaixo). A viewport livre do editor usa os padrões.
 
 **Precisão medida** (contra integração numérica): irradiância, erro máximo 0.009 (0.008 com uma paleta de pôr do sol, sem reajuste); especular, erro médio 1.5 níveis de 255; termo BRDF, `A` com erro médio 0.018.
 
@@ -60,19 +71,71 @@ Se o determinante da matriz é zero (um eixo de escala em 0), a inversa não exi
 
 ## Pipeline de cor
 
-A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Na saída: exposição (`Renderer::SetExposure`, padrão 1.0) → tone mapping ACES → linear para sRGB. A conversão é feita no shader de cena, e não num passe final, porque gizmos de linha e o clear color são desenhados depois no mesmo framebuffer, já em espaço de tela.
+A iluminação roda em espaço **linear**. A cor sólida (`AlbedoTint`/`Color`, escolhida em sRGB no color picker) é convertida para linear na entrada; texturas de albedo já chegam lineares (`GL_SRGB8_ALPHA8`). Os shaders de cena (`basic`, `sky`, `particle`) escrevem **HDR linear** (`u_OutputMode = 1`) num buffer `RGBA16F`, e o passe final (`PostProcess`) converte para a tela. `Renderer::DrawMesh` fora do `DrawScene` continua escrevendo a imagem final (modo 0).
+
+### Pós-processamento (`PostProcess`)
+
+`Renderer::DrawScene` desenha a cena num FBO HDR (um por contexto GLFW, porque FBOs não são compartilhados entre o editor e a janela de Play) e, no fim, `PostProcess::End` faz:
+
+1. **Bloom** (opcional): descida em até 6 níveis (filtro de 13 amostras, com limiar de joelho suave no primeiro) e subida aditiva (filtro tenda de 9 amostras). `BloomThreshold` é o brilho linear mínimo (1 = branco) e `BloomIntensity` quanto entra na imagem.
+2. **Composição**: soma o bloom, aplica **exposição → ACES → sRGB** (o mesmo de antes), depois `Saturation` e `Contrast`. Pixels de **fundo** (profundidade 1.0) com céu LDR (cor chapada, gradiente, panorama comum) pulam exposição e ACES, então a cor do céu sai exatamente como foi escolhida; o panorama **HDR** passa pelo tone mapping.
+3. **FXAA** (opcional): suaviza bordas sobre a imagem já em sRGB.
+4. **Profundidade**: é copiada para o destino original, então gizmos e linhas desenhados depois continuam ocluídos.
+
+As opções são **por câmera** (`CameraComponent`: `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast`; chegam por `CameraRenderSettings::From`) e limitadas no Renderer. Com bloom, saturação e contraste neutros e FXAA desligado, a imagem é a de antes, exceto partículas sobre geometria, que agora são misturadas em espaço linear. Se os shaders `post_*.frag` não compilarem ou o FBO falhar, a cena é desenhada direto, sem pós-processamento.
+
+## Camadas de visibilidade e frustum culling
+
+**Camadas** (estilo Godot, 32): cada `MeshRendererComponent` tem `Layers` (máscara de bits; bit 0 = camada 1, padrão) e cada `CameraComponent` tem `CullMask` (as camadas que ela enxerga; padrão = todas). Uma malha só é desenhada por uma câmera se as duas máscaras têm algum bit em comum. No editor: *Mesh Renderer → Camadas* e *Camera → Enxerga camadas* (botão com a lista; "Renomear camadas" muda os nomes, que ficam no `.prismproj` como `Layer0=...`..`Layer31=...`). A viewport livre do editor enxerga todas.
+
+Em Lua: `mesh.Layers = 2`, `mesh:SetLayer(3, true)`, `mesh:IsInLayer(3)`, `camera.CullMask = 1`, `camera:SetCullLayer(2, false)` (índices de 1 a 32, como no editor).
+
+**Frustum culling**: no passe principal e no pré-passe do SSAO, malhas totalmente fora do volume de visão da câmera não são desenhadas (`Renderer/Culling.h`, testado em `PrismCullingTests`). O teste é conservador (caixa local da malha transformada pelo model) e **não** vale para malhas com esqueleto, cuja pose pode sair da caixa. `Renderer::GetCullStats()` devolve, do último `DrawScene`, quantas malhas foram desenhadas, descartadas pelo frustum e escondidas pela camada.
+
+Sombras **não** usam camadas nem o frustum da câmera: um objeto escondido de uma câmera, ou fora da tela, continua projetando sombra. Camadas por **luz** ainda não existem.
 
 ## Sombras
 
-- Somente luz **Directional**, e só **uma** por frame: a primeira com `CastShadows` marcado. Uma segunda é ignorada em silêncio.
-- Point e Spot com `CastShadows` marcado não produzem sombra.
-- Um único frustum ortográfico, dimensionado pelo bounding box das posições de todas as entidades com `MeshRenderer` e recalculado a cada frame. Cenas muito grandes podem mostrar sombras com baixa resolução (Cascaded Shadow Maps seria a evolução).
-- Shadow map de 2048×2048, filtragem PCF 3×3.
-- Com sombra ativa, a cena é desenhada duas vezes por frame.
+- **Directional** (1 por cena, a primeira marcada): *Cascaded Shadow Maps* com 4 cascatas de 2048×2048. A divisão mistura escala logarítmica e uniforme (λ = 0,75) até 120 unidades de distância; cada cascata é encaixada numa esfera (não "respira" ao girar a câmera) e alinhada à grade de texels (não treme ao mover). Além de 120 unidades não há sombra direcional.
+- **Spot** (até 4): projeção perspectiva do cone, 1024×1024 cada.
+- **Point** (até 2): cubemap de **distância** (6 faces de 1024×1024 por luz).
+- Luzes além do limite de cada tipo continuam acesas, sem sombra (um aviso no log).
+- Filtragem PCF macia: 16 amostras de um disco de Poisson, giradas por pixel (ruído), nas três técnicas. A penumbra é suave, sem degraus. *Normal offset* e bias proporcionais ao tamanho do texel.
+- Cascatas se misturam nos últimos 12% de cada faixa (sem emenda visível) e a sombra desvanece nos 10% finais da distância máxima.
+- Cada mapa é desenhado uma vez por frame e reaproveitado por todos os meshes. Texturas de sombra são criadas só quando a primeira luz com sombra aparece.
+- Texture units do `basic.frag`: 1 AO, 2–4 material, 5 cascatas, 6 spot, 7 point, 8–9 IBL.
 
 ## SSAO
 
 16 amostras hemisféricas, textura de ruído e blur por box filter. O resultado multiplica o termo de luz ambiente.
+
+## Skybox
+
+`EnvironmentComponent::Sky` (gravado no mapa, editado no component **Environment**) escolhe o fundo visível; uma câmera com `ClearMode = SolidColor` ignora o skybox e usa a própria cor:
+
+| Modo | Resultado |
+|---|---|
+| Cor chapada | `SkyColor` (sRGB, escrita direto) |
+| Gradiente | O mesmo gradiente Céu/Horizonte/Chão do ambiente, visível ao fundo |
+| Panorama | Imagem equirretangular (2:1) escolhida por `SkyTexture` (`AssetID`, arraste do Conteúdo do Projeto): `.hdr`, `.png`, `.jpg`, `.tga`, `.bmp` |
+
+- O desenho é um triângulo de tela cheia no plano distante (`sky.vert`), sem teste nem escrita de profundidade; a direção de cada pixel vem da matriz inversa de view-projection.
+- O panorama é carregado por `SkyTexture` em `GL_RGB16F` linear, sem inverter (a primeira linha da imagem é o céu), com mipmaps e a correção da costura do `atan` no cálculo das derivadas. `.hdr` passa por exposição e ACES; imagens comuns só pela intensidade, para aparecerem como foram pintadas. `SkyRotation` gira em torno de Y.
+- Panorama sem imagem válida (sem asset, vínculo quebrado, arquivo ausente) cai para a cor chapada; o erro de carga é logado uma vez por caminho.
+- **O fundo não ilumina a cena.** A luz de ambiente e os reflexos continuam vindo do gradiente de 3 cores, qualquer que seja o modo. Iluminação por imagem (IBL) é um passo futuro.
+
+## Partículas
+
+`ParticleEmitterComponent` configura o emissor; `ParticleSystem` (`Particles/`) simula na CPU, por cena, e guarda o estado fora do arquivo de cena. Roda no Play (`Scene::OnUpdate`) e, no editor, anima como preview a entidade selecionada.
+
+- Emissão em cone ao redor do eixo +Y local da entidade (gire a entidade para apontar o jato), com `EmissionRate`, `BurstCount`, vida/velocidade aleatórias entre mínimo e máximo, gravidade e tamanho/cor interpolados ao longo da vida. As partículas vivem em espaço de mundo.
+- Desenho: um quad por partícula gerado no vertex shader (`particle.vert`), lendo posição/tamanho/cor de um SSBO reescrito por emissor; um VAO vazio por contexto (por isso funciona na janela de Play). `Additive` soma luz (fogo, brilho); sem ele usa alpha normal ordenado de trás para frente.
+- Textura opcional (`TexturePath`, relativa ao projeto); sem ela, um círculo suave procedural. Sem iluminação, sem sombras, sem partículas ocultas pela fumaça de outras (sem *soft particles*).
+- Limite de 10 000 partículas vivas por emissor.
+
+## Animação esquelética
+
+Malhas com ossos recebem a paleta (`u_Skinned`/`u_Bones[128]`, `shaders/skinning.glsl`) em **três** passes: cor (`basic.vert`), sombras (`shadow_depth.vert`, `shadow_point.vert`) e pré-passe do SSAO (`geometry_prepass.vert`). A paleta vem do `Animator` da entidade (ou de um ancestral) via `AnimationSystem::FindPalette`; sem `Animator`, é a pose de bind do rig. `Renderer::ResolveBonePalette` é chamado uma vez por entidade em cada passe. Ver [animacao.md](animacao.md).
 
 ## Meshes embutidas
 
@@ -91,3 +154,14 @@ A `PlayWindow` cria sua janela GLFW compartilhando o contexto OpenGL do editor, 
 Os shaders GLSL ficam em `Prism/shaders/` (um `.vert` e um `.frag` por programa), não em strings no C++. `Renderer::Init` carrega cada um com `Shader::CreateFromFiles`; o mapa de arquivos, o `#include`, os defines injetados pelo C++ (`MAX_LIGHTS`) e o **hot reload** estão em [Prism/shaders/README.md](../Prism/shaders/README.md).
 
 Resumo: salvar um shader com o editor aberto recompila em ~0,5 s (`Renderer::ReloadChangedShaders`, chamado por `Application::Run`). Se não compilar, a versão anterior continua em uso e o erro vai para o Console. A pasta é copiada para ao lado do executável no build, para o jogo distribuído não depender da árvore de código-fonte.
+
+## Ambiente com IBL (panorama)
+
+Quando o ambiente usa um **panorama** (`Sky = Panorama` com textura válida), ele também ilumina a cena (mesmo se a câmera usar cor chapada):
+
+1. No primeiro quadro com aquele panorama, `EnvironmentIBL` gera um cubemap de ambiente (256², com mips), um de **irradiância** difusa (32²) e um **especular pré-filtrado** GGX (128², 5 níveis de rugosidade). É um pequeno custo único; trocar de panorama refaz.
+2. No `basic.frag`, o difuso lê a irradiância pela normal e o especular lê o pré-filtrado pelo vetor refletido, no nível `roughness × 4`. O termo BRDF (escala/bias de Fresnel) continua o analítico.
+3. `SkyRotation` gira a iluminação junto com o fundo; `SkyIntensity` a escala; **`Ambient` / 0,10** também multiplica (0,10 = brilho natural do panorama, 0 = sem luz ambiente).
+4. Sem panorama (cor chapada ou gradiente), vale o gradiente analítico de antes. Shaders `ibl*.frag` inválidos também caem no gradiente.
+
+Texture units 8 e 9 do `basic.frag`: irradiância e pré-filtrado. Valores acima de 256 no panorama são limitados no bake (evita "fireflies"; o sol vem das luzes).

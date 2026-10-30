@@ -2,25 +2,27 @@
 
 ## Visão geral
 
-`Application` roda o loop principal e mantém uma `LayerStack`. O editor não é um caso especial: é uma `Layer` empilhada, como qualquer outra. Um futuro modo Runtime (jogo exportado, sem editor) seria apenas outra `Layer` ou outro executável, sem mudanças no core.
+`Application` roda o loop principal e mantém uma `LayerStack`. O editor não é um caso especial: é uma `Layer` empilhada, como qualquer outra. O modo Runtime (jogo sem editor) é só outro executável com a sua própria `Layer`, sem mudanças no core.
 
-O projeto tem dois alvos CMake:
+O projeto tem três alvos CMake:
 
 - **Prism**: biblioteca estática com a engine. Não define `main()`; ele vem de `Core/EntryPoint.h`, incluído pelo executável que consome a biblioteca.
 - **PrismEditor**: executável do editor. Implementa `Prism::CreateApplication()` em `EditorApp.cpp`.
+- **PrismRuntime**: executável que roda um projeto sem o editor (`PrismRuntime <projeto>`). Implementa `CreateApplication()` em `RuntimeApp.cpp`; a `RuntimeLayer` carrega o projeto e o mapa inicial e desenha com `GameView`. Os argumentos de linha de comando chegam por `GetLaunchArguments()` (`Core/CommandLine.h`).
 
 ## Módulos da engine
 
 | Pasta | Conteúdo |
 |---|---|
-| `Core/` | `Application`, `Window`/`GlfwWindow`, eventos, `Input`, `Log`/`LogBuffer`, `Command`/`CommandHistory`, `CrashHandler` |
+| `Core/` | `Application`, `Window`/`GlfwWindow`, eventos, `Input`, `CommandLine`, `Log`/`LogBuffer`, `Command`/`CommandHistory`, `CrashHandler` |
 | `Layer/` | `Layer`, `LayerStack` |
-| `Renderer/` | `Renderer`, `Shader`, `Mesh`, `PrimitiveMeshFactory`, `Framebuffer`, `Texture`, `ShadowMap`, `SSAO`, `GeometryBuffer`, `GraphicsContext` |
+| `Renderer/` | `Renderer`, `Shader`, `Mesh`, `PrimitiveMeshFactory`, `Framebuffer`, `GameView`, `Texture`, `ShadowMap`, `SSAO`, `GeometryBuffer`, `GraphicsContext` |
 | `Scene/` | `Scene`, `Entity`, `Components`, `ComponentRegistry`, serializadores |
-| `Scripting/` | `ScriptEngine` (Lua via sol2) |
+| `Scripting/` | `ScriptEngine` (Lua via sol2), `NativeScripting` + `NativeScript.h` (scripts C++ em módulo DLL/.so) |
 | `Physics/` | `PhysicsEngine` (Jolt) |
+| `Audio/` | `AudioEngine` (miniaudio) |
 | `ImGui/` | `ImGuiLayer` |
-| `Project/` | `Project`, `ProjectSerializer` |
+| `Project/` | `Project`, `ProjectSerializer`, `GameExporter` (Arquivo → Exportar Jogo) |
 | `Assets/` | `AssetID`, `AssetMeta`, `AssetRegistry`, `ModelLoader` |
 
 ## Cena e ECS
@@ -29,7 +31,7 @@ O projeto tem dois alvos CMake:
 
 Uma entidade não tem "tipo": ela é a soma dos components que possui. Um personagem, por exemplo, é uma entidade com `MeshRenderer` + `Collider` + `RigidBody` + `Script`. Os presets do menu Entidade (Criar Luz, Criar Character etc.) são atalhos que adicionam combinações comuns.
 
-Components disponíveis: `Tag`, `Transform`, `MeshRenderer`, `Material`, `Camera`, `Light`, `Collider`, `RigidBody`, `Relationship`, `Script`, `Raycast`.
+Components disponíveis: `Tag`, `Transform`, `MeshRenderer`, `Material`, `Camera`, `Light`, `Collider`, `RigidBody`, `Relationship`, `Script`, `Raycast`, `AudioSource`, `AudioListener`.
 
 ### Hierarquia (parenting)
 
@@ -47,14 +49,14 @@ Para adicionar um component novo:
 
 1. Declare a struct em `Components.h`.
 2. Registre em `ComponentRegistration.cpp`.
-3. Incremente `kSceneFormatVersion` em `SceneSerializer.cpp`.
+3. Não precisa subir `kSceneFormatVersion`: o component é gravado num bloco com nome e versão. Para **adicionar campos depois**, escreva-os no fim do `Serialize`, suba `ComponentTypeInfo::Version` e leia-os só quando `ComponentRegistry::CurrentBlockVersion()` for suficiente (ver `Camera` em `ComponentRegistration.cpp`). O `DisplayName` é o nome no arquivo: não o renomeie.
 4. Escreva a UI dele em `PrismEditor/Panels/PropertiesPanel_<Nome>.cpp` (função `Draw<Nome>UI()`, declarada em `PropertiesPanel.h` e chamada em `OnImGuiRender()`). A UI é manual, pois cada component tem lógica própria demais para generalizar.
 
 `RelationshipComponent` fica fora do registro: usa índice posicional do pai na serialização e nunca aparece no menu.
 
 ## Identidade de assets
 
-`Assets/` dá a cada arquivo de asset uma identidade estável, independente do caminho. É a base do "vínculo vivo" entre instâncias e seus prefabs/materiais (ver o roadmap): uma referência gravada como `AssetID` continua válida depois de mover ou renomear o arquivo, o que um caminho de texto não garante.
+`Assets/` dá a cada arquivo de asset uma identidade estável, independente do caminho. É a base do "vínculo vivo" entre instâncias e seus prefabs/materiais: uma referência gravada como `AssetID` continua válida depois de mover ou renomear o arquivo, o que um caminho de texto não garante.
 
 - `AssetID`: 64 bits aleatórios; o valor `0` significa "sem asset".
 - `AssetMeta`/`AssetMetaFile`: lê e grava o `.meta` ao lado de cada asset (formato em [formatos-de-arquivo.md](formatos-de-arquivo.md#meta)).
@@ -94,6 +96,8 @@ cmake --build build --target PrismAssetTests
 ctest --test-dir build --output-on-failure
 ```
 
+`PrismDiskCacheTests` e `PrismLuaBytecodeTests` cobrem os caches (ver [caches.md](caches.md)). `PrismShaderParamsTests` compila só `Renderer/ShaderParams.h` (parâmetros `uniform` dos shaders de material). `PrismBuildAnalysisTests` compila só `Core/BuildOutputAnalysis.h` (reconhece erros de arquivo travado/símbolo não resolvido na compilação dos scripts C++). `PrismDrawBatchingTests` compila só `Renderer/DrawBatching.h` (agrupamento de desenhos para instancing). `PrismProfilerTests` compila só `Core/Profiler.h` (ver [desempenho.md](desempenho.md)). `PrismSceneTests` linka a biblioteca Prism inteira e cobre serialização de cena, `ComponentRegistry` (round-trip de todos os componentes, blocos truncados/antigos/desconhecidos) e `PrefabSyncer` (diff, revert, aplicar); só existe num build completo. `PrismPhysicsLayersTests` compila só `Physics/PhysicsLayers.h` (camadas de física e matriz de colisão, ver [fisica.md](fisica.md)). `PrismCullingTests` compila só `Renderer/Culling.h` (frustum e camadas, ver [renderizacao.md](renderizacao.md)). `PrismUITests` compila só o núcleo da UI em texto (`UI/UIMarkup`, `UILayout`, `UIInput`; ver [ui-prismui.md](ui-prismui.md)). `PrismExportTests` compila só `Project/GameExporter.cpp` (o exportador de jogos, ver [exportacao.md](exportacao.md)) e roda sobre pastas temporárias com arquivos de mentira.
+
 `PrismAssetTests` compila só `Assets/` e `Project/`, sem GPU, GLFW ou Jolt. Cobre `AssetID`, o formato do `.meta`, todos os casos de reconciliação do `AssetRegistry` e um ciclo real `Project::New` → `Project::Load` com assets movidos entre as duas etapas.
 
 ## Undo/redo
@@ -109,6 +113,7 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | Arquivo | Responsabilidade |
 |---|---|
 | `Core/EditorContext.h` | Estado **compartilhado** entre painéis: cena ativa, entidade selecionada, histórico de undo, caminho do mapa, câmera do editor, vínculo de material |
+| `Core/GameExportRunner` | Roda `Prism::ExportGame` numa thread de fundo e entrega as linhas à aba Saída de Build (Arquivo → Exportar Jogo) |
 | `Core/SceneDocument` | Ciclo de vida do mapa: novo, carregar, salvar, salvar como; aviso de alterações não salvas |
 | `Core/EntityOps` | Duplicar, excluir, instanciar prefab, câmera primária (funções livres sobre o `EditorContext`) |
 | `Core/MaterialLinkSync` | Vínculo vivo de material no lado do editor (debounce, gravação, reconciliação) |
@@ -117,8 +122,12 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | `Panels/EditorGizmos` | Gizmos de linha: câmera, collider, luz, raycast |
 | `Panels/HierarchyPanel` | Árvore de entidades, menu de contexto, popup "Criar Prefab" |
 | `Panels/PropertiesPanel` (+ `_Prefab.cpp` e um `_<Component>.cpp` por component) | Propriedades por component, seção Prefab, "+ Add Component", popups de material e script |
-| `Panels/RenderSettingsPanel` | Menu Renderização e gravação no `.prismproj` |
+| `Panels/GamePanel` | Aba Game: roda a cópia da cena no editor (framebuffer, captura de input) |
+| `Panels/PropertiesPanel_Environment` | UI do `EnvironmentComponent` (ambiente e skybox da cena) |
 | `Panels/Console`, `ContentBrowser`, `ScriptEditor`, `EntityContextMenu` | Painéis já independentes |
+| `Panels/BuildOutputPanel` | Aba "Saída de Build": saída da compilação dos scripts C++, com erros clicáveis |
+| `Core/FileDialog` | Diálogos nativos (escolher pasta/arquivo, via nativefiledialog-extended) e conversão UTF-8 ↔ `path` |
+| `Layers/ProjectManagerLayer` | Tela inicial: projetos recentes e criação de projeto (validação em tempo real). `EditorLayer::CloseProject` volta para ela |
 
 **Regra para código novo:** estado que só um painel usa fica **no painel**; estado que dois ou mais painéis leem ou escrevem entra no `EditorContext`. Um painel novo recebe `EditorContext&` no construtor e **não** inclui `EditorLayer.h`. Para adicionar um painel: crie `Panels/MeuPainel.{h,cpp}` (o CMake pega arquivos novos sozinho), instancie-o como membro do `EditorLayer` (depois de `m_Ctx`) e chame o `OnImGuiRender()` dele em `RenderDockspace()`.
 
@@ -140,6 +149,8 @@ Em edições contínuas (arrastar um campo, usar o gizmo), o estado "antes" é c
 | ImGuiColorTextEdit | editor de código | FetchContent |
 | Lua 5.4.7 + sol2 3.3.0 | scripting | FetchContent |
 | Jolt Physics 5.2.0 | física | FetchContent |
+| miniaudio 0.11.22 | áudio | FetchContent (só o header) |
+| nativefiledialog-extended | diálogos nativos de arquivo/pasta no editor | FetchContent |
 | Assimp | importação de modelos (`.obj`/`.fbx`/`.gltf`/`.glb`), via `Assets/ModelLoader` | FetchContent |
 
 As versões são fixadas em `vendor/CMakeLists.txt`.
@@ -147,3 +158,18 @@ As versões são fixadas em `vendor/CMakeLists.txt`.
 ## Plataformas
 
 O desenvolvimento é focado em Windows. O `CrashHandler` só tem implementação no Windows (`PRISM_PLATFORM_WINDOWS`); nas outras plataformas ele é vazio.
+
+## Versão da engine
+
+`Version.py` (raiz) é a fonte única de nome, versão, estado e build:
+
+```python
+Name = "Prism"
+Long_name = "Prism Engine"
+Version = "0.1.0"
+Version_state = "pre-alpha"
+Editor_version = "0.1.0"
+Build = ""
+```
+
+`cmake/PrismVersion.cmake` lê o arquivo ao configurar e gera `<build>/generated/PrismVersion.h` (a partir de `Prism/src/Prism/Core/Version.h.in`); o CMake reconfigura sozinho quando o `Version.py` muda. No código: `#include <PrismVersion.h>` e `Prism::Version::Full()` ("Prism Engine 0.1.0 pre-alpha"), `Version::EditorFull()` (título da janela do editor), `Version::Number`, `Version::State`, `Version::Build` e as macros `PRISM_VERSION` etc. Para um build de CI: `cmake -DPRISM_BUILD=1234 ...` sobrescreve o `Build`. A versão é registrada no Console ao iniciar o loop principal. Não confundir com `kSceneFormatVersion`/`kPrefabFormatVersion`, que versionam os formatos de arquivo.

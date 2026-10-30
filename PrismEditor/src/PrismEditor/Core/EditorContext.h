@@ -15,12 +15,39 @@
 #include "EditorCamera.h"
 #include "MaterialLinkSync.h"
 #include <filesystem>
+#include <functional>
+#include <vector>
 
 namespace PrismEditor {
 
     class PlayWindow;
     class ContentBrowserPanel;
     class ScriptEditorPanel;
+
+    // Estado do Level Builder (edicao de LevelMeshComponent na viewport). Ver Core/LevelEditing.h
+    // e Panels/LevelEditTool.h.
+    struct LevelEditState {
+        enum class Mode { Vertex, Edge, Face };
+
+        bool Active = false;                     // modo "editar geometria" ligado
+        Mode SelectionMode = Mode::Face;
+        Prism::Entity Target;                    // entidade sendo editada (Active so vale para ela)
+        std::vector<uint32_t> Vertices;          // selecao nos modos Vertice/Aresta
+        std::vector<uint32_t> Faces;             // selecao no modo Face
+
+        bool SnapEnabled = true;
+        float SnapSize = 0.25f;
+        float ExtrudeDistance = 0.5f;
+        float InsetAmount = 0.1f;
+        float MergeEpsilon = 0.001f;
+        int ActiveSlot = 0;                      // slot de material "atual" na UI
+
+        // Gesto de mover com o gizmo (antes/depois para o undo).
+        bool Dragging = false;
+        Prism::LevelMeshComponent DragBefore;
+        std::vector<glm::vec3> DragStartVertices;
+        glm::vec3 DragStartPivot{ 0.0f };
+    };
 
     struct EditorContext {
         // A cena ativa do editor. Vem do StartMap do projeto (dentro de
@@ -45,6 +72,9 @@ namespace PrismEditor {
         // entidade.
         Prism::CommandHistory History;
 
+        // Level Builder (ver LevelEditState).
+        LevelEditState Level;
+
         // Camera livre da viewport (ver EditorCamera.h).
         EditorCamera Camera;
 
@@ -56,6 +86,12 @@ namespace PrismEditor {
         PlayWindow* Play = nullptr;
         ContentBrowserPanel* ContentBrowser = nullptr;
         ScriptEditorPanel* ScriptEditor = nullptr;
+
+        // Estado do Play (aba Game OU janela separada): ligados pelo
+        // EditorLayer em OnAttach. Use estes em vez de consultar a PlayWindow
+        // diretamente, para cobrir os dois modos.
+        std::function<bool()> IsPlaying;
+        std::function<void()> StopPlaying;
     };
 
 }

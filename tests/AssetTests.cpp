@@ -434,6 +434,98 @@ static void TestProjectIntegration() {
     CHECK(reopened->GetAssetRegistry().Find(rock) != nullptr);   // o primeiro nao foi afetado
 }
 
+// ------------------------------------------------- criacao de projeto (tela "Novo projeto")
+static void TestProjectCreation() {
+    std::puts("[Project: validacao e criacao]");
+    std::string reason;
+
+    // Nomes validos
+    CHECK(Project::IsValidProjectName("MeuJogo", reason));
+    CHECK(Project::IsValidProjectName("Meu Jogo 2", reason));
+    CHECK(Project::IsValidProjectName("Jogo-do_Ze.v2", reason));
+    CHECK(Project::IsValidProjectName("A\xC3\xA7\xC3\xA3o", reason));   // "Acao" com cedilha/til em UTF-8
+
+    // Nomes invalidos, cada um com um motivo preenchido
+    const char* bad[] = { "", " Jogo", "Jogo ", ".oculto", "Jogo.", "a/b", "a\\b", "a:b", "a*b", "a?b",
+                          "a\"b", "a<b", "a>b", "a|b", "CON", "nul", "Com1", "lpt9", "aux.txt" };
+    for (const char* name : bad) {
+        reason.clear();
+        CHECK(!Project::IsValidProjectName(name, reason));
+        CHECK(!reason.empty());
+    }
+    CHECK(!Project::IsValidProjectName(std::string(65, 'a'), reason));
+    CHECK(Project::IsValidProjectName(std::string(64, 'a'), reason));
+    CHECK(Project::IsValidProjectName("COM10", reason));   // so COM1..COM9 sao reservados
+    CHECK(Project::IsValidProjectName("Console", reason));
+
+    fs::path base = FreshDir("create");
+
+    // Local vazio / nome invalido
+    CHECK(!Project::ValidateNewProject({}, "Jogo").empty());
+    CHECK(!Project::ValidateNewProject(base, "").empty());
+
+    // Pasta-mae que ainda nao existe: aceita (New() cria)
+    CHECK(Project::ValidateNewProject(base / "ainda/nao/existe", "Jogo").empty());
+
+    // Pasta-mae que e um ARQUIVO
+    Touch(base / "arquivo.txt");
+    CHECK(!Project::ValidateNewProject(base / "arquivo.txt", "Jogo").empty());
+
+    // Destino existente: vazio passa, com conteudo nao
+    fs::create_directories(base / "Vazia");
+    CHECK(Project::ValidateNewProject(base, "Vazia").empty());
+    Touch(base / "Cheia/x.txt");
+    CHECK(!Project::ValidateNewProject(base, "Cheia").empty());
+
+    // Criacao de verdade
+    ProjectCreateOptions options;
+    options.Name = "Aventura";
+    options.ParentDirectory = base / "Projetos";
+    options.EngineVersion = "9.8.7";
+    std::string error;
+    Ref<Project> p = Project::New(options, error);
+    CHECK(p != nullptr);
+    CHECK(error.empty());
+    if (!p) return;
+
+    fs::path root = base / "Projetos" / "Aventura";
+    CHECK(fs::exists(root / "Aventura.prismproj"));
+    CHECK(fs::is_directory(root / "Assets"));
+    CHECK(fs::is_directory(root / "Maps"));
+    CHECK(fs::is_directory(root / "Scripts"));
+    CHECK(fs::exists(root / ".gitignore"));
+    std::string ignore = Slurp(root / ".gitignore");
+    CHECK(ignore.find("Cache/") != std::string::npos);
+    CHECK(ignore.find("Binaries/") != std::string::npos);
+    CHECK(!fs::exists(root / "Aventura.prismproj.tmp"));   // o temporario da gravacao atomica nao sobra
+    CHECK(p->GetConfig().EngineVersion == "9.8.7");
+
+    // Round trip: Load devolve a versao; ReadSummary le sem carregar
+    Ref<Project> loaded = Project::Load(root / "Aventura.prismproj");
+    CHECK(loaded && loaded->GetConfig().EngineVersion == "9.8.7");
+    CHECK(loaded && loaded->GetConfig().Name == "Aventura");
+
+    ProjectSummary summary;
+    CHECK(Project::ReadSummary(root / "Aventura.prismproj", summary));
+    CHECK(summary.Name == "Aventura" && summary.EngineVersion == "9.8.7");
+    CHECK(!Project::ReadSummary(root / "nao-existe.prismproj", summary));
+
+    // Arquivo com fim de linha CRLF (editado no Windows) continua legivel
+    Touch(root / "Crlf.prismproj", "Name=Crlf\r\nEngineVersion=1.2.3\r\n");
+    CHECK(Project::ReadSummary(root / "Crlf.prismproj", summary));
+    CHECK(summary.Name == "Crlf" && summary.EngineVersion == "1.2.3");
+
+    // Projeto antigo (sem a chave): abre com EngineVersion vazio
+    Touch(root / "Antigo.prismproj", "Name=Antigo\nAssetDirectory=Assets\n");
+    Ref<Project> old = Project::Load(root / "Antigo.prismproj");
+    CHECK(old && old->GetConfig().EngineVersion.empty());
+
+    // Segunda criacao no mesmo destino e recusada (agora a pasta nao esta vazia)
+    Ref<Project> again = Project::New(options, error);
+    CHECK(again == nullptr);
+    CHECK(!error.empty());
+}
+
 int main() {
     TestAssetID();
     TestAssetType();
@@ -444,6 +536,7 @@ int main() {
     TestRegistryDuplicateAndCorrupt();
     TestRegistryTypeAndEdge();
     TestProjectIntegration();
+    TestProjectCreation();
 
     std::printf("\n%d verificacoes, %d falha(s).\n", g_Checks, g_Failures);
     fs::remove_all(fs::temp_directory_path() / "prism_asset_tests");

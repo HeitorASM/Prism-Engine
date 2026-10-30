@@ -4,13 +4,139 @@
 #include "../Scene/Components.h"
 #include "../Physics/PhysicsEngine.h"
 #include "../Core/Input.h"
+#include "../Audio/AudioEngine.h"
+#include "../Animation/AnimationSystem.h"
+#include "../Project/Project.h"
+#include "../Scene/PrefabSerializer.h"
+#include "NativeScripting.h"
+#include "../Particles/ParticleSystem.h"
+#include "../UI/UISystem.h"
+#include "../UI/UIDocument.h"
 #include "../Core/Log.h"
+#include "../Core/DiskCache.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <system_error>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <vector>
 
 namespace Prism {
+
+    // --- Cache de bytecode ---------------------------------------------------
+    // Compilar o texto Lua e barato para um script, mas a cada abertura de projeto/Play/hot reload
+    // todos sao recompilados. O bytecode (com informacao de depuracao: mensagens de erro continuam com
+    // arquivo e linha) fica em <Projeto>/Cache/LuaBytecode, chaveado pelo texto, pelo nome do chunk
+    // (o bytecode embute o caminho) e pela versao do Lua. Qualquer problema (sem projeto, disco, versao)
+    // cai no caminho normal pelo texto.
+    static std::filesystem::path LuaBytecodeDirectory() {
+        auto project = Project::GetActive();
+        if (!project)
+            return {};
+        return project->GetProjectDirectory() / "Cache" / "LuaBytecode";
+    }
+
+    // BEGIN LuaChunkCache (extraido por tests/LuaBytecodeCacheTests.cpp)
+    static int LuaDumpWriter(lua_State*, const void* data, size_t size, void* userData) {
+        auto* out = static_cast<std::vector<uint8_t>*>(userData);
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        out->insert(out->end(), bytes, bytes + size);
+        return 0;
+    }
+
+    static sol::load_result LoadLuaChunkCached(sol::state& lua, const std::string& source, const std::string& chunkName,
+                                               const std::filesystem::path& directory) {
+        if (directory.empty())
+            return lua.load(source, chunkName);
+
+        static bool s_Pruned = false;
+        if (!s_Pruned) {
+            s_Pruned = true;
+            DiskCache::Prune(directory, 64ull * 1024 * 1024);
+        }
+
+        const std::string key = DiskCache::KeyName({
+            DiskCache::Hash64(source), DiskCache::Hash64(chunkName),
+            DiskCache::Hash64(std::string(LUA_VERSION) + "/" + std::to_string(sizeof(lua_Integer)) + std::to_string(sizeof(lua_Number))),
+            1 /* formato do cache de bytecode */ });
+
+        std::vector<uint8_t> bytecode;
+        if (DiskCache::Read(directory, key, bytecode)) {
+            sol::load_result cached = lua.load_buffer(reinterpret_cast<const char*>(bytecode.data()), bytecode.size(), chunkName, sol::load_mode::binary);
+            if (cached.valid())
+                return cached;
+            // bytecode que o Lua nao aceita (cache de outra build): refaz pelo texto e sobrescreve abaixo
+        }
+
+        sol::load_result compiled = lua.load(source, chunkName);
+        if (compiled.valid()) {
+            sol::function function = compiled;
+            lua_State* state = lua.lua_state();
+            function.push();
+            std::vector<uint8_t> dumped;
+            const int dumpResult = lua_dump(state, LuaDumpWriter, &dumped, 0);
+            lua_pop(state, 1);
+            if (dumpResult == 0 && !dumped.empty())
+                DiskCache::Write(directory, key, dumped);
+        }
+        return compiled;
+    }
+    // END LuaChunkCache
+
+
+    // Referencias Lua para documentos .prismui: guardam (cena, entidade[, id]) e resolvem a cada
+    // acesso, entao continuam validas se o arquivo for recarregado (hot reload).
+    struct UINodeRef {
+        Scene* Scene_ = nullptr;
+        entt::entity Handle = entt::null;
+        std::string Id;
+        Ui::Node* Resolve() const {
+            if (!Scene_ || !Scene_->GetRegistry().valid(Handle))
+                return nullptr;
+            return UISystem::FindDocumentNode(Entity(Handle, Scene_), Id);
+        }
+    };
+    struct UIDocRef {
+        Scene* Scene_ = nullptr;
+        entt::entity Handle = entt::null;
+        UIDocumentComponent* Get() const {
+            if (!Scene_ || !Scene_->GetRegistry().valid(Handle))
+                return nullptr;
+            return Scene_->GetRegistry().try_get<UIDocumentComponent>(Handle);
+        }
+    };
+
+
+    namespace {
+        // Poe "em jogo" uma entidade criada durante o Play (Scene.Instantiate):
+        // o que Scene::OnScriptsStart faz para as entidades originais -
+        // corpo fisico, audio PlayOnStart e script (OnCreate) - para ela e
+        // toda a sua subarvore.
+        void ActivateRuntimeEntity(Scene& scene, Entity entity) {
+            PhysicsEngine::CreateBodyForEntity(scene, entity);
+            PhysicsEngine::CreateCharacterForEntity(scene, entity);
+            PhysicsEngine::CreateJointForEntity(scene, entity);
+            if (entity.HasComponent<AudioSourceComponent>() && entity.GetComponent<AudioSourceComponent>().PlayOnStart)
+                AudioEngine::PlayEntity(entity);
+            if (entity.HasComponent<NativeScriptComponent>())
+                NativeScripting::LoadScript(entity);
+            if (entity.HasComponent<ScriptComponent>()) {
+                const std::string& scriptPath = entity.GetComponent<ScriptComponent>().ScriptPath;
+                auto project = Project::GetActive();
+                if (!scriptPath.empty() && project)
+                    ScriptEngine::LoadScript(entity, project->GetScriptDirectory() / scriptPath);
+            }
+            // Copia dos filhos antes de recursar: o OnCreate de um script pode mexer na hierarquia.
+            std::vector<Entity> children;
+            for (size_t i = 0; i < entity.GetChildCount(); i++)
+                children.push_back(entity.GetChildAt(i));
+            for (Entity& child : children)
+                if (child.IsValid())
+                    ActivateRuntimeEntity(scene, child);
+        }
+    }
 
     void ScriptEngine::Init() {
         // Uma unica VM Lua para o processo inteiro (nao uma por entidade/
@@ -49,11 +175,199 @@ namespace Prism {
         // escrevem campo por campo (script.Translation.x = 5) em vez de
         // reatribuir o vec3 inteiro toda vez, o que bate com o jeito que
         // sol2 idiomaticamente expoe structs POD.
+        // Operadores (+, -, *, /, unario -, ==), tostring e metodos
+        // (Length, Normalized, Dot, Cross, Distance): permitem escrever
+        //   local dir = (alvo:GetWorldPosition() - entity:GetWorldPosition()):Normalized()
+        //   entity:SetVelocity(dir.x * 5, 0, dir.z * 5)
         lua.new_usertype<glm::vec3>("Vec3",
             sol::constructors<glm::vec3(), glm::vec3(float, float, float)>(),
             "x", &glm::vec3::x,
             "y", &glm::vec3::y,
-            "z", &glm::vec3::z
+            "z", &glm::vec3::z,
+            "Length", [](const glm::vec3& v) { return glm::length(v); },
+            "Normalized", [](const glm::vec3& v) {
+                float length = glm::length(v);
+                return length > 1e-8f ? v / length : glm::vec3(0.0f); // vetor nulo nao vira NaN
+            },
+            "Dot", [](const glm::vec3& a, const glm::vec3& b) { return glm::dot(a, b); },
+            "Cross", [](const glm::vec3& a, const glm::vec3& b) { return glm::cross(a, b); },
+            "Distance", [](const glm::vec3& a, const glm::vec3& b) { return glm::distance(a, b); },
+            sol::meta_function::addition, [](const glm::vec3& a, const glm::vec3& b) { return a + b; },
+            sol::meta_function::subtraction, [](const glm::vec3& a, const glm::vec3& b) { return a - b; },
+            sol::meta_function::multiplication, sol::overload(
+                [](const glm::vec3& v, float s) { return v * s; },
+                [](float s, const glm::vec3& v) { return s * v; }),
+            sol::meta_function::division, [](const glm::vec3& v, float s) { return s != 0.0f ? v / s : glm::vec3(0.0f); },
+            sol::meta_function::unary_minus, [](const glm::vec3& v) { return -v; },
+            sol::meta_function::equal_to, [](const glm::vec3& a, const glm::vec3& b) { return a == b; },
+            sol::meta_function::to_string, [](const glm::vec3& v) {
+                char buffer[96];
+                std::snprintf(buffer, sizeof(buffer), "Vec3(%.3f, %.3f, %.3f)", v.x, v.y, v.z);
+                return std::string(buffer);
+            }
+        );
+
+        // --- Components acessiveis por script ---------------------------------
+        // Obtidos por entity:GetMeshRenderer()/GetMaterial()/GetLight()/
+        // GetCamera()/GetAudioSource() (nil se a entidade nao tiver o
+        // component). Editam o component direto - valem no proximo frame.
+        // (RigidBody de proposito fora: o corpo Jolt so le esses campos ao
+        // ser criado, mudar em runtime nao faria nada.)
+        lua.new_usertype<MeshRendererComponent>("MeshRenderer",
+            "Color", &MeshRendererComponent::Color,
+            // Camadas de visibilidade (mascara de bits; bit 0 = camada 1). Ex: mesh.Layers = 2 (so a camada 2).
+            "Layers", &MeshRendererComponent::Layers,
+            "SetLayer", [](MeshRendererComponent& c, int index, bool on) {
+                const uint32_t bit = Culling::LayerBit(index - 1); // index de 1 a 32, como no editor
+                c.Layers = on ? (c.Layers | bit) : (c.Layers & ~bit);
+            },
+            "IsInLayer", [](MeshRendererComponent& c, int index) -> bool { return (c.Layers & Culling::LayerBit(index - 1)) != 0u; }
+        );
+        lua.new_usertype<MaterialComponent>("Material",
+            "AlbedoTint", &MaterialComponent::AlbedoTint,
+            "RoughnessFactor", &MaterialComponent::RoughnessFactor,
+            "MetallicFactor", &MaterialComponent::MetallicFactor,
+            "AlbedoPath", &MaterialComponent::AlbedoPath,
+            "NormalPath", &MaterialComponent::NormalPath,
+            "RoughnessMetallicPath", &MaterialComponent::RoughnessMetallicPath,
+            // Superficie: BlendMode 0 = opaco, 1 = recorte (AlphaCutoff), 2 = translucido (Opacity).
+            "BlendMode", sol::property(
+                [](MaterialComponent& c) { return (int)c.BlendMode; },
+                [](MaterialComponent& c, int mode) { c.BlendMode = (MaterialBlendMode)mode; SanitizeMaterialSurface(c); }),
+            "Opacity", sol::property(
+                [](MaterialComponent& c) { return c.Opacity; },
+                [](MaterialComponent& c, float v) { c.Opacity = v; SanitizeMaterialSurface(c); }),
+            "AlphaCutoff", &MaterialComponent::AlphaCutoff,
+            "UVTiling", &MaterialComponent::UVTiling,
+            "UVOffset", &MaterialComponent::UVOffset,
+            "EmissiveColor", &MaterialComponent::EmissiveColor,
+            "EmissiveIntensity", &MaterialComponent::EmissiveIntensity,
+            "DoubleSided", &MaterialComponent::DoubleSided,
+            "ShaderPath", &MaterialComponent::ShaderPath
+        );
+        lua.new_usertype<LightComponent>("Light",
+            "Color", &LightComponent::Color,
+            "Intensity", &LightComponent::Intensity,
+            "Range", &LightComponent::Range,
+            "SpotAngle", &LightComponent::SpotAngle,
+            "InnerSpotAngle", &LightComponent::InnerSpotAngle
+        );
+        lua.new_usertype<CameraComponent>("Camera",
+            "FOV", &CameraComponent::FOV,
+            // Camadas que a camera enxerga (mascara de bits, padrao = todas).
+            "CullMask", &CameraComponent::CullMask,
+            "SetCullLayer", [](CameraComponent& c, int index, bool on) {
+                const uint32_t bit = Culling::LayerBit(index - 1);
+                c.CullMask = on ? (c.CullMask | bit) : (c.CullMask & ~bit);
+            },
+            "OrthoSize", &CameraComponent::OrthoSize,
+            "NearClip", &CameraComponent::NearClip,
+            "FarClip", &CameraComponent::FarClip,
+            "Primary", &CameraComponent::Primary,
+            // Opcoes de render da camera (v20). ClearMode: 0 = skybox, 1 = cor chapada.
+            "ClearMode", sol::property(
+                [](CameraComponent& c) { return (int)c.ClearMode; },
+                [](CameraComponent& c, int v) { c.ClearMode = (v == 1) ? CameraClearMode::SolidColor : CameraClearMode::Skybox; }),
+            "ClearColor", &CameraComponent::ClearColor,
+            "Exposure", &CameraComponent::Exposure,
+            "SSAO", &CameraComponent::SSAO,
+            // Pos-processamento (o Renderer limita os valores).
+            "Bloom", &CameraComponent::Bloom,
+            "BloomThreshold", &CameraComponent::BloomThreshold,
+            "BloomIntensity", &CameraComponent::BloomIntensity,
+            "FXAA", &CameraComponent::FXAA,
+            "Saturation", &CameraComponent::Saturation,
+            "Contrast", &CameraComponent::Contrast
+        );
+        // Ambiente da cena (ciclo dia/noite etc). Sky: 0 = cor, 1 = gradiente, 2 = panorama.
+        // O Renderer limita os valores, entao um script nao deixa a cena preta/NaN.
+        lua.new_usertype<EnvironmentComponent>("Environment",
+            "Ambient", &EnvironmentComponent::Ambient,
+            "Zenith", &EnvironmentComponent::Zenith,
+            "Horizon", &EnvironmentComponent::Horizon,
+            "Ground", &EnvironmentComponent::Ground,
+            "Sky", sol::property(
+                [](EnvironmentComponent& c) { return (int)c.Sky; },
+                [](EnvironmentComponent& c, int v) { c.Sky = (SkyMode)std::min(std::max(v, 0), 2); }),
+            "SkyColor", &EnvironmentComponent::SkyColor,
+            "SkyRotation", &EnvironmentComponent::SkyRotation,
+            "SkyIntensity", &EnvironmentComponent::SkyIntensity
+        );
+        lua.new_usertype<ParticleEmitterComponent>("ParticleEmitter",
+            "Enabled", &ParticleEmitterComponent::Enabled,
+            "Loop", &ParticleEmitterComponent::Loop,
+            "Additive", &ParticleEmitterComponent::Additive,
+            "Duration", &ParticleEmitterComponent::Duration,
+            "EmissionRate", &ParticleEmitterComponent::EmissionRate,
+            "BurstCount", &ParticleEmitterComponent::BurstCount,
+            "LifetimeMin", &ParticleEmitterComponent::LifetimeMin,
+            "LifetimeMax", &ParticleEmitterComponent::LifetimeMax,
+            "SpeedMin", &ParticleEmitterComponent::SpeedMin,
+            "SpeedMax", &ParticleEmitterComponent::SpeedMax,
+            "SpreadAngle", &ParticleEmitterComponent::SpreadAngle,
+            "GravityScale", &ParticleEmitterComponent::GravityScale,
+            "SizeStart", &ParticleEmitterComponent::SizeStart,
+            "SizeEnd", &ParticleEmitterComponent::SizeEnd,
+            // vec4 nao e um usertype: cores por funcao (r, g, b, a de 0 a 1).
+            "SetColorStart", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorStart = { r, g, b, a }; },
+            "SetColorEnd", [](ParticleEmitterComponent& c, float r, float g, float b, float a) { c.ColorEnd = { r, g, b, a }; }
+        );
+        // Documento de UI .prismui (entity:GetUIDocument()): doc:Find("id") devolve um elemento
+        // (ou nil). Elemento = referencia por id, segura mesmo se o arquivo for recarregado.
+        lua.new_usertype<UINodeRef>("UINode",
+            "Text", sol::property(
+                [](UINodeRef& r) -> std::string { Ui::Node* n = r.Resolve(); return n ? n->Text : std::string(); },
+                [](UINodeRef& r, const std::string& v) { if (Ui::Node* n = r.Resolve()) n->Text = v; }),
+            "Visible", sol::property(
+                [](UINodeRef& r) -> bool { Ui::Node* n = r.Resolve(); return n && n->Visible; },
+                [](UINodeRef& r, bool v) { if (Ui::Node* n = r.Resolve()) n->Visible = v; }),
+            "Interactable", sol::property(
+                [](UINodeRef& r) -> bool { Ui::Node* n = r.Resolve(); return n && n->Interactable; },
+                [](UINodeRef& r, bool v) { if (Ui::Node* n = r.Resolve()) n->Interactable = v; }),
+            "FontSize", sol::property(
+                [](UINodeRef& r) -> float { Ui::Node* n = r.Resolve(); return n ? n->FontSize : 0.0f; },
+                [](UINodeRef& r, float v) { if (Ui::Node* n = r.Resolve()) n->FontSize = v; }),
+            "Id", sol::property([](UINodeRef& r) -> std::string { return r.Id; }),
+            "Exists", [](UINodeRef& r) -> bool { return r.Resolve() != nullptr; },
+            "SetColor", [](UINodeRef& r, float R, float G, float B, float A) { if (Ui::Node* n = r.Resolve()) n->Tint = Ui::Color(R, G, B, A); },
+            "SetTextColor", [](UINodeRef& r, float R, float G, float B, float A) { if (Ui::Node* n = r.Resolve()) n->TextColor = Ui::Color(R, G, B, A); },
+            "SetTexture", [](UINodeRef& r, const std::string& path) { if (Ui::Node* n = r.Resolve()) n->Src = path; }
+        );
+        lua.new_usertype<UIDocRef>("UIDocument",
+            "Visible", sol::property(
+                [](UIDocRef& r) -> bool { UIDocumentComponent* c = r.Get(); return c && c->Visible; },
+                [](UIDocRef& r, bool v) { if (UIDocumentComponent* c = r.Get()) c->Visible = v; }),
+            "Layer", sol::property(
+                [](UIDocRef& r) -> int { UIDocumentComponent* c = r.Get(); return c ? c->Layer : 0; },
+                [](UIDocRef& r, int v) { if (UIDocumentComponent* c = r.Get()) c->Layer = v; }),
+            "Path", sol::property(
+                [](UIDocRef& r) -> std::string { UIDocumentComponent* c = r.Get(); return c ? c->Path : std::string(); },
+                [](UIDocRef& r, const std::string& v) { if (UIDocumentComponent* c = r.Get()) c->Path = v; }),
+            // doc:Find("id") -> elemento, ou nil se o documento/id nao existe.
+            "Find", [](UIDocRef& r, const std::string& id) -> std::optional<UINodeRef> {
+                UINodeRef ref{ r.Scene_, r.Handle, id };
+                if (!ref.Resolve())
+                    return std::nullopt;
+                return ref;
+            }
+        );
+        lua.new_usertype<AudioSourceComponent>("AudioSource",
+            "Volume", &AudioSourceComponent::Volume,
+            "Pitch", &AudioSourceComponent::Pitch,
+            "Loop", &AudioSourceComponent::Loop,
+            "Spatial", &AudioSourceComponent::Spatial,
+            "MinDistance", &AudioSourceComponent::MinDistance,
+            "MaxDistance", &AudioSourceComponent::MaxDistance,
+            // Canal de volume como texto: "sfx", "music", "ui" ou "ambient".
+            "Bus", sol::property(
+                [](const AudioSourceComponent& c) -> std::string { return AudioBusName(c.Bus); },
+                [](AudioSourceComponent& c, const std::string& name) {
+                    AudioBus bus;
+                    if (AudioBusFromName(name, bus))
+                        c.Bus = bus;
+                    else
+                        Log::AppLog(LogLevel::Warn, "[Lua] Bus de audio desconhecido: '", name, "' (use sfx, music, ui ou ambient).");
+                })
         );
 
         // --- TransformComponent -----------------------------------------
@@ -161,6 +475,20 @@ namespace Prism {
             "SetVelocity", [](Entity& e, float x, float y, float z) {
                 PhysicsEngine::SetLinearVelocity(*e.GetScene(), e, glm::vec3(x, y, z));
             },
+            // --- Personagem (CharacterController) ----------------------
+            // entity:CharacterMove(x, y, z): velocidade horizontal desejada (m/s).
+            "CharacterMove", [](Entity& e, float x, float y, float z) {
+                PhysicsEngine::CharacterMove(*e.GetScene(), e, glm::vec3(x, y, z));
+            },
+            "CharacterJump", [](Entity& e, float speed) {
+                PhysicsEngine::CharacterJump(*e.GetScene(), e, speed);
+            },
+            "IsGrounded", [](Entity& e) -> bool {
+                return PhysicsEngine::CharacterIsGrounded(*e.GetScene(), e);
+            },
+            "GetCharacterVelocity", [](Entity& e) -> glm::vec3 {
+                return PhysicsEngine::CharacterGetVelocity(*e.GetScene(), e);
+            },
             // --- Hierarquia (pai/filhos) -------------------------------
             // Ver comentario grande em Entity::GetParent/GetChild
             // (Entity.h) - motivado por example_player_input_raycast.lua
@@ -177,7 +505,85 @@ namespace Prism {
             "GetChildCount", [](Entity& e) -> size_t { return e.GetChildCount(); },
             "GetChildAt", [](Entity& e, size_t index) -> Entity { return e.GetChildAt(index); },
             "GetChild", [](Entity& e, const std::string& name) -> Entity { return e.GetChild(name); },
+            // --- Componentes (nil se a entidade nao tiver) -------------------
+            "GetMeshRenderer", [](Entity& e) -> MeshRendererComponent* { return e.HasComponent<MeshRendererComponent>() ? &e.GetComponent<MeshRendererComponent>() : nullptr; },
+            "GetMaterial", [](Entity& e) -> MaterialComponent* { return e.HasComponent<MaterialComponent>() ? &e.GetComponent<MaterialComponent>() : nullptr; },
+            "GetLight", [](Entity& e) -> LightComponent* { return e.HasComponent<LightComponent>() ? &e.GetComponent<LightComponent>() : nullptr; },
+            "GetCamera", [](Entity& e) -> CameraComponent* { return e.HasComponent<CameraComponent>() ? &e.GetComponent<CameraComponent>() : nullptr; },
+            "GetEnvironment", [](Entity& e) -> EnvironmentComponent* { return e.HasComponent<EnvironmentComponent>() ? &e.GetComponent<EnvironmentComponent>() : nullptr; },
+            "GetAudioSource", [](Entity& e) -> AudioSourceComponent* { return e.HasComponent<AudioSourceComponent>() ? &e.GetComponent<AudioSourceComponent>() : nullptr; },
+            "GetUIDocument", [](Entity& e) -> std::optional<UIDocRef> {
+                if (!e.HasComponent<UIDocumentComponent>())
+                    return std::nullopt;
+                return UIDocRef{ e.GetScene(), e.GetHandle() };
+            },
+            "GetParticleEmitter", [](Entity& e) -> ParticleEmitterComponent* { return e.HasComponent<ParticleEmitterComponent>() ? &e.GetComponent<ParticleEmitterComponent>() : nullptr; },
+            // Particulas: PlayParticles reinicia (e solta o burst); StopParticles
+            // para de emitir (as vivas terminam); ClearParticles remove tudo.
+            "PlayParticles", [](Entity& e) { ParticleSystem::Play(e); },
+            "StopParticles", [](Entity& e) { ParticleSystem::Stop(e); },
+            "ClearParticles", [](Entity& e) { ParticleSystem::Clear(e); },
+            "IsParticlesPlaying", [](Entity& e) { return ParticleSystem::IsPlaying(e); },
+            "GetParticleCount", [](Entity& e) { return ParticleSystem::GetAliveCount(e); },
+            // --- Edicao basica -----------------------------------------------
+            "SetName", [](Entity& e, const std::string& name) { e.GetComponent<TagComponent>().Tag = name; },
+            "SetRotation", [](Entity& e, float x, float y, float z) { e.GetComponent<TransformComponent>().Rotation = { x, y, z }; }, // graus
+            "SetScale", [](Entity& e, float x, float y, float z) { e.GetComponent<TransformComponent>().Scale = { x, y, z }; },
+            // Pai invalido (ex: o resultado de Scene.Find que nao achou) vira raiz.
+            "SetParent", [](Entity& e, Entity parent) { e.GetScene()->SetParent(e, parent); },
+            // Destruicao adiada para o fim do frame (ver ScriptEngine::QueueDestroy).
+            "Destroy", [](Entity& e) { QueueDestroy(e); },
+            // O "ambiente" do script desta entidade (suas funcoes/variaveis
+            // globais), para scripts conversarem: Scene.Find("Inimigo"):GetScript().TomarDano(10).
+            // nil se a entidade nao tem script rodando.
+            "GetScript", [](Entity& e) -> sol::object {
+                auto found = s_LoadedScripts.find(ScriptKey{ e.GetScene(), (uint32_t)e.GetHandle() });
+                if (found == s_LoadedScripts.end())
+                    return sol::make_object(*s_Lua, sol::lua_nil);
+                return sol::make_object(*s_Lua, found->second.Instance);
+            },
             "IsValid", [](Entity& e) -> bool { return e.IsValid(); },
+            // --- Audio (AudioSourceComponent) ---------------------------------
+            // So funcionam em entidades com Audio Source; sem ele, silenciosas.
+            // Volume/pitch escrevem no component e valem no mesmo frame
+            // (AudioEngine::OnSceneUpdate relê todo frame).
+            "PlaySound", [](Entity& e) { AudioEngine::PlayEntity(e); },
+            "StopSound", [](Entity& e) { AudioEngine::StopEntity(e); },
+            "IsSoundPlaying", [](Entity& e) -> bool { return AudioEngine::IsEntityPlaying(e); },
+            // --- Animacao (AnimatorComponent) ---------------------------------
+            // entity:PlayAnimation("Walk")            - troca de clipe (nao reinicia se ja toca)
+            // entity:PlayAnimation("Walk", 0.2)       - com crossfade de 0.2 s
+            // entity:PlayAnimation("Attack", 0.1, false) - 3o arg: loop (omitido = o do Animator)
+            // Devolve false se a entidade nao tem Animator ou o clipe nao existe.
+            "PlayAnimation", [](Entity& e, std::string clip, sol::optional<float> fade, sol::optional<bool> loop) -> bool {
+                return AnimationSystem::Play(e, clip, fade.value_or(0.0f), loop ? (*loop ? 1 : 0) : -1);
+            },
+            "StopAnimation", [](Entity& e) { AnimationSystem::Stop(e); },
+            "PauseAnimation", [](Entity& e, sol::optional<bool> paused) { AnimationSystem::SetPaused(e, paused.value_or(true)); },
+            "SetAnimationSpeed", [](Entity& e, float speed) { AnimationSystem::SetSpeed(e, speed); },
+            "IsAnimationPlaying", [](Entity& e) -> bool { return AnimationSystem::IsPlaying(e); },
+            // Maquina de estados do Animator (grafo montado no editor):
+            // entity:SetAnimFloat("speed", 3.5)   entity:SetAnimBool("grounded", true)
+            // entity:SetAnimTrigger("jump")       entity:SetAnimState("Idle", 0.2)  (forca um estado)
+            // entity:GetAnimState() -> nome do estado atual ("" = grafo inativo)
+            // Eventos: defina a funcao global OnAnimationEvent(name) no script da entidade.
+            "SetAnimFloat", [](Entity& e, std::string name, float value) -> bool { return AnimationSystem::SetFloat(e, name, value); },
+            "SetAnimBool", [](Entity& e, std::string name, bool value) -> bool { return AnimationSystem::SetBool(e, name, value); },
+            "SetAnimTrigger", [](Entity& e, std::string name) -> bool { return AnimationSystem::SetTrigger(e, name); },
+            "GetAnimFloat", [](Entity& e, std::string name) -> float { return AnimationSystem::GetFloat(e, name); },
+            "SetAnimState", [](Entity& e, std::string state, sol::optional<float> fade) -> bool { return AnimationSystem::SetState(e, state, fade.value_or(0.0f)); },
+            "GetAnimState", [](Entity& e) -> std::string { return AnimationSystem::GetState(e); },
+            "GetAnimation", [](Entity& e) -> std::string { return AnimationSystem::GetCurrentClip(e); },
+            "GetAnimationTime", [](Entity& e) -> float { return AnimationSystem::GetTime(e); },
+            "GetAnimationDuration", [](Entity& e) -> float { return AnimationSystem::GetDuration(e); },
+            "SetSoundVolume", [](Entity& e, float volume) {
+                if (e.HasComponent<AudioSourceComponent>())
+                    e.GetComponent<AudioSourceComponent>().Volume = volume;
+            },
+            "SetSoundPitch", [](Entity& e, float pitch) {
+                if (e.HasComponent<AudioSourceComponent>())
+                    e.GetComponent<AudioSourceComponent>().Pitch = pitch;
+            },
             // Compara pelo handle+Scene (ver Entity::operator==,
             // Entity.h) - necessario para um script poder checar
             // "hit:GetEntity() == entity" (ver RaycastHit:GetEntity()
@@ -210,7 +616,7 @@ namespace Prism {
         // PhysicsEngine::Raycast no C++) - sol2 resolve isso via
         // sol::optional aqui.
         sol::table physicsTable = lua.create_table();
-        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance, sol::optional<Entity> ignoreEntity) -> sol::table {
+        physicsTable["Raycast"] = [](sol::this_environment thisEnv, glm::vec3 origin, glm::vec3 direction, sol::optional<float> maxDistance, sol::optional<Entity> ignoreEntity, sol::optional<uint32_t> layerMask) -> sol::table {
             // sol::this_environment injeta o sol::environment de QUEM
             // CHAMOU esta funcao (o environment isolado do script, ver
             // LoadScript - "entity" e uma variavel local a ELE, nunca uma
@@ -244,7 +650,7 @@ namespace Prism {
             if (ignoreEntity.has_value() && ignoreEntity->IsValid())
                 ignoreEntities.push_back(ignoreEntity->GetHandle());
 
-            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f), ignoreEntities);
+            RaycastHit hit = PhysicsEngine::Raycast(*scene, origin, direction, maxDistance.value_or(1000.0f), ignoreEntities, layerMask.value_or(Physics::kAllLayers));
             result["Hit"] = hit.Hit;
             result["Point"] = hit.Point;
             result["Normal"] = hit.Normal;
@@ -277,6 +683,169 @@ namespace Prism {
         lua["log_error"] = [](const std::string& message) {
             Log::AppLog(LogLevel::Error, "[Lua] ", message);
         };
+
+        // --- Audio -----------------------------------------------------
+        // Tabela global `Audio`: sons soltos (efeitos) e volume global.
+        // 'path' e RELATIVO a pasta do projeto, como os caminhos de textura
+        // (ex: "Assets/Sounds/tiro.wav"). Formatos: .wav, .mp3, .ogg, .flac.
+        //   Audio.Play("Assets/Sounds/tiro.wav")                  -- 2D, volume 1
+        //   Audio.Play("Assets/Sounds/tiro.wav", 0.5, 1.2)        -- volume, pitch
+        //   Audio.Play3D("Assets/Sounds/boom.wav", x, y, z, 1.0)  -- na posicao do mundo
+        //   Audio.Play("Assets/Music/tema.ogg", 0.8, 1.0, "music") -- no canal "music"
+        //   Audio.SetBusVolume("music", 0.5)   Audio.SetBusMuted("sfx", true)
+        //   Audio.SetMasterVolume(0.8)
+        sol::table audioTable = lua.create_table();
+        auto resolveProjectPath = [](const std::string& relative) -> std::filesystem::path {
+            auto project = Project::GetActive();
+            if (!project)
+                return {};
+            return project->GetProjectDirectory() / relative;
+        };
+        // Bus opcional (ultimo argumento): "sfx" (padrao), "music", "ui", "ambient".
+        auto parseBus = [](const sol::optional<std::string>& name) -> AudioBus {
+            AudioBus bus = AudioBus::SFX;
+            if (name && !AudioBusFromName(*name, bus))
+                Log::AppLog(LogLevel::Warn, "[Lua] Bus de audio desconhecido: '", *name, "' (use sfx, music, ui ou ambient).");
+            return bus;
+        };
+        audioTable["Play"] = [resolveProjectPath, parseBus](const std::string& path, sol::optional<float> volume, sol::optional<float> pitch, sol::optional<std::string> bus) {
+            AudioPlayOptions options;
+            options.Volume = volume.value_or(1.0f);
+            options.Pitch = pitch.value_or(1.0f);
+            options.Bus = parseBus(bus);
+            AudioEngine::PlayOneShot(resolveProjectPath(path), options);
+        };
+        audioTable["Play3D"] = [resolveProjectPath, parseBus](const std::string& path, float x, float y, float z, sol::optional<float> volume, sol::optional<float> pitch, sol::optional<std::string> bus) {
+            AudioPlayOptions options;
+            options.Volume = volume.value_or(1.0f);
+            options.Pitch = pitch.value_or(1.0f);
+            options.Spatial = true;
+            options.Position = { x, y, z };
+            options.Bus = parseBus(bus);
+            AudioEngine::PlayOneShot(resolveProjectPath(path), options);
+        };
+        // Carrega antes um efeito curto (sem engasgo no primeiro disparo).
+        audioTable["Preload"] = [resolveProjectPath](const std::string& path) { AudioEngine::Preload(resolveProjectPath(path)); };
+        audioTable["SetBusVolume"] = [parseBus](const std::string& bus, float volume) { AudioEngine::SetBusVolume(parseBus(bus), volume); };
+        audioTable["GetBusVolume"] = [parseBus](const std::string& bus) { return AudioEngine::GetBusVolume(parseBus(bus)); };
+        audioTable["SetBusMuted"] = [parseBus](const std::string& bus, bool muted) { AudioEngine::SetBusMuted(parseBus(bus), muted); };
+        audioTable["IsBusMuted"] = [parseBus](const std::string& bus) { return AudioEngine::IsBusMuted(parseBus(bus)); };
+        audioTable["SetMasterVolume"] = [](float volume) { AudioEngine::SetMasterVolume(volume); };
+        audioTable["GetMasterVolume"] = []() { return AudioEngine::GetMasterVolume(); };
+        lua["Audio"] = audioTable;
+
+        // --- print -----------------------------------------------------
+        // print() do Lua escreve na saida padrao do processo (invisivel no
+        // editor) - redireciona para o Console, como log().
+        lua["print"] = [](sol::this_state state, sol::variadic_args args) {
+            sol::state_view view(state);
+            sol::function toString = view["tostring"];
+            std::string message;
+            for (auto argument : args) {
+                if (!message.empty())
+                    message += "\t";
+                message += toString(argument).get<std::string>();
+            }
+            Log::AppLog(LogLevel::Info, "[Lua] ", message);
+        };
+
+        // --- Time ------------------------------------------------------
+        //   Time.DeltaTime()   segundos do ultimo frame (o mesmo de OnUpdate(dt))
+        //   Time.Elapsed()     segundos desde o inicio do Play
+        //   Time.FrameCount()  frames desde o inicio do Play
+        sol::table timeTable = lua.create_table();
+        timeTable["DeltaTime"] = []() { return s_DeltaTime; };
+        timeTable["Elapsed"] = []() { return s_Elapsed; };
+        timeTable["FrameCount"] = []() { return s_FrameCount; };
+        timeTable["FixedDeltaTime"] = []() { return PhysicsEngine::GetFixedTimeStep(); };
+        lua["Time"] = timeTable;
+
+        // --- Mathf -----------------------------------------------------
+        sol::table mathfTable = lua.create_table();
+        mathfTable["Clamp"] = [](float value, float low, float high) { return std::clamp(value, low, high); };
+        mathfTable["Lerp"] = [](float a, float b, float t) { return a + (b - a) * t; };
+        mathfTable["Sign"] = [](float value) { return value < 0.0f ? -1.0f : 1.0f; };
+        lua["Mathf"] = mathfTable;
+
+        // --- Scene -----------------------------------------------------
+        // Consultas e criacao na cena do script que chamou (nunca de outra).
+        //   Scene.Find("Jogador")                      -> Entity (checar :IsValid())
+        //   Scene.FindAll("Moeda")                     -> tabela de Entity
+        //   Scene.Create("Vazio")                      -> Entity so com Transform
+        //   Scene.CreateMesh("Caixa", "Cube", x, y, z) -> Entity visivel (Cube/Sphere/Capsule/Cylinder/Plane)
+        //   Scene.Instantiate("Assets/Prefabs/Bala.prismprefab", Vec3.new(0, 1, 0))
+        //   Scene.Destroy(entidade)                    -> destruida no fim do frame
+        auto callerScene = [](sol::this_environment thisEnv) -> Scene* {
+            if (!thisEnv.env)
+                return nullptr;
+            sol::environment& env = *thisEnv.env;
+            Entity caller = env["entity"];
+            return caller ? caller.GetScene() : nullptr;
+        };
+        sol::table sceneTable = lua.create_table();
+        sceneTable["Find"] = [callerScene](sol::this_environment thisEnv, const std::string& name) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            auto view = scene->GetRegistry().view<TagComponent>();
+            for (auto handle : view) {
+                if (view.get<TagComponent>(handle).Tag == name)
+                    return Entity(handle, scene);
+            }
+            return Entity();
+        };
+        sceneTable["FindAll"] = [callerScene](sol::this_environment thisEnv, sol::this_state state, const std::string& name) -> sol::table {
+            sol::state_view view(state);
+            sol::table result = view.create_table();
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return result;
+            int index = 1;
+            auto tags = scene->GetRegistry().view<TagComponent>();
+            for (auto handle : tags) {
+                if (tags.get<TagComponent>(handle).Tag == name)
+                    result[index++] = Entity(handle, scene);
+            }
+            return result;
+        };
+        sceneTable["Create"] = [callerScene](sol::this_environment thisEnv, const std::string& name) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            return scene ? scene->CreateEntity(name) : Entity();
+        };
+        sceneTable["CreateMesh"] = [callerScene](sol::this_environment thisEnv, const std::string& name, const std::string& primitive,
+                                                  sol::optional<float> x, sol::optional<float> y, sol::optional<float> z) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            Entity created = scene->CreateEntity(name);
+            auto& meshRenderer = created.AddComponent<MeshRendererComponent>();
+            if (primitive == "Sphere") meshRenderer.Mesh = PrimitiveMesh::Sphere;
+            else if (primitive == "Capsule") meshRenderer.Mesh = PrimitiveMesh::Capsule;
+            else if (primitive == "Cylinder") meshRenderer.Mesh = PrimitiveMesh::Cylinder;
+            else if (primitive == "Plane") meshRenderer.Mesh = PrimitiveMesh::Plane;
+            else meshRenderer.Mesh = PrimitiveMesh::Cube;
+            created.GetComponent<TransformComponent>().Translation = { x.value_or(0.0f), y.value_or(0.0f), z.value_or(0.0f) };
+            return created;
+        };
+        sceneTable["Instantiate"] = [callerScene](sol::this_environment thisEnv, const std::string& relativePath, sol::optional<glm::vec3> position) -> Entity {
+            Scene* scene = callerScene(thisEnv);
+            if (!scene)
+                return Entity();
+            return InstantiateRuntime(*scene, relativePath, position.has_value() ? &*position : nullptr);
+        };
+        // Scene.Load("Fase2")   -> troca para o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
+        // Scene.Reload()        -> recomeca a cena atual do zero.
+        // Todos os scripts e entidades da cena atual sao destruidos; nada persiste entre cenas.
+        sceneTable["Load"] = [callerScene](sol::this_environment thisEnv, const std::string& mapPath) {
+            if (Scene* scene = callerScene(thisEnv))
+                scene->RequestLoadScene(mapPath);
+        };
+        sceneTable["Reload"] = [callerScene](sol::this_environment thisEnv) {
+            if (Scene* scene = callerScene(thisEnv))
+                scene->RequestReloadScene();
+        };
+        sceneTable["Destroy"] = [](Entity entity) { QueueDestroy(entity); };
+        lua["Scene"] = sceneTable;
 
         // --- Input -----------------------------------------------------
         // Tabela global `Input` (polling - ver Core/Input.h para o porque
@@ -350,29 +919,33 @@ namespace Prism {
             std::string name(1, c);
             keyTable[name] = (int)Key::D0 + (c - '0');
         }
+        // Teclas de funcao (GLFW_KEY_F1 = 290 ... F12 = 301) e extras do enum.
+        for (int i = 1; i <= 12; i++)
+            keyTable["F" + std::to_string(i)] = 289 + i;
+        keyTable["Backspace"] = (int)Key::Backspace;
+        keyTable["LeftAlt"] = (int)Key::LeftAlt;
+        keyTable["RightShift"] = (int)Key::RightShift;
+        keyTable["RightControl"] = (int)Key::RightControl;
+        keyTable["RightAlt"] = (int)Key::RightAlt;
         lua["Key"] = keyTable;
 
-        // TODO: expor callbacks OnCollisionEnter/OnCollisionExit chamados
-        // pelo PhysicsEngine::Simulate quando ocorrem eventos de contato
-        // do Jolt envolvendo esta entidade (ver o TODO em
-        // PhysicsEngine::Simulate, no bloco de eventos de colisao).
+        // Botoes do mouse para Input.IsMouseButtonDown(Mouse.Left).
+        sol::table mouseTable = lua.create_table();
+        mouseTable["Left"] = (int)MouseButton::Left;
+        mouseTable["Right"] = (int)MouseButton::Right;
+        mouseTable["Middle"] = (int)MouseButton::Middle;
+        lua["Mouse"] = mouseTable;
+
+        // UI.IsPointerOverUI(): o mouse esta sobre um elemento de UI que barra o
+        // ponteiro? Use para nao disparar/mirar no jogo ao clicar em um botao.
+        sol::table uiTable = lua.create_table();
+        uiTable["IsPointerOverUI"] = []() { return UISystem::IsPointerOverUI(); };
+        lua["UI"] = uiTable;
     }
 
-    bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {
-        if (!s_Lua) {
-            PRISM_CORE_ERROR("ScriptEngine::LoadScript chamado antes de ScriptEngine::Init().");
-            return false;
-        }
-
-        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
-
-        // Recarregar: se ja havia um script carregado para esta entidade,
-        // desliga ele primeiro (chama OnDestroy do script ANTIGO) antes de
-        // montar a instancia nova - evita duas instancias do "mesmo"
-        // script vivas ao mesmo tempo apos um reload.
-        if (s_LoadedScripts.find(key) != s_LoadedScripts.end())
-            UnloadScript(entity);
-
+    // Le, executa e resolve os callbacks de um script - sem registrar no mapa nem
+    // chamar OnCreate (ver LoadScript / ReloadScript).
+    bool ScriptEngine::BuildScript(Entity entity, const std::filesystem::path& scriptAbsolutePath, LoadedScript& out) {
         std::ifstream file(scriptAbsolutePath);
         if (!file.is_open()) {
             PRISM_CORE_ERROR("ScriptEngine: arquivo de script nao encontrado: ", scriptAbsolutePath.string());
@@ -403,7 +976,7 @@ namespace Prism {
         // limitacao do sol2 nessa API especifica. load()+chamada manual e
         // uma API mais simples/direta do sol2 que nao passa por essa
         // sobrecarga problematica.
-        sol::load_result loadResult = s_Lua->load(source, scriptAbsolutePath.string());
+        sol::load_result loadResult = LoadLuaChunkCached(*s_Lua, source, scriptAbsolutePath.string(), LuaBytecodeDirectory());
         if (!loadResult.valid()) {
             sol::error err = loadResult;
             PRISM_CORE_ERROR("ScriptEngine: erro ao carregar '", scriptAbsolutePath.string(), "': ", err.what());
@@ -425,23 +998,89 @@ namespace Prism {
 
         // Convencao do script: o arquivo .lua e uma sequencia de
         // definicoes de funcao no escopo global DELE (OnCreate/OnUpdate/
-        // OnDestroy) - nao uma table literal retornada. Pegamos essas tres
+        // OnDestroy...) - nao uma table literal retornada. Pegamos essas
         // funcoes de dentro do environment depois do script rodar. Nenhuma
         // delas e obrigatoria (um script so com OnUpdate, por exemplo, e
         // valido).
-        LoadedScript loaded;
-        loaded.Instance = env;
-        loaded.OnCreate = env["OnCreate"];
-        loaded.OnUpdate = env["OnUpdate"];
-        loaded.OnDestroy = env["OnDestroy"];
-
-        s_LoadedScripts[key] = std::move(loaded);
+        out = LoadedScript{};
+        out.Instance = env;
+        out.OnCreate = env["OnCreate"];
+        out.OnUpdate = env["OnUpdate"];
+        out.OnFixedUpdate = env["OnFixedUpdate"];
+        out.OnDestroy = env["OnDestroy"];
+        out.OnReload = env["OnReload"];
+        out.OnCollisionEnter = env["OnCollisionEnter"];
+        out.OnCollisionExit = env["OnCollisionExit"];
+        out.OnTriggerEnter = env["OnTriggerEnter"];
+        out.OnTriggerExit = env["OnTriggerExit"];
+        out.OnClick = env["OnClick"];
+        out.OnAnimationEvent = env["OnAnimationEvent"];
+        out.SourcePath = scriptAbsolutePath;
+        std::error_code timeError;
+        out.WriteTime = std::filesystem::last_write_time(scriptAbsolutePath, timeError);
 
         // "self" implicito: um script chama entity:GetTransform() etc
         // recebendo a PROPRIA entidade como variavel global `entity`
         // dentro do seu environment - mais simples para quem esta
         // comecando a escrever scripts do que exigir OnCreate(self).
         env["entity"] = entity;
+
+        // Variaveis publicas: aplica os valores editados no painel sobre a
+        // tabela `Properties` do script (so chaves que o script declara, com
+        // o mesmo tipo - o resto e ignorado), ANTES do OnCreate.
+        if (entity.HasComponent<ScriptComponent>()) {
+            const auto& overrides = entity.GetComponent<ScriptComponent>().Properties;
+            sol::object propertiesObject = env["Properties"];
+            if (!overrides.empty() && propertiesObject.is<sol::table>()) {
+                sol::table properties = propertiesObject;
+                for (const ScriptPropertyValue& value : overrides) {
+                    sol::type existing = properties[value.Name].get_type();
+                    if (value.Type == ScriptPropertyType::Number && existing == sol::type::number)
+                        properties[value.Name] = value.Number;
+                    else if (value.Type == ScriptPropertyType::Bool && existing == sol::type::boolean)
+                        properties[value.Name] = value.Bool;
+                    else if (value.Type == ScriptPropertyType::String && existing == sol::type::string)
+                        properties[value.Name] = value.String;
+                }
+            }
+        }
+
+        // Valores iniciais das globais simples (para o hot reload distinguir
+        // "constante do arquivo" de "estado alterado em execucao").
+        sol::table envTable = env;
+        for (auto& [keyObject, valueObject] : envTable) {
+            if (keyObject.get_type() != sol::type::string)
+                continue;
+            LoadedScript::InitialValue initial;
+            initial.Type = valueObject.get_type();
+            if (initial.Type == sol::type::number) initial.Number = valueObject.as<double>();
+            else if (initial.Type == sol::type::boolean) initial.Bool = valueObject.as<bool>();
+            else if (initial.Type == sol::type::string) initial.String = valueObject.as<std::string>();
+            else continue;
+            out.InitialValues[keyObject.as<std::string>()] = std::move(initial);
+        }
+        return true;
+    }
+
+    bool ScriptEngine::LoadScript(Entity entity, const std::filesystem::path& scriptAbsolutePath) {
+        if (!s_Lua) {
+            PRISM_CORE_ERROR("ScriptEngine::LoadScript chamado antes de ScriptEngine::Init().");
+            return false;
+        }
+
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+
+        // Recarregar: se ja havia um script carregado para esta entidade,
+        // desliga ele primeiro (chama OnDestroy do script ANTIGO) antes de
+        // montar a instancia nova - evita duas instancias do "mesmo"
+        // script vivas ao mesmo tempo apos um reload.
+        if (s_LoadedScripts.find(key) != s_LoadedScripts.end())
+            UnloadScript(entity);
+
+        LoadedScript loaded;
+        if (!BuildScript(entity, scriptAbsolutePath, loaded))
+            return false;
+        s_LoadedScripts[key] = std::move(loaded);
 
         LoadedScript& script = s_LoadedScripts[key];
         if (script.OnCreate.valid()) {
@@ -454,6 +1093,120 @@ namespace Prism {
         }
 
         return true;
+    }
+
+    bool ScriptEngine::ReloadScript(Entity entity) {
+        if (!s_Lua || !entity.IsValid())
+            return false;
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+        auto found = s_LoadedScripts.find(key);
+        if (found == s_LoadedScripts.end())
+            return false;
+
+        const std::filesystem::path path = found->second.SourcePath;
+        LoadedScript fresh;
+        if (!BuildScript(entity, path, fresh)) {
+            // Erro no arquivo novo: o script antigo segue rodando. Marca a data como
+            // vista para o erro aparecer UMA vez por salvamento (nao a cada poll).
+            auto stillThere = s_LoadedScripts.find(key);
+            if (stillThere != s_LoadedScripts.end()) {
+                std::error_code timeError;
+                stillThere->second.WriteTime = std::filesystem::last_write_time(path, timeError);
+            }
+            PRISM_CORE_WARN("ScriptEngine: hot reload de '", path.filename().string(), "' falhou; o script anterior continua rodando.");
+            return false;
+        }
+
+        found = s_LoadedScripts.find(key);
+        if (found == s_LoadedScripts.end())
+            return false; // a entidade foi descarregada durante a compilacao
+
+        // Estado de execucao: copia do ambiente antigo para o novo tudo que o script
+        // alterou/criou desde a carga (numero/bool/string diferente do valor inicial,
+        // variaveis novas, tabelas e objetos). Constantes nao alteradas assumem o
+        // valor novo do arquivo. 'Properties' e 'entity' sao refeitas pela carga.
+        {
+            LoadedScript& old = found->second;
+            sol::table oldTable = old.Instance;
+            sol::table newTable = fresh.Instance;
+            for (auto& [keyObject, valueObject] : oldTable) {
+                if (keyObject.get_type() != sol::type::string)
+                    continue;
+                const std::string name = keyObject.as<std::string>();
+                if (name == "entity" || name == "Properties")
+                    continue;
+                const sol::type type = valueObject.get_type();
+                if (type == sol::type::function)
+                    continue; // funcoes vem do arquivo novo
+                if (type == sol::type::number || type == sol::type::boolean || type == sol::type::string) {
+                    auto initial = old.InitialValues.find(name);
+                    if (initial != old.InitialValues.end() && initial->second.Type == type) {
+                        bool unchanged = (type == sol::type::number && initial->second.Number == valueObject.as<double>())
+                                      || (type == sol::type::boolean && initial->second.Bool == valueObject.as<bool>())
+                                      || (type == sol::type::string && initial->second.String == valueObject.as<std::string>());
+                        if (unchanged)
+                            continue;
+                    }
+                }
+                newTable[name] = valueObject;
+            }
+        }
+
+        found->second = std::move(fresh);
+        PRISM_CORE_INFO("ScriptEngine: script recarregado: ", path.filename().string());
+
+        LoadedScript& script = found->second;
+        if (script.OnReload.valid()) {
+            sol::protected_function_result reloadResult = script.OnReload();
+            if (!reloadResult.valid()) {
+                sol::error err = reloadResult;
+                PRISM_CORE_ERROR("ScriptEngine: erro em OnReload(): ", err.what());
+                script.HasRuntimeError = true;
+            }
+        }
+        return true;
+    }
+
+    void ScriptEngine::PollHotReload(Scene& scene) {
+        if (!s_HotReload || !s_Lua || s_LoadedScripts.empty())
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - s_LastHotReloadPoll < std::chrono::milliseconds(500))
+            return;
+        s_LastHotReloadPoll = now;
+
+        std::vector<uint32_t> changed;
+        for (auto& [key, script] : s_LoadedScripts) {
+            if (key.SceneKey != &scene)
+                continue;
+            std::error_code timeError;
+            auto writeTime = std::filesystem::last_write_time(script.SourcePath, timeError);
+            if (!timeError && writeTime != script.WriteTime)
+                changed.push_back(key.EntityHandle);
+        }
+        for (uint32_t handle : changed) {
+            entt::entity entityHandle = (entt::entity)handle;
+            if (scene.GetRegistry().valid(entityHandle))
+                ReloadScript(Entity(entityHandle, &scene));
+        }
+    }
+
+    void ScriptEngine::FixedUpdateScript(Entity entity, float fixedDeltaTime) {
+        ScriptKey key{ entity.GetScene(), (uint32_t)entity.GetHandle() };
+        auto it = s_LoadedScripts.find(key);
+        if (it == s_LoadedScripts.end())
+            return;
+
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError || !script.OnFixedUpdate.valid())
+            return;
+
+        sol::protected_function_result result = script.OnFixedUpdate(fixedDeltaTime);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em OnFixedUpdate(): ", err.what());
+            script.HasRuntimeError = true;
+        }
     }
 
     void ScriptEngine::UpdateScript(Entity entity, float deltaTime) {
@@ -520,6 +1273,183 @@ namespace Prism {
         }
 
         s_LoadedScripts.clear();
+        NativeScripting::UnloadAll(); // mesma regra para os scripts em C++
+    }
+
+    Entity ScriptEngine::InstantiateRuntime(Scene& scene, const std::string& relativePath, const glm::vec3* position) {
+        auto project = Project::GetActive();
+        if (!project)
+            return Entity();
+        std::filesystem::path absolutePath = project->GetProjectDirectory() / relativePath;
+        Entity root = PrefabSerializer::Instantiate(scene, absolutePath);
+        if (!root.IsValid()) {
+            Log::AppLog(LogLevel::Error, "Instantiate: nao foi possivel instanciar '", relativePath, "'.");
+            return Entity();
+        }
+        if (position)
+            root.GetComponent<TransformComponent>().Translation = *position;
+        ActivateRuntimeEntity(scene, root);
+        return root;
+    }
+
+    void ScriptEngine::ResetTime() {
+        s_DeltaTime = 0.0f;
+        s_Elapsed = 0.0;
+        s_FrameCount = 0;
+        s_PendingDestroy.clear();
+    }
+
+    void ScriptEngine::BeginFrame(float deltaTime) {
+        s_DeltaTime = deltaTime;
+        s_Elapsed += deltaTime;
+        s_FrameCount++;
+    }
+
+    void ScriptEngine::DispatchContactEvent(Entity self, Entity other, bool enter, bool trigger) {
+        NativeScripting::DispatchContactEvent(self, other, enter, trigger);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError)
+            return;
+
+        sol::protected_function& callback = trigger
+            ? (enter ? script.OnTriggerEnter : script.OnTriggerExit)
+            : (enter ? script.OnCollisionEnter : script.OnCollisionExit);
+        if (!callback.valid())
+            return;
+
+        sol::protected_function_result result = callback(other);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em callback de colisao/trigger: ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::DispatchUIDocumentClick(Entity self, const std::string& handler, const std::string& nodeId) {
+        NativeScripting::DispatchUIDocumentClick(self, handler, nodeId);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError)
+            return;
+        sol::protected_function callback = script.OnClick;
+        if (!handler.empty()) {
+            sol::object candidate = script.Instance[handler];
+            if (candidate.get_type() == sol::type::function) {
+                callback = candidate.as<sol::protected_function>();
+            }
+            else {
+                PRISM_CORE_WARN("UI: onClick=\"", handler, "\" nao e uma funcao do script Lua desta entidade.");
+                return; // com handler nomeado nunca cai no OnClick (evita chamada dupla)
+            }
+        }
+        if (!callback.valid())
+            return;
+        sol::protected_function_result result = callback(nodeId);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em ", handler.empty() ? std::string("OnClick") : handler, ": ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::DispatchAnimationEvent(Entity self, const std::string& name) {
+        NativeScripting::DispatchAnimationEvent(self, name);
+
+        auto it = s_LoadedScripts.find(ScriptKey{ self.GetScene(), (uint32_t)self.GetHandle() });
+        if (it == s_LoadedScripts.end())
+            return;
+        LoadedScript& script = it->second;
+        if (script.HasRuntimeError || !script.OnAnimationEvent.valid())
+            return;
+        sol::protected_function_result result = script.OnAnimationEvent(name);
+        if (!result.valid()) {
+            sol::error err = result;
+            PRISM_CORE_ERROR("ScriptEngine: erro em OnAnimationEvent: ", err.what());
+            script.HasRuntimeError = true;
+        }
+    }
+
+    void ScriptEngine::QueueDestroy(Entity entity) {
+        if (!entity.IsValid())
+            return;
+        for (const PendingDestroy& pending : s_PendingDestroy)
+            if (pending.SceneKey == entity.GetScene() && pending.Handle == entity.GetHandle())
+                return; // ja na fila
+        s_PendingDestroy.push_back({ entity.GetScene(), entity.GetHandle() });
+    }
+
+    void ScriptEngine::FlushDestroyQueue(Scene& scene) {
+        // Move para fora: OnDestroy de um script pode enfileirar mais pedidos.
+        std::vector<PendingDestroy> pending;
+        pending.swap(s_PendingDestroy);
+        for (const PendingDestroy& item : pending) {
+            if (item.SceneKey != &scene)
+                continue;
+            Entity entity(item.Handle, &scene);
+            if (entity.IsValid()) // pode ja ter sido destruida como filha de outra
+                scene.DestroyEntity(entity);
+        }
+    }
+
+    std::vector<ScriptPropertyValue> ScriptEngine::ReadScriptProperties(const std::filesystem::path& scriptAbsolutePath) {
+        std::vector<ScriptPropertyValue> result;
+        if (!s_Lua)
+            return result;
+
+        std::ifstream file(scriptAbsolutePath);
+        if (!file.is_open())
+            return result;
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+
+        sol::load_result loadResult = s_Lua->load(buffer.str(), scriptAbsolutePath.string());
+        if (!loadResult.valid())
+            return result;
+
+        // Ambiente descartavel com entity = nil: so o corpo do arquivo roda
+        // (OnCreate nao), e erros sao ignorados - o painel so quer os padroes.
+        sol::environment env(*s_Lua, sol::create, s_Lua->globals());
+        env["entity"] = sol::lua_nil;
+        sol::protected_function chunk = loadResult;
+        sol::set_environment(env, chunk);
+        sol::protected_function_result run = chunk();
+        if (!run.valid())
+            return result;
+
+        sol::object propertiesObject = env["Properties"];
+        if (!propertiesObject.is<sol::table>())
+            return result;
+        sol::table properties = propertiesObject;
+        for (auto& [keyObject, valueObject] : properties) {
+            if (keyObject.get_type() != sol::type::string)
+                continue;
+            ScriptPropertyValue value;
+            value.Name = keyObject.as<std::string>();
+            if (valueObject.get_type() == sol::type::number) {
+                value.Type = ScriptPropertyType::Number;
+                value.Number = valueObject.as<double>();
+            } else if (valueObject.get_type() == sol::type::boolean) {
+                value.Type = ScriptPropertyType::Bool;
+                value.Bool = valueObject.as<bool>();
+            } else if (valueObject.get_type() == sol::type::string) {
+                value.Type = ScriptPropertyType::String;
+                value.String = valueObject.as<std::string>();
+            } else {
+                continue;
+            }
+            result.push_back(std::move(value));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const ScriptPropertyValue& a, const ScriptPropertyValue& b) { return a.Name < b.Name; });
+        return result;
     }
 
 }

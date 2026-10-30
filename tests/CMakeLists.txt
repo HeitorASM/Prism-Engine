@@ -2,7 +2,7 @@
 # Testes automatizados. OPT-IN: nao entram no build normal.
 #
 #   cmake -B build -S . -DPRISM_BUILD_TESTS=ON
-#   cmake --build build --target PrismAssetTests PrismShaderTests
+#   cmake --build build --target PrismAssetTests PrismShaderTests PrismExportTests PrismUITests
 #   ctest --test-dir build --output-on-failure
 #
 # PrismAssetTests compila SO as fontes de que precisa (Assets/ + Project/) em
@@ -56,3 +56,158 @@ if(MSVC)
     target_compile_options(PrismShaderTests PRIVATE /utf-8)
 endif()
 add_test(NAME ShaderTests COMMAND PrismShaderTests)
+
+# PrismExportTests: exportador de jogos (Project/GameExporter) - so std::filesystem,
+# usa pastas temporarias com arquivos de mentira. Sem GPU nem a engine inteira.
+add_executable(PrismExportTests
+    ExportTests.cpp
+    ${PRISM_SRC}/Prism/Project/GameExporter.cpp
+)
+target_include_directories(PrismExportTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismExportTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismExportTests PRIVATE /utf-8)
+endif()
+add_test(NAME ExportTests COMMAND PrismExportTests)
+
+# PrismUITests: nucleo da UI em texto (.prismui) - parser XML, layout e hover/clique.
+# So std (sem GPU, GLFW, EnTT nem GLM): UI/UIMarkup, UILayout e UIInput.
+add_executable(PrismUITests
+    UITests.cpp
+    ${PRISM_SRC}/Prism/UI/UIMarkup.cpp
+    ${PRISM_SRC}/Prism/UI/UILayout.cpp
+    ${PRISM_SRC}/Prism/UI/UIInput.cpp
+)
+target_include_directories(PrismUITests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismUITests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismUITests PRIVATE /utf-8)
+endif()
+add_test(NAME UITests COMMAND PrismUITests)
+
+# PrismCullingTests: frustum culling e camadas de visibilidade (Renderer/Culling.h, so std).
+add_executable(PrismCullingTests
+    CullingTests.cpp
+)
+target_include_directories(PrismCullingTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismCullingTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismCullingTests PRIVATE /utf-8)
+endif()
+add_test(NAME CullingTests COMMAND PrismCullingTests)
+
+# PrismPhysicsLayersTests: camadas de fisica e matriz de colisao (Physics/PhysicsLayers.h, so std).
+add_executable(PrismPhysicsLayersTests
+    PhysicsLayersTests.cpp
+)
+target_include_directories(PrismPhysicsLayersTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismPhysicsLayersTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismPhysicsLayersTests PRIVATE /utf-8)
+endif()
+add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)
+
+# PrismSceneTests: serializacao de cena, ComponentRegistry e PrefabSyncer. Linka a
+# biblioteca Prism inteira (Scene depende de Fisica/Audio/Scripts), entao so existe
+# num build completo. Sem janela nem GPU.
+add_executable(PrismSceneTests
+    SceneTests.cpp
+)
+target_include_directories(PrismSceneTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismSceneTests PRIVATE cxx_std_20)
+target_link_libraries(PrismSceneTests PRIVATE Prism)
+if(MSVC)
+    target_compile_options(PrismSceneTests PRIVATE /utf-8)
+endif()
+add_test(NAME SceneTests COMMAND PrismSceneTests)
+
+# PrismMaterialStateTests: identidade do estado de material usada no agrupamento de desenhos (Renderer/MaterialState.h).
+add_executable(PrismMaterialStateTests
+    MaterialStateTests.cpp
+)
+target_include_directories(PrismMaterialStateTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismMaterialStateTests PRIVATE cxx_std_20)
+target_link_libraries(PrismMaterialStateTests PRIVATE glm EnTT::EnTT)
+if(MSVC)
+    target_compile_options(PrismMaterialStateTests PRIVATE /utf-8)
+endif()
+add_test(NAME MaterialStateTests COMMAND PrismMaterialStateTests)
+
+# PrismProfilerTests: medidor de desempenho (Core/Profiler.h, so std, relogio falso).
+add_executable(PrismProfilerTests
+    ProfilerTests.cpp
+)
+target_include_directories(PrismProfilerTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismProfilerTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismProfilerTests PRIVATE /utf-8)
+endif()
+add_test(NAME ProfilerTests COMMAND PrismProfilerTests)
+
+# PrismDrawBatchingTests: agrupamento de desenhos para instancing (Renderer/DrawBatching.h, so std).
+add_executable(PrismDrawBatchingTests
+    DrawBatchingTests.cpp
+)
+target_include_directories(PrismDrawBatchingTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDrawBatchingTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismDrawBatchingTests PRIVATE /utf-8)
+endif()
+add_test(NAME DrawBatchingTests COMMAND PrismDrawBatchingTests)
+
+# PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
+add_executable(PrismBuildAnalysisTests
+    BuildOutputAnalysisTests.cpp
+)
+target_include_directories(PrismBuildAnalysisTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../PrismEditor/src)
+target_compile_features(PrismBuildAnalysisTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismBuildAnalysisTests PRIVATE /utf-8)
+endif()
+add_test(NAME BuildAnalysisTests COMMAND PrismBuildAnalysisTests)
+
+# PrismShaderParamsTests: leitor dos parametros (uniforms) dos shaders de material (Renderer/ShaderParams.h, so std).
+add_executable(PrismShaderParamsTests
+    ShaderParamsTests.cpp
+)
+target_include_directories(PrismShaderParamsTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismShaderParamsTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismShaderParamsTests PRIVATE /utf-8)
+endif()
+add_test(NAME ShaderParamsTests COMMAND PrismShaderParamsTests)
+
+# PrismDiskCacheTests: cache em disco (Core/DiskCache.h) e matematica de miniaturas (Assets/ThumbnailImage.h), so std.
+add_executable(PrismDiskCacheTests
+    DiskCacheTests.cpp
+)
+target_include_directories(PrismDiskCacheTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDiskCacheTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismDiskCacheTests PRIVATE /utf-8)
+endif()
+add_test(NAME DiskCacheTests COMMAND PrismDiskCacheTests)
+
+# PrismLuaBytecodeTests: cache de bytecode do Lua com o Lua/sol2 reais. O codigo testado e o do
+# ScriptEngine.cpp: o trecho entre "BEGIN LuaChunkCache" e "END LuaChunkCache" e extraido na configuracao.
+if(TARGET lua AND TARGET sol2)
+    file(READ ${PRISM_SRC}/Prism/Scripting/ScriptEngine.cpp PRISM_SCRIPT_ENGINE_TEXT)
+    string(FIND "${PRISM_SCRIPT_ENGINE_TEXT}" "// BEGIN LuaChunkCache" PRISM_LUA_CACHE_BEGIN)
+    string(FIND "${PRISM_SCRIPT_ENGINE_TEXT}" "// END LuaChunkCache" PRISM_LUA_CACHE_END)
+    if(PRISM_LUA_CACHE_BEGIN GREATER -1 AND PRISM_LUA_CACHE_END GREATER PRISM_LUA_CACHE_BEGIN)
+        math(EXPR PRISM_LUA_CACHE_LENGTH "${PRISM_LUA_CACHE_END} - ${PRISM_LUA_CACHE_BEGIN}")
+        string(SUBSTRING "${PRISM_SCRIPT_ENGINE_TEXT}" ${PRISM_LUA_CACHE_BEGIN} ${PRISM_LUA_CACHE_LENGTH} PRISM_LUA_CACHE_CODE)
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/LuaChunkCache.inc "${PRISM_LUA_CACHE_CODE}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PRISM_SRC}/Prism/Scripting/ScriptEngine.cpp)
+        add_executable(PrismLuaBytecodeTests LuaBytecodeCacheTests.cpp)
+        target_include_directories(PrismLuaBytecodeTests PRIVATE ${PRISM_SRC} ${CMAKE_CURRENT_BINARY_DIR})
+        target_compile_features(PrismLuaBytecodeTests PRIVATE cxx_std_20)
+        target_link_libraries(PrismLuaBytecodeTests PRIVATE lua sol2)
+        if(MSVC)
+            target_compile_options(PrismLuaBytecodeTests PRIVATE /utf-8 /bigobj)
+        endif()
+        add_test(NAME LuaBytecodeTests COMMAND PrismLuaBytecodeTests)
+    else()
+        message(WARNING "ScriptEngine.cpp: marcadores LuaChunkCache nao encontrados; PrismLuaBytecodeTests nao sera criado.")
+    endif()
+endif()

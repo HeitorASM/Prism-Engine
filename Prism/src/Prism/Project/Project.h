@@ -15,6 +15,8 @@
 
 #include "../Core/Base.h"
 #include "../Assets/AssetRegistry.h"
+#include <array>
+#include "../Physics/PhysicsLayers.h"
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -29,37 +31,25 @@ namespace Prism {
         std::filesystem::path ScriptDirectory = "Scripts";
         std::filesystem::path MapDirectory = "Maps";
         std::filesystem::path StartMap; // mapa aberto ao iniciar o jogo, se houver
+
+        // Versao da engine (Version::Number) que criou o projeto. Vazio em
+        // projetos criados antes desta chave existir. O editor so usa isso
+        // para avisar quando a versao difere da atual.
+        std::string EngineVersion;
     };
 
-    // Ajustes de renderizacao guardados POR PROJETO (no .prismproj): cada
-    // projeto tem o seu "look". Editados no menu "Renderizacao" do editor
-    // (RenderSettingsPanel::OnImGuiRenderMenu) e aplicados ao Renderer por
-    // Renderer::ApplyRenderSettings.
-    //
-    // Os valores padrao abaixo sao a FONTE UNICA da verdade: os estaticos
-    // do Renderer (s_Exposure, s_Ambient, s_Env*) sao inicializados a partir
-    // deles, entao os dois nunca divergem. As cores sao sRGB (o que o color
-    // picker mostra); ver Renderer::SetEnvironmentColors.
-    struct RenderSettings {
-        // Multiplicador de brilho aplicado em espaco linear ANTES do tone
-        // mapping (Renderer::SetExposure). 1.0 = neutro.
-        float Exposure = 1.0f;
+    // Opcoes da tela "Novo projeto" do editor (ver Project::New abaixo).
+    struct ProjectCreateOptions {
+        std::string Name;                        // nome do projeto = nome da pasta = nome do .prismproj
+        std::filesystem::path ParentDirectory;   // pasta ONDE a pasta do projeto sera criada
+        std::string EngineVersion;               // gravado em ProjectConfig::EngineVersion
+    };
 
-        // Brilho MEDIO do ambiente (Renderer::SetAmbient). 0 = so as luzes
-        // iluminam.
-        float Ambient = 0.10f;
-
-        // Gradiente de ambiente: ceu (+Y), horizonte e chao (-Y).
-        float EnvZenith[3]  = { 0.36f, 0.55f, 0.95f };
-        float EnvHorizon[3] = { 0.80f, 0.85f, 0.90f };
-        float EnvGround[3]  = { 0.22f, 0.20f, 0.18f };
-
-        // Limites aceitos ao LER um .prismproj (um arquivo editado a mao ou
-        // corrompido nao pode deixar a cena preta ou estourada). Exposicao
-        // <= 0 zeraria a imagem inteira.
-        static constexpr float kExposureMin = 0.05f;
-        static constexpr float kExposureMax = 16.0f;
-        static constexpr float kAmbientMax  = 2.0f;
+    // Leitura rapida de um .prismproj sem carrega-lo de verdade (usada na
+    // lista de projetos recentes: nao varre assets nem troca o projeto ativo).
+    struct ProjectSummary {
+        std::string Name;
+        std::string EngineVersion;
     };
 
     // Estrutura de pastas criada para todo novo projeto. Mantida em um so
@@ -109,13 +99,6 @@ namespace Prism {
         // reutilizavel).
         std::filesystem::path GetMaterialDirectory() const { return GetAssetDirectory() / "Materials"; }
 
-        // Ajustes de renderizacao deste projeto (exposicao, ambiente). A
-        // versao nao-const e o que o editor edita; depois de mudar, chame
-        // Renderer::ApplyRenderSettings para aplicar e Project::SaveActive
-        // para persistir.
-        RenderSettings& GetRenderSettings() { return m_RenderSettings; }
-        const RenderSettings& GetRenderSettings() const { return m_RenderSettings; }
-
         // Indice de identidade dos assets deste projeto (AssetID <-> caminho,
         // ver Assets/AssetRegistry.h). Pertence ao Project: e recriado junto
         // com ele, e sempre aponta para GetAssetDirectory() deste projeto.
@@ -132,6 +115,29 @@ namespace Prism {
         // e escreve o arquivo .prismproj inicial. Retorna nullptr em caso de falha.
         static Ref<Project> New(const std::filesystem::path& directory, const std::string& name);
 
+        // Versao usada pela tela "Novo projeto": valida o nome e o local
+        // (ValidateNewProject), cria a pasta <ParentDirectory>/<Name> com a
+        // estrutura padrao, grava o .prismproj com EngineVersion e um
+        // .gitignore (Cache/ e Binaries/). Em falha devolve nullptr e
+        // preenche 'error' com um texto pronto para mostrar ao usuario.
+        // NAO gera o projeto de scripts C++ (Source/): isso depende do modulo
+        // Scripting e fica a cargo do editor (NativeScripting::GenerateProjectFiles).
+        static Ref<Project> New(const ProjectCreateOptions& options, std::string& error);
+
+        // Regras de nome de projeto: nome de pasta valido no Windows e em
+        // sistemas POSIX (sem \ / : * ? " < > | nem caracteres de controle,
+        // sem espaco/ponto no fim, sem nomes reservados como CON/NUL/COM1,
+        // no maximo 64 caracteres). Em falha preenche 'reason'.
+        static bool IsValidProjectName(const std::string& name, std::string& reason);
+
+        // "" = pode criar. Senao, o motivo (nome invalido, local vazio, pasta
+        // de destino ja existe e nao esta vazia...). Nao cria nada no disco.
+        static std::string ValidateNewProject(const std::filesystem::path& parentDirectory, const std::string& name);
+
+        // Le so Name/EngineVersion de um .prismproj. false se nao abrir ou
+        // nao tiver Name.
+        static bool ReadSummary(const std::filesystem::path& projectFilePath, ProjectSummary& outSummary);
+
         // Carrega um projeto existente a partir do caminho do seu .prismproj.
         static Ref<Project> Load(const std::filesystem::path& projectFilePath);
 
@@ -145,24 +151,38 @@ namespace Prism {
         // cena nova, para que o editor saiba qual mapa reabrir da proxima vez.
         static bool SetStartMap(const std::filesystem::path& relativeMapPath);
 
+        // Nomes das 32 camadas de visibilidade (MeshRendererComponent::Layers / CameraComponent::CullMask).
+        // 'index' 0..31 = camada 1..32. Sem nome definido: "Camada N". Fora do intervalo: "".
+        std::string GetLayerName(int index) const;
+        bool HasCustomLayerName(int index) const;
+        // Define o nome (vazio = volta ao padrao) e grava o .prismproj imediatamente.
+        static bool SetLayerName(int index, const std::string& name);
+
+        // Camadas de FISICA (ColliderComponent::Layer, 0..31): nomes e matriz de colisao do projeto.
+        std::string GetPhysicsLayerName(int index) const; // sem nome: "Camada N" (a 0 = "Padrao")
+        bool HasCustomPhysicsLayerName(int index) const;
+        static bool SetPhysicsLayerName(int index, const std::string& name);
+        const Physics::LayerMatrix& GetPhysicsMatrix() const { return m_PhysicsMatrix; }
+        // Liga/desliga a colisao do par (a, b) e grava o .prismproj.
+        static bool SetPhysicsCollision(int a, int b, bool collide);
+
     private:
         ProjectConfig m_Config;
         std::filesystem::path m_ProjectDirectory;
         std::filesystem::path m_ProjectFilePath;
 
         // ATENCAO: fica NO FIM da classe DE PROPOSITO - nao mova para o
-        // meio. Project.h e incluido por muitos .cpp (via Prism.h e
-        // Renderer.h); um membro novo no meio deslocaria m_ProjectDirectory
-        // e m_ProjectFilePath, e qualquer .obj ainda compilado com o layout
-        // antigo (build incremental) leria/escreveria no lugar errado -
-        // corrupcao de heap, o mesmo bug que ja ocorreu no EditorLayer.h.
-        // No fim, o layout de tudo que ja existia continua identico.
-        RenderSettings m_RenderSettings;
-
-        // Tambem NO FIM, pelo mesmo motivo do m_RenderSettings acima - e
-        // DEPOIS dele, para que o layout de tudo que ja existia continue
-        // identico.
+        // meio. Project.h e incluido por muitos .cpp; um membro no meio
+        // deslocaria m_ProjectDirectory e m_ProjectFilePath em qualquer .obj
+        // ainda compilado com o layout antigo (build incremental).
+        // (O antigo RenderSettings foi removido: o visual agora vive no
+        // EnvironmentComponent da cena e no CameraComponent.)
         AssetRegistry m_AssetRegistry;
+
+        // Nomes das camadas (so os personalizados; vazio = padrao). Tambem NO FIM (ver acima).
+        std::array<std::string, 32> m_LayerNames;
+        std::array<std::string, 32> m_PhysicsLayerNames;
+        Physics::LayerMatrix m_PhysicsMatrix;
 
         inline static Ref<Project> s_ActiveProject;
 

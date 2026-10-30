@@ -203,6 +203,14 @@ namespace PrismEditor {
             if (m_HadCamera)
                 m_Camera = entity.GetComponent<Prism::CameraComponent>();
 
+            m_HadNativeScript = entity.HasComponent<Prism::NativeScriptComponent>();
+            if (m_HadNativeScript)
+                m_NativeScript = entity.GetComponent<Prism::NativeScriptComponent>();
+
+            m_HadLevelMesh = entity.HasComponent<Prism::LevelMeshComponent>();
+            if (m_HadLevelMesh)
+                m_LevelMesh = entity.GetComponent<Prism::LevelMeshComponent>();
+
             m_EntityToDelete = entity;
         }
 
@@ -227,6 +235,10 @@ namespace PrismEditor {
                 entity.AddComponent<Prism::ScriptComponent>() = m_Script;
             if (m_HadCamera)
                 entity.AddComponent<Prism::CameraComponent>() = m_Camera;
+            if (m_HadNativeScript)
+                entity.AddComponent<Prism::NativeScriptComponent>() = m_NativeScript;
+            if (m_HadLevelMesh)
+                entity.AddComponent<Prism::LevelMeshComponent>() = m_LevelMesh;
             m_EntityToDelete = entity;
         }
 
@@ -234,6 +246,8 @@ namespace PrismEditor {
 
     private:
         Prism::Ref<Prism::Scene> m_Scene;
+        bool m_HadLevelMesh = false;
+        Prism::LevelMeshComponent m_LevelMesh;
         Prism::Entity m_EntityToDelete;
 
         std::string m_Tag;
@@ -251,6 +265,8 @@ namespace PrismEditor {
         Prism::ScriptComponent m_Script;
         bool m_HadCamera = false;
         Prism::CameraComponent m_Camera;
+        bool m_HadNativeScript = false;
+        Prism::NativeScriptComponent m_NativeScript;
     };
 
     // Duplica uma entidade (e toda a sua subarvore de filhos) via
@@ -1102,6 +1118,14 @@ namespace PrismEditor {
                     m_Scene->SetParent(child, root);
                 }
             }
+            // Modelo animado (esqueleto/clipes): o Animator fica na raiz e anima
+            // todas as partes (ver AnimatorComponent). Toca o primeiro clipe no Play.
+            if (m_Model.HasRig) {
+                auto& animator = root.AddComponent<Prism::AnimatorComponent>();
+                animator.ModelAsset = m_Model.Asset;
+                animator.Clip = m_Model.FirstClip;
+                animator.PlayOnStart = !m_Model.FirstClip.empty();
+            }
             m_Root = root;
         }
 
@@ -1282,6 +1306,37 @@ namespace PrismEditor {
         Prism::Scene* m_Scene;
         Prism::Entity m_NewPrimary;
         std::vector<std::pair<entt::entity, bool>> m_Previous;
+    };
+
+    // Edicao de geometria de nivel (Level Builder): guarda o LevelMeshComponent INTEIRO e o
+    // Transform antes/depois (Centralizar pivo mexe nos dois). Um comando por gesto/operacao.
+    // 'after' ja deve ter Touch() chamado (Revision nova) quando o comando e criado.
+    class EditLevelMeshCommand : public Prism::Command {
+    public:
+        EditLevelMeshCommand(Prism::Entity entity, std::string name,
+                             const Prism::LevelMeshComponent& before, const Prism::LevelMeshComponent& after,
+                             const Prism::TransformComponent& transformBefore, const Prism::TransformComponent& transformAfter)
+            : m_Entity(entity), m_Name(std::move(name)), m_Before(before), m_After(after),
+              m_TransformBefore(transformBefore), m_TransformAfter(transformAfter) {}
+
+        void Execute() override { Apply(m_After, m_TransformAfter); }
+        void Undo() override { Apply(m_Before, m_TransformBefore); }
+        std::string GetName() const override { return m_Name; }
+
+    private:
+        void Apply(const Prism::LevelMeshComponent& level, const Prism::TransformComponent& transform) {
+            if (!m_Entity.IsValid())
+                return;
+            if (m_Entity.HasComponent<Prism::LevelMeshComponent>())
+                m_Entity.GetComponent<Prism::LevelMeshComponent>() = level;
+            if (m_Entity.HasComponent<Prism::TransformComponent>())
+                m_Entity.GetComponent<Prism::TransformComponent>() = transform;
+        }
+
+        Prism::Entity m_Entity;
+        std::string m_Name;
+        Prism::LevelMeshComponent m_Before, m_After;
+        Prism::TransformComponent m_TransformBefore, m_TransformAfter;
     };
 
 }

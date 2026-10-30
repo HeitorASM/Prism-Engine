@@ -17,6 +17,7 @@
 #include "ShaderSource.h"
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <cstdint>
 #include <vector>
 
@@ -37,11 +38,16 @@ namespace Prism {
 
         void SetMat4(const std::string& name, const float* matrix4x4) const;
 
+        // 'count' matrizes 4x4 contiguas (column-major) como 'uniform mat4 name[N]'
+        // - a paleta de ossos (u_Bones, ver shaders/skinning.glsl).
+        void SetMat4Array(const std::string& name, const float* matrices, uint32_t count) const;
+
         // 'matrix3x3' aponta para 9 floats em ordem column-major (o mesmo
         // layout de glm::mat3 / glm::value_ptr). Usado para a matriz normal
         // (ver u_NormalMatrix em Renderer.cpp).
         void SetMat3(const std::string& name, const float* matrix3x3) const;
         void SetFloat3(const std::string& name, float x, float y, float z) const;
+        void SetFloat4(const std::string& name, float x, float y, float z, float w) const;
 
         // 'x'/'y' - usado hoje so por u_ScreenSize (Renderer::DrawMesh) e
         // u_NoiseScale (Renderer::RenderSSAOPass).
@@ -69,7 +75,8 @@ namespace Prism {
         static Ref<Shader> CreateFromFiles(const std::string& name,
                                            const std::filesystem::path& vertexPath,
                                            const std::filesystem::path& fragmentPath,
-                                           const ShaderDefines& defines = {});
+                                           const ShaderDefines& defines = {},
+                                           const ShaderIncludeOverrides& overrides = {});
 
         // Hot reload: se algum arquivo do shader (inclusive os incluidos)
         // mudou desde a ultima compilacao, recompila. Se a nova versao NAO
@@ -106,10 +113,16 @@ namespace Prism {
         uint32_t m_RendererID = 0;
         std::string m_Name;
 
+        // Local de cada uniform, por nome: glGetUniformLocation e uma chamada ao driver feita
+        // dezenas de vezes por objeto. Limpo quando o programa e recompilado (hot reload).
+        mutable std::unordered_map<std::string, int> m_UniformLocations;
+        int UniformLocation(const std::string& name) const;
+
         // So para shaders de arquivo (CreateFromFiles).
         std::filesystem::path m_VertexPath;
         std::filesystem::path m_FragmentPath;
         ShaderDefines m_Defines;
+        ShaderIncludeOverrides m_Overrides;
         std::vector<WatchedFile> m_Watched;
     };
 

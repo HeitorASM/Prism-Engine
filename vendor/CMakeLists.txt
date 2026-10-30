@@ -2,7 +2,7 @@
 # vendor/CMakeLists.txt
 # Dependencias de terceiros da Prism Engine.
 #
-# glad e stb_image sao vendorizados localmente (vendor/glad, vendor/stb).
+# glad, stb_image e stb_truetype sao vendorizados localmente (vendor/glad, vendor/stb).
 # As demais dependencias sao baixadas pelo CMake na primeira configuracao
 # (FetchContent), o que exige conexao com a internet nessa primeira vez;
 # depois ficam em cache local.
@@ -299,6 +299,28 @@ FetchContent_MakeAvailable(assimp)
 # proprio Assimp, que e ON; ver comentario em Prism/CMakeLists.txt sobre
 # copiar a .dll/.so para perto do executavel no Windows).
 
+# --- miniaudio (audio: decodifica WAV/MP3/OGG/FLAC e toca pelo dispositivo padrao) ---
+# Header unico (miniaudio.h), dominio publico/MIT-0. So baixamos o codigo-fonte;
+# a IMPLEMENTACAO (#define MINIAUDIO_IMPLEMENTATION) e compilada em exatamente
+# um .cpp da engine: Prism/src/Prism/Audio/AudioEngine.cpp.
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.22
+    GIT_SHALLOW TRUE
+    # So baixa: nao existe CMakeLists.txt nesta subpasta, entao o
+    # FetchContent nao chama add_subdirectory (o CMake do repositorio
+    # compilaria exemplos/testes que a engine nao usa). Mesmo truque do Jolt.
+    SOURCE_SUBDIR _prism_download_only
+)
+FetchContent_MakeAvailable(miniaudio)
+# Usamos so o header: um alvo INTERFACE proprio aponta para a pasta baixada.
+add_library(prism_miniaudio INTERFACE)
+target_include_directories(prism_miniaudio INTERFACE ${miniaudio_SOURCE_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(prism_miniaudio INTERFACE ${CMAKE_DL_LIBS} pthread m)
+endif()
+
 # --- stb_image (carregamento de PNG/JPG/etc) ---
 # Header-only, um unico arquivo (stb_image.h), sem depender de
 # libpng/libjpeg/zlib. Usado por Prism::Texture2D para ler a imagem do
@@ -310,3 +332,19 @@ FetchContent_MakeAvailable(assimp)
 # substituir o arquivo.
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)
+
+# --- nativefiledialog-extended (dialogos nativos de abrir arquivo / escolher
+#     pasta - usado pela tela de projetos do editor, ver
+#     PrismEditor/Core/FileDialog) ---
+#
+# Mantida ativamente, usa a API nativa de cada plataforma (Windows: IFileDialog).
+# O alvo CMake se chama "nfd". Testes e exemplos desligados.
+set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    nfd
+    GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+    GIT_TAG v1.2.1
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nfd)

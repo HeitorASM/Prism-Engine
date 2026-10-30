@@ -16,9 +16,17 @@
 #include <glm/gtx/euler_angles.hpp> // glm::yawPitchRoll (extensao GTX, header separado do gtc/quaternion)
 #include <entt/entt.hpp>
 #include "../Assets/AssetID.h"
+#include "../Audio/AudioBus.h"
+#include "../Animation/AnimatorRuntime.h"
+#include "../Animation/AnimationGraph.h"
+#include "../Renderer/Culling.h"
+#include "../Level/EditableMesh.h"
+#include "../Physics/PhysicsLayers.h"
+#include "../UI/UIDocumentRuntime.h"
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 
 namespace Prism {
 
@@ -108,6 +116,12 @@ namespace Prism {
         // ModelAsset for invalido; fora do intervalo cai na malha mesclada.
         int32_t SubmeshIndex = -1;
 
+        // Camadas de visibilidade (estilo Godot): mascara de bits dizendo em QUAIS camadas
+        // este objeto esta (bit 0 = camada 1, padrao). Uma camera so desenha o objeto se a
+        // sua CullMask tiver algum bit em comum. Camadas tem nome no projeto (Project::GetLayerName).
+        // Sombras: o objeto continua projetando sombra mesmo escondido de uma camera.
+        uint32_t Layers = Culling::kDefaultLayer;
+
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;
     };
@@ -129,6 +143,20 @@ namespace Prism {
     // (ver Renderer::DrawMesh, que usa os fatores/tint como fallback
     // quando o path correspondente esta vazio ou a textura falhou ao
     // carregar).
+    // Como o material combina com o que esta atras dele.
+    enum class MaterialBlendMode : int {
+        Opaque = 0,  // ignora o alfa (padrao; o mais barato)
+        Mask = 1,    // recorte: descarta pixels com alfa < AlphaCutoff (folhagem, grades)
+        Blend = 2    // translucido: mistura com o fundo, desenhado depois dos opacos, de tras para frente
+    };
+
+    // Valor de um parametro do shader do material (uniform declarado no .glsl, ver Renderer/ShaderParams.h).
+    // Componentes que o tipo nao usa (z/w de um vec2) ficam 0.
+    struct MaterialShaderParam {
+        std::string Name;
+        glm::vec4 Value{ 0.0f };
+    };
+
     struct MaterialComponent {
         std::string AlbedoPath;              // cor base (RGB) - textura sRGB (ver Texture2D)
         std::string NormalPath;              // normal map em tangent-space - textura LINEAR (nao sRGB)
@@ -161,8 +189,106 @@ namespace Prism {
         // AlbedoPath/NormalPath sendo string, nao um objeto Texture).
         AssetID LinkedAsset;
 
+        // --- Superficie (campos novos NO FIM: layout compativel com o antigo ate LinkedAsset) ---
+        // Alfa final = Opacity * alfa da textura de albedo. Mask/Blend usam esse valor.
+        MaterialBlendMode BlendMode = MaterialBlendMode::Opaque;
+        float Opacity = 1.0f;          // 0 = invisivel, 1 = solido (so vale em Mask/Blend)
+        float AlphaCutoff = 0.5f;      // Mask: pixels com alfa abaixo disto somem
+        // UV das tres texturas: uv * UVTiling + UVOffset (tiling 2 = a textura repete 2x).
+        glm::vec2 UVTiling = { 1.0f, 1.0f };
+        glm::vec2 UVOffset = { 0.0f, 0.0f };
+        // Luz propria, somada depois da iluminacao (nao e afetada por luzes/sombras).
+        glm::vec3 EmissiveColor = { 0.0f, 0.0f, 0.0f };   // cor (sRGB, como o tint de albedo)
+        float EmissiveIntensity = 1.0f;                   // multiplicador (pode passar de 1: brilho/bloom)
+        // Desenha as duas faces: a de tras recebe a normal invertida. Desligado, a face de dentro some.
+        bool DoubleSided = false;
+        // Shader do material (opcional): .glsl do projeto, relativo a pasta do projeto, que define
+        // prism_surface() (ver docs/shaders-customizados.md). Vazio = shader padrao.
+        std::string ShaderPath;
+        // Valores dos parametros do shader (por nome). Faltando = o padrao declarado no .glsl.
+        std::vector<MaterialShaderParam> ShaderParams;
+
         MaterialComponent() = default;
         MaterialComponent(const MaterialComponent&) = default;
+    };
+
+    // Deixa a superficie do material em valores validos (arquivo editado a mao, script):
+    // NaN/inf viram o padrao, faixas sao limitadas, modo de blend desconhecido vira Opaque.
+    inline void SanitizeMaterialSurface(MaterialComponent& m) {
+        auto finite = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        if ((int)m.BlendMode < 0 || (int)m.BlendMode > (int)MaterialBlendMode::Blend)
+            m.BlendMode = MaterialBlendMode::Opaque;
+        m.Opacity = std::min(std::max(finite(m.Opacity, 1.0f), 0.0f), 1.0f);
+        m.AlphaCutoff = std::min(std::max(finite(m.AlphaCutoff, 0.5f), 0.0f), 1.0f);
+        m.UVTiling.x = std::min(std::max(finite(m.UVTiling.x, 1.0f), -1000.0f), 1000.0f);
+        m.UVTiling.y = std::min(std::max(finite(m.UVTiling.y, 1.0f), -1000.0f), 1000.0f);
+        m.UVOffset.x = std::min(std::max(finite(m.UVOffset.x, 0.0f), -1000.0f), 1000.0f);
+        m.UVOffset.y = std::min(std::max(finite(m.UVOffset.y, 0.0f), -1000.0f), 1000.0f);
+        for (int i = 0; i < 3; i++)
+            m.EmissiveColor[i] = std::min(std::max(finite(m.EmissiveColor[i], 0.0f), 0.0f), 1.0f);
+        m.EmissiveIntensity = std::min(std::max(finite(m.EmissiveIntensity, 1.0f), 0.0f), 100.0f);
+        // Parametros do shader: sem nome vazio/repetido, no maximo 64, valores finitos.
+        if (m.ShaderParams.size() > 64)
+            m.ShaderParams.resize(64);
+        for (size_t i = 0; i < m.ShaderParams.size();) {
+            bool drop = m.ShaderParams[i].Name.empty() || m.ShaderParams[i].Name.size() > 128;
+            for (size_t j = 0; j < i && !drop; j++)
+                drop = (m.ShaderParams[j].Name == m.ShaderParams[i].Name);
+            if (drop) { m.ShaderParams.erase(m.ShaderParams.begin() + (long)i); continue; }
+            for (int k = 0; k < 4; k++)
+                m.ShaderParams[i].Value[k] = std::min(std::max(finite(m.ShaderParams[i].Value[k], 0.0f), -1.0e6f), 1.0e6f);
+            i++;
+        }
+    }
+
+    // Geometria de NIVEL editavel (Level Builder, estilo ProBuilder): uma malha poligonal
+    // (Level::EditableMesh) que o editor modela direto na viewport. E desenhada, projeta sombra,
+    // e pode ser colisor (ColliderShape::TriangleMesh/ConvexHull) como qualquer MeshRenderer.
+    //
+    //  - 'Materials' tem um MaterialComponent por SLOT (Face::MaterialSlot). Faltando slot, usa o
+    //    ultimo/padrao. O MaterialComponent da propria entidade e IGNORADO nesta entidade.
+    //  - 'Revision' identifica o CONTEUDO para o cache de GPU do Renderer. Quem altera Mesh ou
+    //    Materials chama Touch() DEPOIS de editar (o editor ja faz); copias do componente mantem a
+    //    mesma revisao porque tem o mesmo conteudo.
+    struct LevelMeshComponent {
+        Level::EditableMesh Mesh;
+        std::vector<MaterialComponent> Materials;
+        uint32_t Layers = Culling::kDefaultLayer;
+        bool CastShadows = true;
+
+        uint64_t Revision = NextRevision();
+
+        // Padrao: caixa 1x1x1 (um "Add Component" ja resulta em algo visivel e editavel).
+        LevelMeshComponent() : Mesh(Level::EditableMesh::CreateBox(glm::vec3(1.0f))) { Materials.emplace_back(); }
+        LevelMeshComponent(const LevelMeshComponent&) = default;
+        LevelMeshComponent& operator=(const LevelMeshComponent&) = default;
+
+        void Touch() { Revision = NextRevision(); }
+
+        // Material do slot (limitado ao ultimo existente; nunca nulo).
+        const MaterialComponent& MaterialForSlot(uint32_t slot) const {
+            static const MaterialComponent kDefault;
+            if (Materials.empty()) return kDefault;
+            return Materials[std::min<size_t>(slot, Materials.size() - 1)];
+        }
+
+        // Numero de slots usados pelas faces (>= 1).
+        uint32_t SlotCountUsed() const {
+            uint32_t n = 1;
+            for (const auto& f : Mesh.Faces) n = std::max(n, f.MaterialSlot + 1);
+            return n;
+        }
+
+        static uint64_t NextRevision() {
+            static uint64_t counter = 0;
+            return ++counter;
+        }
+    };
+
+    // O que uma camera desenha ao fundo (ver CameraComponent::ClearMode).
+    enum class CameraClearMode : int {
+        Skybox = 0,      // o fundo do EnvironmentComponent da cena (cor, gradiente ou panorama)
+        SolidColor = 1   // CameraComponent::ClearColor, sem skybox
     };
 
     // Tipo de projecao da camera. Perspective e o padrao (FPS/TPS);
@@ -195,6 +321,37 @@ namespace Prism {
         // valida isso, pois nao tem acesso a Scene/outras entidades.
         bool Primary = true;
 
+        // --- Opcoes de render DESTA camera (v20) ---------------------------
+        // O visual de uma camera (o que ela mostra ao fundo, o brilho da
+        // lente, o AO) pertence a ela, nao ao projeto: duas cameras da mesma
+        // cena podem ter visuais diferentes. O AMBIENTE (luz ambiente e
+        // skybox) e da cena - ver EnvironmentComponent. A viewport livre do
+        // editor usa os valores padrao abaixo.
+
+        // O que e desenhado ao fundo: o skybox do ambiente da cena ou uma cor chapada.
+        CameraClearMode ClearMode = CameraClearMode::Skybox;
+        glm::vec3 ClearColor = { 0.05f, 0.05f, 0.07f }; // sRGB (como o color picker); so ClearMode == SolidColor
+
+        // Multiplicador de brilho em espaco linear ANTES do tone mapping (1 = neutro).
+        float Exposure = 1.0f;
+
+        // Oclusao de ambiente em espaco de tela (ver SSAO.h). Desligar poupa
+        // dois passes de tela cheia.
+        bool SSAO = true;
+
+        // Pos-processamento (ver Renderer/PostProcess.h). A cena e desenhada em
+        // HDR linear; exposicao + ACES ja eram aplicados antes, entao com tudo
+        // desligado a imagem e a mesma.
+        bool Bloom = false;
+        float BloomThreshold = 1.0f;  // brilho linear a partir do qual brilha (HDR: 1 = branco)
+        float BloomIntensity = 0.15f; // quanto do bloom entra na imagem
+        bool FXAA = true;             // suaviza serrilhado de bordas
+        float Saturation = 1.0f;      // 0 = preto e branco, 1 = neutro
+        float Contrast = 1.0f;        // 1 = neutro
+
+        // Camadas que esta camera ENXERGA (mascara de bits; padrao = todas). Ver MeshRendererComponent::Layers.
+        uint32_t CullMask = Culling::kAllLayers;
+
         CameraComponent() = default;
         CameraComponent(const CameraComponent&) = default;
 
@@ -211,6 +368,47 @@ namespace Prism {
             }
             return glm::perspective(glm::radians(FOV), aspectRatio, NearClip, FarClip);
         }
+    };
+
+    // Fundo visivel da cena (ver Renderer::DrawSky e EnvironmentComponent):
+    //   Solid     - uma cor chapada (EnvironmentComponent::SkyColor).
+    //   Gradient  - o mesmo gradiente ceu/horizonte/chao da luz de ambiente.
+    //   Panorama  - imagem equirretangular (.hdr, .png, .jpg...) do projeto.
+    // O fundo NAO ilumina a cena: a luz de ambiente vem sempre do gradiente
+    // (Zenith/Horizon/Ground), qualquer que seja o modo.
+    enum class SkyMode : int {
+        Solid = 0,
+        Gradient = 1,
+        Panorama = 2
+    };
+
+    // Ambiente da CENA: luz ambiente (gradiente analitico de 3 cores) e
+    // skybox. Fica numa entidade qualquer (convencionalmente "Ambiente") e e
+    // gravado no .prismmap junto com o resto da cena. Vale a primeira
+    // entidade com este component; sem nenhuma, o Renderer usa os padroes
+    // abaixo. Pode ser alterado em runtime por script (ciclo dia/noite).
+    //
+    // Todas as cores sao sRGB (o que o color picker mostra). Os limites
+    // aceitos (aplicados pelo Renderer, que nunca confia no dado) sao:
+    // Ambient 0..2, cores 0..1, SkyIntensity 0..16.
+    struct EnvironmentComponent {
+        // Brilho MEDIO da luz ambiente. 0 = so as luzes iluminam.
+        float Ambient = 0.10f;
+
+        // Gradiente de ambiente: ceu (+Y), horizonte e chao (-Y).
+        glm::vec3 Zenith  = { 0.36f, 0.55f, 0.95f };
+        glm::vec3 Horizon = { 0.80f, 0.85f, 0.90f };
+        glm::vec3 Ground  = { 0.22f, 0.20f, 0.18f };
+
+        // Fundo visivel (so aparece em cameras com ClearMode == Skybox).
+        SkyMode Sky = SkyMode::Gradient;
+        glm::vec3 SkyColor = { 0.05f, 0.05f, 0.07f }; // modo Solid
+        AssetID SkyTexture;                           // modo Panorama; invalido = cai para cor chapada
+        float SkyRotation = 0.0f;                     // graus em torno de Y (-180..180)
+        float SkyIntensity = 1.0f;                    // multiplicador de brilho do panorama
+
+        EnvironmentComponent() = default;
+        EnvironmentComponent(const EnvironmentComponent&) = default;
     };
 
     // Tipos de luz suportados.
@@ -284,16 +482,10 @@ namespace Prism {
         // component em si so guarda o valor.
         float InnerSpotAngle = 30.0f;
 
-        // Se esta luz projeta sombra (shadow mapping) - ver
-        // Renderer::RenderShadowPass (Renderer.cpp) para a implementacao.
-        // So tem efeito visual para luzes Directional hoje: Point/Spot
-        // ainda nao tem shadow mapping implementado (exigiria projecao
-        // perspective ou cubemap, ver comentario grande em
-        // RenderShadowPass) - marcar isto numa luz Point/Spot nao causa
-        // erro, so nao produz sombra nenhuma ainda. Alem disso, so a
-        // PRIMEIRA luz Directional da cena com este campo true realmente
-        // projeta sombra num dado frame (uma unica luz por vez - ver
-        // mesmo comentario).
+        // Se esta luz projeta sombra (ver Renderer/ShadowSystem.h).
+        // Directional: cascaded shadow maps (4 cascatas). Spot: ate 4 luzes.
+        // Point: ate 2 luzes (cubemap). Alem do limite de cada tipo a luz
+        // continua acesa, so sem sombra (aviso unico no log).
         bool CastShadows = false;
 
         // Reservado para o futuro tipo Area (ver comentario em LightType)
@@ -365,6 +557,10 @@ namespace Prism {
         // (nao empurra nada) - usado para zonas de gatilho (ex: area que
         // dispara um script quando o player entra), nao para colisao solida.
         bool IsTrigger = false;
+
+        // Camada de FISICA (0..31) deste colisor. Quais camadas colidem entre si e
+        // definido pela matriz do projeto (Project::GetPhysicsMatrix); padrao: tudo colide.
+        int32_t Layer = 0;
 
         ColliderComponent() = default;
         ColliderComponent(const ColliderComponent&) = default;
@@ -511,15 +707,227 @@ namespace Prism {
     // Slot de script anexado a uma entidade. Guarda QUAL arquivo .lua esta
     // associado a ela; quem carrega e executa e o ScriptEngine (ver
     // Scripting/ScriptEngine.h), durante o Play.
+    // Tipo de uma variavel publica de script (ver ScriptComponent::Properties).
+    enum class ScriptPropertyType : uint8_t {
+        Number = 0,
+        Bool = 1,
+        String = 2
+    };
+
+    // Valor de uma variavel publica: o script declara os padroes numa tabela
+    // global `Properties = { speed = 5, name = "x", enabled = true }`, e a
+    // entidade guarda aqui apenas os valores que o usuario MUDOU no editor
+    // (overrides). Aplicados sobre a tabela `Properties` do script antes do
+    // OnCreate (ver ScriptEngine::LoadScript).
+    struct ScriptPropertyValue {
+        std::string Name;
+        ScriptPropertyType Type = ScriptPropertyType::Number;
+        double Number = 0.0;
+        bool Bool = false;
+        std::string String;
+    };
+
     struct ScriptComponent {
         // Caminho RELATIVO a Project::GetScriptDirectory() (ex:
         // "player_controller.lua") - nao absoluto, para o projeto
         // continuar portavel entre maquinas/pastas.
         std::string ScriptPath;
 
+        // Overrides das variaveis publicas do script (ver acima).
+        std::vector<ScriptPropertyValue> Properties;
+
         ScriptComponent() = default;
         ScriptComponent(const ScriptComponent&) = default;
         ScriptComponent(const std::string& scriptPath) : ScriptPath(scriptPath) {}
+    };
+
+    // Script em C++ (ver Scripting/NativeScript.h): nome da classe registrada
+    // com PRISM_REGISTER_SCRIPT no modulo do projeto. A instancia so existe
+    // durante o Play; aqui fica apenas o nome (se o modulo nao tiver a classe,
+    // o Play avisa no Console e a entidade segue sem script).
+    struct NativeScriptComponent {
+        std::string ClassName;
+
+        // Overrides das variaveis publicas (declaradas em ScriptableEntity::OnProperties):
+        // so as que o usuario mudou no editor. Aplicadas antes do OnCreate.
+        std::vector<ScriptPropertyValue> Properties;
+
+        NativeScriptComponent() = default;
+        NativeScriptComponent(const NativeScriptComponent&) = default;
+        NativeScriptComponent(const std::string& className) : ClassName(className) {}
+    };
+
+    // Emissor de particulas (billboards desenhados com blend). A simulacao e
+    // na CPU (ver Particles/ParticleSystem.h) e as particulas vivem em espaco
+    // de MUNDO: se a entidade se move, as ja emitidas ficam para tras. As
+    // particulas saem em um cone ao redor do eixo +Y LOCAL da entidade (gire
+    // a entidade para apontar o jato). Cores sao de tela (mesmo espaco dos
+    // seletores de cor); alpha vai de ColorStart.a a ColorEnd.a ao longo da vida.
+    struct ParticleEmitterComponent {
+        bool Enabled = true;
+        bool PlayOnStart = true;      // comeca a emitir ao iniciar o Play
+        bool Loop = true;             // false: emite so durante Duration
+        float Duration = 5.0f;        // segundos (so se Loop == false)
+
+        uint32_t MaxParticles = 500;  // teto de particulas vivas (1..10000)
+        float EmissionRate = 40.0f;   // particulas por segundo
+        uint32_t BurstCount = 0;      // emitidas de uma vez ao (re)comecar
+
+        float LifetimeMin = 0.8f;
+        float LifetimeMax = 1.5f;
+        float SpeedMin = 1.0f;
+        float SpeedMax = 3.0f;
+        float SpreadAngle = 25.0f;    // meio-angulo do cone, graus (0 = reto, 180 = esfera)
+        float GravityScale = 0.0f;    // multiplica -9.81 em Y (negativo = sobe)
+
+        float SizeStart = 0.30f;
+        float SizeEnd = 0.05f;
+        glm::vec4 ColorStart = { 1.0f, 0.70f, 0.20f, 1.0f };
+        glm::vec4 ColorEnd = { 1.0f, 0.10f, 0.0f, 0.0f };
+
+        bool Additive = true;         // true: soma luz (fogo, brilho); false: alpha normal (fumaca)
+        std::string TexturePath;      // opcional, relativo ao projeto; vazio = circulo suave
+
+        ParticleEmitterComponent() = default;
+        ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
+    };
+
+    // --- UI in-game -----------------------------------------------------------
+    // Documento de UI em texto (.prismui, XML - ver docs/ui-prismui.md): UMA
+    // entidade carrega uma arvore inteira de paineis/textos/botoes/imagens.
+    // Layout flexivel (row/column/ancoras), escala por resolucao e hot reload do
+    // arquivo. 'Runtime' NAO e salvo nem copiado (ver UI/UIDocumentRuntime.h).
+    struct UIDocumentComponent {
+        std::string Path;      // .prismui relativo ao projeto, ex: "UI/hud.prismui"
+        bool Visible = true;
+        int Layer = 0;         // ordem entre documentos: maior = por cima
+
+        ResetOnCopy<UIDocumentRuntime> Runtime;
+
+        UIDocumentComponent() = default;
+        UIDocumentComponent(const UIDocumentComponent&) = default;
+        UIDocumentComponent& operator=(const UIDocumentComponent&) = default;
+    };
+
+    // Junta (constraint) fisica entre ESTA entidade e outra (ou o mundo). Precisa de
+    // RigidBody + Collider nesta entidade (e na outra, se houver). O corpo e a outra
+    // entidade sao ligados em 'Anchor' (ponto no espaco local desta entidade, na pose
+    // inicial do Play). So existe durante o Play.
+    enum class JointType : int {
+        Fixed = 0,   // cola os dois corpos (sem movimento relativo)
+        Hinge,       // dobradica: gira em torno de 'Axis' (porta, roda)
+        Slider,      // desliza ao longo de 'Axis' (gaveta, elevador)
+        Distance,    // corda/mola: mantem a distancia entre os dois pontos
+        Point        // junta esferica: so fixa o ponto, gira livre (pendulo, ragdoll)
+    };
+
+    struct JointComponent {
+        JointType Type = JointType::Fixed;
+        // Nome (Tag) da outra entidade; vazio = preso ao MUNDO (parede invisivel).
+        // A primeira entidade com esse nome e que tem corpo fisico. Prefabs funcionam
+        // porque nao ha referencia por indice.
+        std::string ConnectedEntity;
+        glm::vec3 Anchor = { 0.0f, 0.0f, 0.0f }; // ponto de ligacao, espaco LOCAL desta entidade
+        glm::vec3 Axis = { 0.0f, 1.0f, 0.0f };   // Hinge/Slider: eixo, espaco local desta entidade
+
+        // Limites: graus (Hinge, -180..180), metros ao longo do eixo (Slider) ou
+        // distancia minima/maxima (Distance). Sem limites: Hinge gira livre, Slider
+        // sem fim, Distance mantem a distancia inicial.
+        bool UseLimits = false;
+        float LimitMin = -45.0f;
+        float LimitMax = 45.0f;
+
+        // Distance: mola em vez de haste rigida (frequencia em Hz, amortecimento 0..1+).
+        bool UseSpring = false;
+        float SpringFrequency = 2.0f;
+        float SpringDamping = 0.5f;
+
+        // Os dois corpos ligados colidem entre si? (padrao: nao)
+        bool CollideConnected = false;
+
+        JointComponent() = default;
+        JointComponent(const JointComponent&) = default;
+    };
+
+    // Personagem controlado por script (capsula "cinematica" do Jolt - CharacterVirtual): sobe
+    // degraus, anda em rampas e para na borda, sem as brigas de um RigidBody com
+    // FixedRotation. NAO use junto com RigidBody (o personagem vence). A posicao da
+    // entidade e o CENTRO da capsula. Controle por script: Move(vx, vy, vz) define a
+    // velocidade horizontal desejada (m/s), Jump(v), IsGrounded().
+    struct CharacterControllerComponent {
+        float Radius = 0.35f;
+        float Height = 1.8f;          // altura TOTAL da capsula (>= 2 * Radius)
+        float StepHeight = 0.4f;      // degrau maximo que sobe sozinho (0 = desliga)
+        float MaxSlopeAngle = 50.0f;  // graus; mais inclinado que isso nao e chao
+        float Mass = 70.0f;
+        float GravityScale = 1.0f;
+        bool StickToFloor = true;     // gruda no chao ao descer rampas/degraus pequenos
+
+        CharacterControllerComponent() = default;
+        CharacterControllerComponent(const CharacterControllerComponent&) = default;
+    };
+
+    // Fonte de som anexada a uma entidade. Toca durante o modo Play (ver
+    // Audio/AudioEngine.h): comeca sozinha com PlayOnStart, ou por script
+    // (entity:PlaySound()). Espacial (3D): volume cai com a distancia ate o
+    // AudioListenerComponent (ou a camera primaria, se nao houver listener).
+    struct AudioSourceComponent {
+        AssetID Clip;                  // asset de audio (.wav/.mp3/.ogg/.flac); invalido = sem som
+        float Volume = 1.0f;           // 0..2
+        float Pitch = 1.0f;            // 0.1..4 (1 = normal)
+        bool Loop = false;
+        bool PlayOnStart = true;       // tocar ao iniciar o Play
+        bool Spatial = true;           // false = som 2D (ignora posicao, ex: musica/UI)
+        float MinDistance = 1.0f;      // ate aqui, volume cheio
+        float MaxDistance = 25.0f;     // a partir daqui, mudo (queda linear entre os dois)
+        AudioBus Bus = AudioBus::SFX;  // canal de volume (ver Audio/AudioBus.h); bloco v2 da cena
+
+        AudioSourceComponent() = default;
+        AudioSourceComponent(const AudioSourceComponent&) = default;
+    };
+
+    // Marca a entidade cujos "ouvidos" definem o som 3D (posicao/orientacao).
+    // Com varios, vale o primeiro Active. Sem nenhum, a camera primaria faz o papel.
+    struct AudioListenerComponent {
+        bool Active = true;
+
+        AudioListenerComponent() = default;
+        AudioListenerComponent(const AudioListenerComponent&) = default;
+    };
+
+    // Animacao esqueletica / de nos de um modelo importado (.glb/.gltf/.fbx).
+    // Fica na RAIZ do modelo (ou em qualquer ancestral das entidades de malha):
+    // toda entidade de malha do MESMO modelo, nela ou abaixo dela, e deformada
+    // pela pose deste Animator. Sem Animator, a malha aparece na pose de bind.
+    //
+    // 'ModelAsset' escolhe o esqueleto e os clipes (o editor preenche ao
+    // importar o modelo). 'Clip' e o clipe tocado ao iniciar o Play (se
+    // PlayOnStart); durante o jogo, scripts trocam com entity:PlayAnimation().
+    // O estado de execucao (tempo, crossfade, paleta de ossos) fica em
+    // 'Runtime' e NAO e salvo nem copiado (ver Animation/AnimatorRuntime.h).
+    struct AnimatorComponent {
+        AssetID ModelAsset;           // modelo de onde vem o esqueleto/clipes; invalido = inativo
+        std::string Clip;             // nome do clipe inicial (vazio = nenhum)
+        bool PlayOnStart = true;      // tocar 'Clip' ao iniciar o Play
+        bool Loop = true;             // repetir o clipe
+        float Speed = 1.0f;           // 0 = congelado, 1 = normal, 2 = dobro...
+
+        // Maquina de estados (vazia = so o clipe 'Clip'). Com estados, o Play entra no
+        // estado de entrada e as transicoes decidem o resto (ver AnimationGraph.h).
+        AnimGraph Graph;
+
+        // Eventos de animacao (clipe + tempo -> OnAnimationEvent no script da entidade).
+        std::vector<AnimEvent> Events;
+
+        // Root motion: o movimento horizontal (XZ) do osso raiz do clipe vira movimento
+        // da ENTIDADE do Animator (e some da pose, para o personagem nao "escorregar").
+        bool RootMotion = false;
+
+        ResetOnCopy<AnimatorRuntime> Runtime; // so execucao - ver AnimationSystem
+
+        AnimatorComponent() = default;
+        AnimatorComponent(const AnimatorComponent&) = default;
+        AnimatorComponent& operator=(const AnimatorComponent&) = default;
     };
 
     // Um raio FISICO (contra ColliderComponent, via Jolt - mesmo raycast
@@ -568,6 +976,9 @@ namespace Prism {
         // (Entity::GetParent/RelationshipComponent::Children) toda vez
         // que o raio e testado.
         bool IgnoreParentAndSiblings = true;
+
+        // Camadas de fisica que o raio enxerga (mascara de bits; padrao = todas).
+        uint32_t LayerMask = Physics::kAllLayers;
 
         // --- Resultado do ultimo teste (somente leitura pela UI/scripts;
         // escrito exclusivamente por Scene::UpdateRaycastComponents) ---

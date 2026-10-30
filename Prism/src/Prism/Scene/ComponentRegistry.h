@@ -43,7 +43,11 @@
 #include <vector>
 #include <functional>
 #include <fstream>
+#include <istream>
+#include <ostream>
+#include <sstream>
 #include <cstdint>
+#include <type_traits>
 
 namespace Prism {
 
@@ -71,7 +75,7 @@ namespace Prism {
         // byte - isso e escrito por SceneSerializer::Serialize antes de
         // chamar isto, igual o padrao que ja existia antes deste
         // registro existir) - so chamado quando Has(entity) == true.
-        std::function<void(std::ofstream&, Entity)> Serialize;
+        std::function<void(std::ostream&, Entity)> Serialize;
 
         // Le os campos do Component (o AddComponent<T>() e feito DENTRO
         // desta funcao, nao antes - assim um component com validacao que
@@ -83,7 +87,7 @@ namespace Prism {
         // 'entityIndexForLogging' e so para a mensagem de erro (ver
         // padrao "arquivo de cena corrompido (X da entidade N)" que ja
         // existia antes deste registro).
-        std::function<bool(std::ifstream&, Entity, uint32_t)> Deserialize;
+        std::function<bool(std::istream&, Entity, uint32_t)> Deserialize;
 
         // Copia os campos do Component de 'source' para 'destination' (que
         // ainda NAO deve ter este Component - AddComponent<T> dentro
@@ -107,6 +111,29 @@ namespace Prism {
         // Undo/Redo (e so um ajuste de consistencia, nao uma edicao que o
         // usuario pediu).
         std::function<void(Entity, Scene&)> OnAfterAddInEditor = nullptr;
+
+        // --- Versionamento do formato em disco (v21+) -------------------------
+        // Cada component e gravado como um BLOCO [nome][versao][tamanho][bytes]
+        // (ver ComponentRegistry::WriteComponentBlocks). O 'nome' no arquivo e o
+        // DisplayName acima: renomea-lo exige migracao.
+        //
+        // Regra de evolucao: campo novo SEMPRE no FIM do bloco, e Version sobe
+        // em 1. O Deserialize le os campos novos so quando
+        // ComponentRegistry::CurrentBlockVersion() >= a versao que os criou
+        // (blocos antigos sao mais curtos). Como o bloco tem tamanho, um arquivo
+        // de uma versao MAIS NOVA (campos extras no fim) ainda abre, e um
+        // component desconhecido e simplesmente pulado - nada disso exige
+        // subir a versao do arquivo inteiro.
+        uint32_t Version = 1;
+
+        // Legado (mapas v19-v20 / prefabs v7-v8, formato "flag + campos"):
+        // este component nao existia em arquivos cujo "formato equivalente de
+        // cena" e MENOR que isto (nao ha flag dele no arquivo). 0 = sempre existiu.
+        uint32_t AddedInSceneFormat = 0;
+
+        // Legado: versao do layout deste component dentro de um arquivo antigo de
+        // formato equivalente 'sceneFormat'. nullptr = sempre 1.
+        std::function<uint32_t(uint32_t sceneFormat)> LegacyVersion = nullptr;
     };
 
     class ComponentRegistry {
@@ -128,30 +155,53 @@ namespace Prism {
         // FORMATO BINARIO GERADO E IDENTICO ao de antes deste registro
         // existir - nenhuma migracao de versao necessaria por esta
         // mudanca isoladamente.
-        static void WriteString(std::ofstream& out, const std::string& str);
-        static bool ReadString(std::ifstream& in, std::string& outStr);
+        static void WriteString(std::ostream& out, const std::string& str);
+        static bool ReadString(std::istream& in, std::string& outStr);
 
         template<typename T>
-        static void WriteRaw(std::ofstream& out, const T& value) {
+        static void WriteRaw(std::ostream& out, const T& value) {
             static_assert(std::is_trivially_copyable_v<T>, "WriteRaw so deve ser usado com tipos POD (floats, ints, glm::vec3, etc).");
             out.write(reinterpret_cast<const char*>(&value), sizeof(T));
         }
 
         template<typename T>
-        static bool ReadRaw(std::ifstream& in, T& value) {
+        static bool ReadRaw(std::istream& in, T& value) {
             static_assert(std::is_trivially_copyable_v<T>, "ReadRaw so deve ser usado com tipos POD (floats, ints, glm::vec3, etc).");
             in.read(reinterpret_cast<char*>(&value), sizeof(T));
             return (bool)in;
         }
 
+        // --- Blocos de component no arquivo (v21+) ----------------------------
+        // Escreve os components PRESENTES em 'entity' como blocos com tamanho
+        // (uint32 contagem + [nome, versao, tamanho, bytes] cada).
+        static void WriteComponentBlocks(std::ostream& out, Entity entity);
+
+        // Le os blocos de UMA entidade. Component desconhecido (de uma versao
+        // mais nova da engine) e pulado com um aviso; um bloco cujo Deserialize
+        // falha descarta SO aquele component (erro no log) e segue. false =
+        // fluxo corrompido (impossivel continuar a ler o arquivo).
+        static bool ReadComponentBlocks(std::istream& in, Entity entity, uint32_t entityIndex);
+
+        // Formato legado (mapas v19-v20, prefabs v7-v8): uma flag + campos por
+        // component, na ordem do registro. 'sceneFormat' e o formato equivalente
+        // de cena (prefab v7 = 19, v8 = 20). false = corrompido.
+        static bool ReadLegacyComponents(std::istream& in, Entity entity, uint32_t entityIndex, uint32_t sceneFormat);
+
+        // Versao do bloco que o Deserialize em andamento esta lendo (ver
+        // ComponentTypeInfo::Version). Valido SO dentro de um Deserialize
+        // chamado pelas funcoes acima.
+        static uint32_t CurrentBlockVersion() { return s_CurrentBlockVersion; }
+
     private:
+        static uint32_t s_CurrentBlockVersion;
+
         // Chamado por RegisterAll() uma vez por tipo de Component - ver
         // ComponentRegistration.cpp para todos os usos.
         template<typename T>
         static void Register(
             std::string displayName,
-            std::function<void(std::ofstream&, Entity)> serialize,
-            std::function<bool(std::ifstream&, Entity, uint32_t)> deserialize,
+            std::function<void(std::ostream&, Entity)> serialize,
+            std::function<bool(std::istream&, Entity, uint32_t)> deserialize,
             std::function<void(Entity, Scene&)> onAfterAddInEditor = nullptr)
         {
             ComponentTypeInfo info;

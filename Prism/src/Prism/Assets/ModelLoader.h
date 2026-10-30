@@ -23,15 +23,24 @@
 //     arquivo (ex: .glb) so sao gravadas em disco quando
 //     ModelImportOptions::ExtractEmbeddedTextures e true - o carregamento
 //     em runtime do Renderer nunca escreve nada no disco.
-//   - NAO e importado: esqueleto/skinning (animacao), camera/luzes embutidas
-//     no arquivo, nem a hierarquia de nos como entidades separadas.
+//   - ANIMACAO: se o arquivo tem ossos (skinning) ou clipes de animacao, o
+//     resultado traz um ModelRig (ver Animation/ModelRig.h): esqueleto, ossos
+//     e clipes. Nesse caso as malhas skinadas NAO tem a transformacao de no
+//     gravada nos vertices (o osso faz isso) e carregam ate 4 ossos/pesos por
+//     vertice; malhas rigidas de nos ANIMADOS (porta, helice) ganham um osso
+//     sintetico. Sem ossos e sem clipes: ModelImportResult::Rig e nulo e tudo
+//     funciona como antes (hierarquia gravada nos vertices).
+//   - NAO e importado: camera/luzes embutidas no arquivo, morph targets, nem
+//     a hierarquia de nos como entidades separadas.
 // ============================================================================
 
 #include "../Renderer/PrimitiveMeshFactory.h" // GeneratedMesh
+#include "../Animation/ModelRig.h"
 #include <glm/glm.hpp>
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace Prism {
 
@@ -69,6 +78,9 @@ namespace Prism {
         std::string Error;                   // vazio se Success == true; mensagem legivel se false
         GeneratedMesh Mesh;                  // TODOS os submeshes mesclados - valido somente se Success == true
         std::vector<ImportedSubmesh> Submeshes; // um por material usado - valido somente se Success == true
+
+        // Esqueleto + clipes (nulo se o arquivo nao tem ossos nem animacao).
+        std::shared_ptr<ModelRig> Rig;
     };
 
     class ModelLoader {
