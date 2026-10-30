@@ -101,7 +101,7 @@ namespace PrismEditor {
         Prism::AnimGraph& g = animator.Graph;
         const Prism::AnimatorComponent before = animator;
         auto commit = [&]() { CommitComponentEdit(m_Ctx, before, animator, "Animator"); };
-        const int stateCount = (int)g.States.size();
+        int stateCount = (int)g.States.size(); // atualizado quando estados sao adicionados/removidos no mesmo quadro
 
         if (m_AnimSelState >= stateCount) m_AnimSelState = -1;
         if (m_AnimSelTransition >= (int)g.Transitions.size()) m_AnimSelTransition = -1;
@@ -170,6 +170,7 @@ namespace PrismEditor {
             if (!clips.empty()) st.Clip = clips[0];
             st.EditorPos = glm::vec2(30.0f + 130.0f * (g.States.size() % 4), 60.0f + 60.0f * (g.States.size() / 4));
             g.States.push_back(st);
+            stateCount = (int)g.States.size();
             m_AnimSelState = (int)g.States.size() - 1;
             m_AnimSelTransition = -1;
             commit();
@@ -194,8 +195,13 @@ namespace PrismEditor {
         ImGui::SameLine();
         ImGui::BeginDisabled(m_AnimSelState < 0 && m_AnimSelTransition < 0);
         if (ImGui::SmallButton("Remover selecionado")) {
-            if (m_AnimSelTransition >= 0) g.Transitions.erase(g.Transitions.begin() + m_AnimSelTransition);
-            else RemoveState(g, m_AnimSelState);
+            if (m_AnimSelTransition >= 0 && m_AnimSelTransition < (int)g.Transitions.size())
+                g.Transitions.erase(g.Transitions.begin() + m_AnimSelTransition);
+            else if (m_AnimSelState >= 0 && m_AnimSelState < (int)g.States.size())
+                RemoveState(g, m_AnimSelState);
+            // O canvas abaixo percorre os estados neste mesmo quadro: sem recalcular, ele lia alem do fim
+            // do vetor (crash "parametro invalido" do MSVC ao excluir um estado ou uma seta).
+            stateCount = (int)g.States.size();
             m_AnimSelState = -1;
             m_AnimSelTransition = -1;
             commit();
