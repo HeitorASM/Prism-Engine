@@ -45,6 +45,9 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MeshRendererComponent>())
             DrawMeshRendererUI();
 
+        if (m_Ctx.SelectedEntity.HasComponent<Prism::LevelMeshComponent>())
+            DrawLevelMeshUI();
+
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MaterialComponent>())
             DrawMaterialUI();
 

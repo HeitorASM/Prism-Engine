@@ -38,6 +38,62 @@
 
 namespace Prism {
 
+    namespace {
+        // Corpo do bloco de Material (versao 4), compartilhado por MaterialComponent e pelos
+        // materiais por slot do LevelMeshComponent.
+        void WriteMaterialBody(std::ostream& out, const MaterialComponent& c) {
+            ComponentRegistry::WriteString(out, c.AlbedoPath);
+            ComponentRegistry::WriteString(out, c.NormalPath);
+            ComponentRegistry::WriteString(out, c.RoughnessMetallicPath);
+            ComponentRegistry::WriteRaw(out, c.AlbedoTint);
+            ComponentRegistry::WriteRaw(out, c.RoughnessFactor);
+            ComponentRegistry::WriteRaw(out, c.MetallicFactor);
+            ComponentRegistry::WriteRaw(out, c.LinkedAsset);
+            ComponentRegistry::WriteRaw(out, c.BlendMode);
+            ComponentRegistry::WriteRaw(out, c.Opacity);
+            ComponentRegistry::WriteRaw(out, c.AlphaCutoff);
+            ComponentRegistry::WriteRaw(out, c.UVTiling);
+            ComponentRegistry::WriteRaw(out, c.UVOffset);
+            ComponentRegistry::WriteRaw(out, c.EmissiveColor);
+            ComponentRegistry::WriteRaw(out, c.EmissiveIntensity);
+            ComponentRegistry::WriteRaw(out, c.DoubleSided);
+            ComponentRegistry::WriteString(out, c.ShaderPath);
+            ComponentRegistry::WriteRaw(out, (uint32_t)c.ShaderParams.size());
+            for (const auto& param : c.ShaderParams) {
+                ComponentRegistry::WriteString(out, param.Name);
+                ComponentRegistry::WriteRaw(out, param.Value);
+            }
+        }
+
+        // 'version' = versao do bloco de Material que escreveu os dados (1..4).
+        bool ReadMaterialBody(std::istream& in, MaterialComponent& c, uint32_t version) {
+            using R = ComponentRegistry;
+            bool ok = R::ReadString(in, c.AlbedoPath) && R::ReadString(in, c.NormalPath)
+                   && R::ReadString(in, c.RoughnessMetallicPath) && R::ReadRaw(in, c.AlbedoTint)
+                   && R::ReadRaw(in, c.RoughnessFactor) && R::ReadRaw(in, c.MetallicFactor)
+                   && R::ReadRaw(in, c.LinkedAsset);
+            if (ok && version >= 2) {
+                ok = R::ReadRaw(in, c.BlendMode) && R::ReadRaw(in, c.Opacity) && R::ReadRaw(in, c.AlphaCutoff)
+                  && R::ReadRaw(in, c.UVTiling) && R::ReadRaw(in, c.UVOffset) && R::ReadRaw(in, c.EmissiveColor)
+                  && R::ReadRaw(in, c.EmissiveIntensity) && R::ReadRaw(in, c.DoubleSided);
+            }
+            if (ok && version >= 3)
+                ok = R::ReadString(in, c.ShaderPath);
+            if (ok && version >= 4) {
+                uint32_t count = 0;
+                ok = R::ReadRaw(in, count) && count <= 64;
+                for (uint32_t i = 0; ok && i < count; i++) {
+                    MaterialShaderParam param;
+                    ok = R::ReadString(in, param.Name) && R::ReadRaw(in, param.Value);
+                    if (ok) c.ShaderParams.push_back(std::move(param));
+                }
+            }
+            if (ok)
+                SanitizeMaterialSurface(c);
+            return ok;
+        }
+    }
+
     void ComponentRegistry::RegisterAll() {
         if (!s_Registry.empty())
             return; // idempotente - ver comentario em RegisterAll (ComponentRegistry.h)
@@ -104,66 +160,59 @@ namespace Prism {
         s_Registry.back().Version = 2;
 
         // --- MaterialComponent -------------------------------------------------
+        // Campos (ver WriteMaterialBody): v1 base, v2 superficie, v3 shader, v4 parametros do shader.
         Register<MaterialComponent>(
             "Material",
             [](std::ostream& out, Entity e) {
-                auto& c = e.GetComponent<MaterialComponent>();
-                WriteString(out, c.AlbedoPath);
-                WriteString(out, c.NormalPath);
-                WriteString(out, c.RoughnessMetallicPath);
-                WriteRaw(out, c.AlbedoTint);
-                WriteRaw(out, c.RoughnessFactor);
-                WriteRaw(out, c.MetallicFactor);
-                WriteRaw(out, c.LinkedAsset); // AssetID e so um uint64_t (trivialmente copiavel) - ver Assets/AssetID.h
-                // v2 do bloco: superficie (blend, opacidade, UV, emissao, dupla face)
-                WriteRaw(out, c.BlendMode);
-                WriteRaw(out, c.Opacity);
-                WriteRaw(out, c.AlphaCutoff);
-                WriteRaw(out, c.UVTiling);
-                WriteRaw(out, c.UVOffset);
-                WriteRaw(out, c.EmissiveColor);
-                WriteRaw(out, c.EmissiveIntensity);
-                WriteRaw(out, c.DoubleSided);
-                // v3: shader do material
-                WriteString(out, c.ShaderPath);
-                // v4: valores dos parametros do shader
-                WriteRaw(out, (uint32_t)c.ShaderParams.size());
-                for (const auto& param : c.ShaderParams) {
-                    WriteString(out, param.Name);
-                    WriteRaw(out, param.Value);
-                }
+                WriteMaterialBody(out, e.GetComponent<MaterialComponent>());
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MaterialComponent>();
-                bool ok = ReadString(in, c.AlbedoPath) && ReadString(in, c.NormalPath)
-                       && ReadString(in, c.RoughnessMetallicPath) && ReadRaw(in, c.AlbedoTint)
-                       && ReadRaw(in, c.RoughnessFactor) && ReadRaw(in, c.MetallicFactor)
-                       && ReadRaw(in, c.LinkedAsset);
-                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
-                    ok = ReadRaw(in, c.BlendMode) && ReadRaw(in, c.Opacity) && ReadRaw(in, c.AlphaCutoff)
-                      && ReadRaw(in, c.UVTiling) && ReadRaw(in, c.UVOffset) && ReadRaw(in, c.EmissiveColor)
-                      && ReadRaw(in, c.EmissiveIntensity) && ReadRaw(in, c.DoubleSided);
-                }
-                if (ok && ComponentRegistry::CurrentBlockVersion() >= 3)
-                    ok = ReadString(in, c.ShaderPath);
-                if (ok && ComponentRegistry::CurrentBlockVersion() >= 4) {
-                    uint32_t count = 0;
-                    ok = ReadRaw(in, count) && count <= 64;
-                    for (uint32_t i = 0; ok && i < count; i++) {
-                        MaterialShaderParam param;
-                        ok = ReadString(in, param.Name) && ReadRaw(in, param.Value);
-                        if (ok) c.ShaderParams.push_back(std::move(param));
-                    }
-                }
-                if (!ok) {
+                if (!ReadMaterialBody(in, c, ComponentRegistry::CurrentBlockVersion())) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (material da entidade ", entityIndex, ").");
                     return false;
                 }
-                SanitizeMaterialSurface(c);
                 return true;
             }
         );
         s_Registry.back().Version = 4;
+
+        // --- LevelMeshComponent (Level Builder) ------------------------------------
+        // v1: Layers, CastShadows, contagem de materiais (1..64) + corpo de cada material (v4), EditableMesh.
+        Register<LevelMeshComponent>(
+            "Level Mesh",
+            [](std::ostream& out, Entity e) {
+                auto& c = e.GetComponent<LevelMeshComponent>();
+                WriteRaw(out, c.Layers);
+                WriteRaw(out, (uint8_t)(c.CastShadows ? 1 : 0));
+                const uint32_t count = (uint32_t)std::min<size_t>(std::max<size_t>(c.Materials.size(), 1), 64);
+                WriteRaw(out, count);
+                for (uint32_t i = 0; i < count; i++)
+                    WriteMaterialBody(out, c.MaterialForSlot(i));
+                c.Mesh.Write(out);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<LevelMeshComponent>();
+                uint8_t cast = 1;
+                uint32_t count = 0;
+                bool ok = ReadRaw(in, c.Layers) && ReadRaw(in, cast) && ReadRaw(in, count) && count >= 1 && count <= 64;
+                c.Materials.clear();
+                for (uint32_t i = 0; ok && i < count; i++) {
+                    MaterialComponent m;
+                    ok = ReadMaterialBody(in, m, 4);
+                    if (ok) c.Materials.push_back(std::move(m));
+                }
+                ok = ok && Level::EditableMesh::Read(in, c.Mesh) && c.Mesh.IsValid();
+                if (!ok) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (level mesh da entidade ", entityIndex, ").");
+                    return false;
+                }
+                c.CastShadows = cast != 0;
+                c.Touch();
+                return true;
+            }
+        );
+        s_Registry.back().Version = 1;
 
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(

@@ -1,6 +1,7 @@
 #include "EditorLayer.h"
 #include "ProjectManagerLayer.h"
 #include <PrismVersion.h>
+#include "../Core/LevelEditing.h"
 #include "../Core/EntityOps.h"
 #include "../Core/FileDialog.h"
 #include "../Core/EditorIcons.h"
@@ -497,6 +498,28 @@ namespace PrismEditor {
                     }
                     if (hasEnvironment && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("A cena ja tem um Ambiente.");
+                }
+                // Level Builder (estilo ProBuilder): geometria editavel direto na viewport. Depois de criar,
+                // Tab (ou o botao da viewport) liga a edicao de vertices/arestas/faces.
+                if (ImGui::BeginMenu("Criar Level Builder")) {
+                    const LevelEditing::Shape shapes[] = { LevelEditing::Shape::Box, LevelEditing::Shape::Room, LevelEditing::Shape::Plane,
+                                                           LevelEditing::Shape::Cylinder, LevelEditing::Shape::Stairs, LevelEditing::Shape::Ramp };
+                    for (LevelEditing::Shape shape : shapes) {
+                        if (!ImGui::MenuItem(LevelEditing::ShapeLabel(shape)))
+                            continue;
+                        auto command = Prism::CreateScope<CreatePresetEntityCommand>(m_Ctx.ActiveScene, LevelEditing::ShapeLabel(shape), "Level Mesh",
+                            [shape](Prism::Entity entity) {
+                                auto& level = entity.AddComponent<Prism::LevelMeshComponent>();
+                                level.Mesh = LevelEditing::MakeShape(shape);
+                                level.Materials.front().AlbedoTint = glm::vec3(0.75f);
+                                level.Touch();
+                            });
+                        CreatePresetEntityCommand* raw = command.get();
+                        m_Ctx.History.Execute(std::move(command));
+                        m_Ctx.SelectedEntity = raw->GetCreatedEntity();
+                        LevelEditing::SetActive(m_Ctx, false);
+                    }
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Criar Character")) {
                     // Preset de conveniencia: combo comum para um NPC/player

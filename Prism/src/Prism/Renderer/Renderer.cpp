@@ -97,6 +97,8 @@ namespace Prism {
     std::unordered_map<std::string, Scope<Texture2D>> Renderer::s_TextureCache;
     std::unordered_map<AssetID, Renderer::ModelCacheEntry> Renderer::s_ModelMeshCache;
     std::unordered_map<AssetID, Renderer::RigCacheEntry> Renderer::s_RigCache;
+    std::unordered_map<uint64_t, Renderer::LevelMeshGpu> Renderer::s_LevelMeshCache;
+    uint64_t Renderer::s_LevelMeshStamp = 0;
 
     // ========================================================================
     // Shaders: ficam em arquivos (Prism/shaders/*.vert|*.frag), nao mais em
@@ -252,6 +254,7 @@ namespace Prism {
     void Renderer::Shutdown() {
         for (auto& mesh : s_Meshes)
             mesh.reset();
+        s_LevelMeshCache.clear();
         s_MaterialShaders.clear();
         s_ActiveShader = nullptr;
         s_BasicShader.reset();
@@ -500,6 +503,55 @@ namespace Prism {
             // silenciosamente da cena.
         }
         return s_Meshes[MeshIndex(meshRenderer.Mesh)].get();
+    }
+
+    const Renderer::LevelMeshGpu& Renderer::ResolveLevelMesh(const LevelMeshComponent& levelMesh) {
+        auto found = s_LevelMeshCache.find(levelMesh.Revision);
+        if (found != s_LevelMeshCache.end()) {
+            found->second.LastUsed = s_LevelMeshStamp;
+            return found->second;
+        }
+
+        LevelMeshGpu& entry = s_LevelMeshCache[levelMesh.Revision];
+        entry.LastUsed = s_LevelMeshStamp;
+        glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
+        for (const Level::BuiltSubmesh& built : levelMesh.Mesh.Build()) {
+            if (built.Vertices.empty() || built.Indices.empty())
+                continue;
+            std::vector<MeshVertex> vertices(built.Vertices.size());
+            for (size_t i = 0; i < built.Vertices.size(); i++) {
+                const Level::BuiltVertex& src = built.Vertices[i];
+                MeshVertex& dst = vertices[i];
+                dst.Position[0] = src.Position.x; dst.Position[1] = src.Position.y; dst.Position[2] = src.Position.z;
+                dst.Normal[0] = src.Normal.x; dst.Normal[1] = src.Normal.y; dst.Normal[2] = src.Normal.z;
+                dst.UV[0] = src.UV.x; dst.UV[1] = src.UV.y;
+                dst.Tangent[0] = src.Tangent.x; dst.Tangent[1] = src.Tangent.y; dst.Tangent[2] = src.Tangent.z;
+                lo = glm::min(lo, src.Position);
+                hi = glm::max(hi, src.Position);
+            }
+            LevelMeshPart part;
+            entry.Owned.push_back(Mesh::Create(vertices, built.Indices));
+            part.MeshPtr = entry.Owned.back().get();
+            part.MaterialSlot = built.MaterialSlot;
+            entry.Parts.push_back(part);
+        }
+        if (!entry.Parts.empty()) {
+            entry.BoundsMin = lo;
+            entry.BoundsMax = hi;
+        }
+        return entry;
+    }
+
+    void Renderer::CollectLevelMeshGarbage() {
+        // Uma entrada por revisao: cada edicao no editor deixa a anterior para tras.
+        s_LevelMeshStamp++;
+        if (s_LevelMeshCache.size() < 8)
+            return;
+        constexpr uint64_t kKeepFrames = 300;
+        for (auto it = s_LevelMeshCache.begin(); it != s_LevelMeshCache.end();) {
+            if (s_LevelMeshStamp - it->second.LastUsed > kKeepFrames) it = s_LevelMeshCache.erase(it);
+            else ++it;
+        }
     }
 
     // Matriz normal (transpose(inverse(mat3))) de 'model'. Ver o comentario
@@ -1115,13 +1167,36 @@ namespace Prism {
             VisibleMesh visible;
             visible.Entity = entityHandle;
             visible.MeshPtr = mesh;
-            visible.MeshRenderer = &meshRenderer;
+            visible.BaseColor = glm::vec3(meshRenderer.Color.x, meshRenderer.Color.y, meshRenderer.Color.z);
             // MaterialComponent e OPCIONAL (uma entidade pode ter so MeshRendererComponent); quando presente,
             // ganha prioridade sobre MeshRendererComponent::Color.
             visible.Material = scene.GetRegistry().try_get<MaterialComponent>(entityHandle);
             visible.Model = model;
             visible.Palette = ResolveBonePalette(scene, entityHandle, meshRenderer, mesh);
             out.push_back(visible);
+        }
+
+        // Geometria de nivel (Level Builder): uma entrada por slot de material usado. Sem esqueleto.
+        auto levelView = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
+        for (auto entityHandle : levelView) {
+            const LevelMeshComponent& level = levelView.get<LevelMeshComponent>(entityHandle);
+            if (!Culling::LayerVisible(level.Layers, cullMask)) { s_CullStats.LayerHidden++; continue; }
+            const LevelMeshGpu& gpu = ResolveLevelMesh(level);
+            if (gpu.Parts.empty())
+                continue;
+            const glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
+            const float localMin[3] = { gpu.BoundsMin.x, gpu.BoundsMin.y, gpu.BoundsMin.z };
+            const float localMax[3] = { gpu.BoundsMax.x, gpu.BoundsMax.y, gpu.BoundsMax.z };
+            if (!frustum.IntersectsLocalBox(localMin, localMax, glm::value_ptr(model))) { s_CullStats.FrustumCulled++; continue; }
+            s_CullStats.Drawn++;
+            for (const LevelMeshPart& part : gpu.Parts) {
+                VisibleMesh visible;
+                visible.Entity = entityHandle;
+                visible.MeshPtr = part.MeshPtr;
+                visible.Material = &level.MaterialForSlot(part.MaterialSlot);
+                visible.Model = model;
+                out.push_back(visible);
+            }
         }
     }
 
@@ -1392,6 +1467,7 @@ namespace Prism {
         const uint32_t cullMask = (camera.LayoutMagic == CameraRenderSettings::kLayoutMagic) ? camera.CullMask : Culling::kAllLayers;
         const Culling::Frustum cameraFrustum = Culling::Frustum::FromViewProjection(glm::value_ptr(viewProjection));
         s_CullStats = CullStats{};
+        CollectLevelMeshGarbage();
 
         // Objetos visiveis desta camera, coletados UMA vez (pre-passe do SSAO e passe principal usam a mesma lista).
         CollectVisibleMeshes(scene, cameraFrustum, cullMask, scratch.Visible);
@@ -1444,6 +1520,27 @@ namespace Prism {
                     caster.Bones = palette.Data;
                     caster.BoneCount = palette.Count;
                     casters.push_back(caster);
+                }
+                auto levelCasters = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
+                for (auto handle : levelCasters) {
+                    const LevelMeshComponent& level = levelCasters.get<LevelMeshComponent>(handle);
+                    if (!level.CastShadows)
+                        continue;
+                    const LevelMeshGpu& gpu = ResolveLevelMesh(level);
+                    if (gpu.Parts.empty())
+                        continue;
+                    const glm::mat4 model = scene.GetWorldTransform(Entity(handle, &scene));
+                    for (const LevelMeshPart& part : gpu.Parts) {
+                        if (level.MaterialForSlot(part.MaterialSlot).BlendMode == MaterialBlendMode::Blend)
+                            continue; // translucido nao projeta sombra (igual aos MeshRenderers)
+                        ShadowCaster caster;
+                        caster.Geometry = part.MeshPtr;
+                        caster.Model = model;
+                        caster.LocalMin = part.MeshPtr->GetLocalBoundsMin();
+                        caster.LocalMax = part.MeshPtr->GetLocalBoundsMax();
+                        caster.HasBounds = true;
+                        casters.push_back(caster);
+                    }
                 }
             }
         }
@@ -1534,7 +1631,7 @@ namespace Prism {
             draw.Material = material;
             draw.ShaderPtr = material ? GetMaterialShader(material->ShaderPath, s_BasicShader.get()) : s_BasicShader.get();
             draw.Model = visibleMesh.Model;
-            draw.Color = glm::vec3(visibleMesh.MeshRenderer->Color.x, visibleMesh.MeshRenderer->Color.y, visibleMesh.MeshRenderer->Color.z);
+            draw.Color = visibleMesh.BaseColor;
             if (material)
                 draw.Color = glm::vec3(material->AlbedoTint.x, material->AlbedoTint.y, material->AlbedoTint.z);
             draw.Palette = visibleMesh.Palette;

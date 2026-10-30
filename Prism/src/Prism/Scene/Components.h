@@ -20,6 +20,7 @@
 #include "../Animation/AnimatorRuntime.h"
 #include "../Animation/AnimationGraph.h"
 #include "../Renderer/Culling.h"
+#include "../Level/EditableMesh.h"
 #include "../Physics/PhysicsLayers.h"
 #include "../UI/UIDocumentRuntime.h"
 #include <string>
@@ -239,6 +240,50 @@ namespace Prism {
             i++;
         }
     }
+
+    // Geometria de NIVEL editavel (Level Builder, estilo ProBuilder): uma malha poligonal
+    // (Level::EditableMesh) que o editor modela direto na viewport. E desenhada, projeta sombra,
+    // e pode ser colisor (ColliderShape::TriangleMesh/ConvexHull) como qualquer MeshRenderer.
+    //
+    //  - 'Materials' tem um MaterialComponent por SLOT (Face::MaterialSlot). Faltando slot, usa o
+    //    ultimo/padrao. O MaterialComponent da propria entidade e IGNORADO nesta entidade.
+    //  - 'Revision' identifica o CONTEUDO para o cache de GPU do Renderer. Quem altera Mesh ou
+    //    Materials chama Touch() DEPOIS de editar (o editor ja faz); copias do componente mantem a
+    //    mesma revisao porque tem o mesmo conteudo.
+    struct LevelMeshComponent {
+        Level::EditableMesh Mesh;
+        std::vector<MaterialComponent> Materials;
+        uint32_t Layers = Culling::kDefaultLayer;
+        bool CastShadows = true;
+
+        uint64_t Revision = NextRevision();
+
+        // Padrao: caixa 1x1x1 (um "Add Component" ja resulta em algo visivel e editavel).
+        LevelMeshComponent() : Mesh(Level::EditableMesh::CreateBox(glm::vec3(1.0f))) { Materials.emplace_back(); }
+        LevelMeshComponent(const LevelMeshComponent&) = default;
+        LevelMeshComponent& operator=(const LevelMeshComponent&) = default;
+
+        void Touch() { Revision = NextRevision(); }
+
+        // Material do slot (limitado ao ultimo existente; nunca nulo).
+        const MaterialComponent& MaterialForSlot(uint32_t slot) const {
+            static const MaterialComponent kDefault;
+            if (Materials.empty()) return kDefault;
+            return Materials[std::min<size_t>(slot, Materials.size() - 1)];
+        }
+
+        // Numero de slots usados pelas faces (>= 1).
+        uint32_t SlotCountUsed() const {
+            uint32_t n = 1;
+            for (const auto& f : Mesh.Faces) n = std::max(n, f.MaterialSlot + 1);
+            return n;
+        }
+
+        static uint64_t NextRevision() {
+            static uint64_t counter = 0;
+            return ++counter;
+        }
+    };
 
     // O que uma camera desenha ao fundo (ver CameraComponent::ClearMode).
     enum class CameraClearMode : int {

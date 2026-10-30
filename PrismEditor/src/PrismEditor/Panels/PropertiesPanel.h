@@ -56,6 +56,7 @@ namespace PrismEditor {
         // component. Um component novo = um .cpp novo + uma linha la.
         void DrawTransformUI();
         void DrawMeshRendererUI();
+        void DrawLevelMeshUI();
         void DrawMaterialUI();
         void DrawLightUI();
         void DrawColliderUI();

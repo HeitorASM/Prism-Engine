@@ -487,6 +487,28 @@ namespace Prism {
             }
         }
 
+        // Geometria de nivel: raio exato contra as faces (a caixa envolvente deixaria clicar "no ar"
+        // dentro de salas/escadas).
+        auto levelView = m_Registry.view<LevelMeshComponent>();
+        for (auto handle : levelView) {
+            const glm::mat4 world = GetWorldTransform(Entity(handle, this));
+            const glm::mat4 inverseWorld = glm::inverse(world);
+            const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(ray.Origin, 1.0f));
+            const glm::vec3 localDir = glm::vec3(inverseWorld * glm::vec4(ray.Direction, 0.0f));
+            float t = 0.0f;
+            int face = -1;
+            if (!levelView.get<LevelMeshComponent>(handle).Mesh.Raycast(localOrigin, localDir, t, face, true))
+                continue;
+            const glm::vec3 worldHitPoint = glm::vec3(world * glm::vec4(localOrigin + localDir * t, 1.0f));
+            const float worldDistance = glm::length(worldHitPoint - ray.Origin);
+            if (worldDistance < best.Distance) {
+                best.Hit = true;
+                best.Entity = handle;
+                best.Distance = worldDistance;
+                best.Point = worldHitPoint;
+            }
+        }
+
         return best;
     }
 

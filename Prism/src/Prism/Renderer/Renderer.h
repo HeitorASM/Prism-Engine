@@ -231,6 +231,24 @@ namespace Prism {
         // e desenhado - ver comentario grande em Scene.cpp.
         static Mesh* ResolveMesh(const MeshRendererComponent& meshRenderer);
 
+        // --- Level Builder ---------------------------------------------------------
+        // Malha GPU de um LevelMeshComponent: uma parte (Mesh) por slot de material USADO. O cache e
+        // indexado por LevelMeshComponent::Revision (conteudo identico = mesma GPU) e descarta sozinho
+        // o que nao e visto ha ~5 minutos de quadros. Precisa de contexto OpenGL.
+        // A referencia devolvida vale ate a proxima chamada de DrawScene.
+        struct LevelMeshPart {
+            Mesh* MeshPtr = nullptr;
+            uint32_t MaterialSlot = 0;
+        };
+        struct LevelMeshGpu {
+            std::vector<LevelMeshPart> Parts;
+            glm::vec3 BoundsMin{ 0.0f };
+            glm::vec3 BoundsMax{ 0.0f };
+            std::vector<Scope<Mesh>> Owned;
+            uint64_t LastUsed = 0;
+        };
+        static const LevelMeshGpu& ResolveLevelMesh(const LevelMeshComponent& levelMesh);
+
         // Remove 'modelAsset' do cache acima (sucesso OU falha), forcando
         // a proxima GetOrLoadModelMesh com o mesmo ID a reler o arquivo
         // do zero. Chamada pelo editor quando o Content Browser detecta
@@ -384,7 +402,7 @@ namespace Prism {
         struct VisibleMesh {
             entt::entity Entity = entt::null;
             Mesh* MeshPtr = nullptr;
-            const MeshRendererComponent* MeshRenderer = nullptr;
+            glm::vec3 BaseColor{ 1.0f };                  // cor solida usada quando Material e nulo (MeshRendererComponent::Color)
             const MaterialComponent* Material = nullptr; // nulo = entidade sem MaterialComponent
             glm::mat4 Model{ 1.0f };
             BonePalette Palette;
@@ -562,6 +580,11 @@ namespace Prism {
             std::shared_ptr<ModelRig> Rig;
         };
         static std::unordered_map<AssetID, RigCacheEntry> s_RigCache;
+
+        // Cache de LevelMeshComponent por Revision (ver ResolveLevelMesh).
+        static std::unordered_map<uint64_t, LevelMeshGpu> s_LevelMeshCache;
+        static uint64_t s_LevelMeshStamp;
+        static void CollectLevelMeshGarbage();
     };
 
 }

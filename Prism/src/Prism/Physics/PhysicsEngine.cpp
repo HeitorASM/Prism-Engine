@@ -525,14 +525,43 @@ namespace Prism {
         // existir em vez de quebrar o Play.
         ColliderShape effectiveShape = collider.Shape;
         const bool isMeshBased = (effectiveShape == ColliderShape::ConvexHull || effectiveShape == ColliderShape::TriangleMesh);
-        const Mesh* sourceMesh = nullptr;
+        // Fonte da geometria: LevelMeshComponent (Level Builder; triangulado na hora) ou MeshRenderer.
+        std::vector<glm::vec3> levelPositions;
+        std::vector<uint32_t> levelIndices;
+        const std::vector<glm::vec3>* sourcePositions = nullptr;
+        const std::vector<uint32_t>* sourceIndices = nullptr;
+        glm::vec3 sourceBoundsMin(0.0f), sourceBoundsMax(0.0f);
         glm::vec3 worldScale(glm::length(col0), glm::length(col1), glm::length(col2));
         if (isMeshBased) {
-            if (entity.HasComponent<MeshRendererComponent>())
-                sourceMesh = Renderer::ResolveMesh(entity.GetComponent<MeshRendererComponent>());
-            if (!sourceMesh || sourceMesh->GetCpuPositions().empty()) {
+            if (entity.HasComponent<LevelMeshComponent>()) {
+                for (const Level::BuiltSubmesh& built : entity.GetComponent<LevelMeshComponent>().Mesh.Build()) {
+                    const uint32_t baseVertex = (uint32_t)levelPositions.size();
+                    for (const Level::BuiltVertex& v : built.Vertices)
+                        levelPositions.push_back(v.Position);
+                    for (uint32_t index : built.Indices)
+                        levelIndices.push_back(baseVertex + index);
+                }
+                if (!levelPositions.empty()) {
+                    sourcePositions = &levelPositions;
+                    sourceIndices = &levelIndices;
+                    sourceBoundsMin = sourceBoundsMax = levelPositions.front();
+                    for (const glm::vec3& p : levelPositions) {
+                        sourceBoundsMin = glm::min(sourceBoundsMin, p);
+                        sourceBoundsMax = glm::max(sourceBoundsMax, p);
+                    }
+                }
+            }
+            else if (entity.HasComponent<MeshRendererComponent>()) {
+                if (const Mesh* sourceMesh = Renderer::ResolveMesh(entity.GetComponent<MeshRendererComponent>())) {
+                    sourcePositions = &(*sourcePositions);
+                    sourceIndices = &(*sourceIndices);
+                    sourceBoundsMin = sourceMesh->GetLocalBoundsMin();
+                    sourceBoundsMax = sourceMesh->GetLocalBoundsMax();
+                }
+            }
+            if (!sourcePositions || sourcePositions->empty()) {
                 PRISM_CORE_WARN("PhysicsEngine: Collider ConvexHull/TriangleMesh da entidade '", entity.GetComponent<TagComponent>().Tag,
-                                 "' precisa de um MeshRenderer com malha valida - usando Box de Size.");
+                                 "' precisa de um MeshRenderer (ou LevelMesh) com malha valida - usando Box de Size.");
                 effectiveShape = ColliderShape::Box;
             }
             else if (effectiveShape == ColliderShape::TriangleMesh && rigidBody.Type == BodyType::Dynamic) {
@@ -575,8 +604,8 @@ namespace Prism {
             }
             case ColliderShape::ConvexHull: {
                 JPH::Array<JPH::Vec3> points;
-                points.reserve(sourceMesh->GetCpuPositions().size());
-                for (const glm::vec3& p : sourceMesh->GetCpuPositions())
+                points.reserve((*sourcePositions).size());
+                for (const glm::vec3& p : (*sourcePositions))
                     points.push_back(ToJolt(p * worldScale));
 
                 JPH::ConvexHullShapeSettings hullSettings(points);
@@ -584,7 +613,7 @@ namespace Prism {
                 if (result.HasError()) {
                     PRISM_CORE_WARN("PhysicsEngine: Jolt nao conseguiu criar o ConvexHull da entidade '", entity.GetComponent<TagComponent>().Tag,
                                      "' (", result.GetError().c_str(), ") - usando Box dos bounds da malha.");
-                    glm::vec3 half = glm::max((sourceMesh->GetLocalBoundsMax() - sourceMesh->GetLocalBoundsMin()) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
+                    glm::vec3 half = glm::max((sourceBoundsMax - sourceBoundsMin) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
                     shape = new JPH::BoxShape(ToJolt(half), glm::min(0.05f, glm::min(half.x, glm::min(half.y, half.z)) * 0.5f));
                 }
                 else {
@@ -593,8 +622,8 @@ namespace Prism {
                 break;
             }
             case ColliderShape::TriangleMesh: {
-                const auto& positions = sourceMesh->GetCpuPositions();
-                const auto& indices = sourceMesh->GetCpuIndices();
+                const auto& positions = (*sourcePositions);
+                const auto& indices = (*sourceIndices);
                 JPH::TriangleList triangles;
                 triangles.reserve(indices.size() / 3);
                 for (size_t i = 0; i + 2 < indices.size(); i += 3) {
@@ -609,7 +638,7 @@ namespace Prism {
                 if (result.HasError()) {
                     PRISM_CORE_WARN("PhysicsEngine: Jolt nao conseguiu criar o TriangleMesh da entidade '", entity.GetComponent<TagComponent>().Tag,
                                      "' (", result.GetError().c_str(), ") - usando Box dos bounds da malha.");
-                    glm::vec3 half = glm::max((sourceMesh->GetLocalBoundsMax() - sourceMesh->GetLocalBoundsMin()) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
+                    glm::vec3 half = glm::max((sourceBoundsMax - sourceBoundsMin) * 0.5f * worldScale, glm::vec3(kMinShapeDimension));
                     shape = new JPH::BoxShape(ToJolt(half), glm::min(0.05f, glm::min(half.x, glm::min(half.y, half.z)) * 0.5f));
                 }
                 else {

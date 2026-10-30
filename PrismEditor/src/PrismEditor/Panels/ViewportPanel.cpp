@@ -1,5 +1,6 @@
 #include "ViewportPanel.h"
 #include "EditorGizmos.h"
+#include "LevelEditTool.h"
 #include "../Core/EntityOps.h"
 #include "../Commands/EditorCommands.h"
 #include <Prism/UI/UISystem.h>
@@ -167,6 +168,7 @@ namespace PrismEditor {
             ImGui::SameLine();
             if (ImGui::Button(m_GizmoMode == ImGuizmo::WORLD ? "Mundo" : "Local"))
                 m_GizmoMode = (m_GizmoMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+            LevelEditTool::DrawToolbar(m_Ctx); // so aparece com um LevelMesh selecionado (Level Builder)
             ImGui::EndGroup();
         }
 
@@ -383,7 +385,15 @@ namespace PrismEditor {
             //     (Mover/Rotacionar/Escalar/Mundo, ver acima) desenhada por
             //     cima do canto da viewport - clicar nela nao deve
             //     "vazar" como picking na cena atras.
-            if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            // Level Builder: com um LevelMesh em edicao, a viewport seleciona vertices/arestas/faces e o
+            // gizmo move a selecao (ver LevelEditTool.h) em vez de selecionar entidades/mover o objeto.
+            if (m_ViewportFocused)
+                LevelEditTool::HandleToggleShortcut(m_Ctx);
+            if (LevelEditTool::IsEditing(m_Ctx))
+                LevelEditTool::Render(m_Ctx, view, projection, imageMin, ImVec2(m_ViewportSize[0], m_ViewportSize[1]), m_ViewportHovered, m_ViewportFocused);
+            const bool levelEditing = LevelEditTool::IsEditing(m_Ctx);
+
+            if (!levelEditing && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                 !ImGuizmo::IsOver() && !ImGui::IsAnyItemHovered()) {
 
                 // Posicao do mouse RELATIVA a imagem da viewport (nao a
@@ -423,7 +433,8 @@ namespace PrismEditor {
                     : Prism::Entity{};
             }
 
-            RenderTransformGizmo(view, projection, imageMin);
+            if (!levelEditing)
+                RenderTransformGizmo(view, projection, imageMin);
         }
 
         ImGui::End();
