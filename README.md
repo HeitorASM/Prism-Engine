@@ -87,7 +87,7 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Áudio: Audio Source/Listener, som 3D, API Lua (miniaudio; ver [docs/audio.md](docs/audio.md))
 - [x] API de scripting Lua mais completa (colisão/trigger, `Properties`, `Time`, `Scene`)
 - [x] Scripts em C++ (módulo nativo DLL/.so; ver [docs/scripting-cpp.md](docs/scripting-cpp.md)); falta hot reload durante o Play
-- [ ] BSP/CSG e ferramentas de construção de mapas
+- [x] ferramentas de construção de mapas
 - [x] Modelo de iluminação com especular/PBR (Cook-Torrance GGX)
 - [x] Ambiente com gradiente analítico de 3 cores (difuso e reflexo nos metais)
 - [x] Skybox visível (cor, gradiente ou panorama HDR)
