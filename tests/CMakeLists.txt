@@ -96,6 +96,17 @@ if(MSVC)
 endif()
 add_test(NAME CullingTests COMMAND PrismCullingTests)
 
+# PrismLightSelectionTests: escolha das luzes por relevancia (Renderer/LightSelection.h, so std + Culling.h).
+add_executable(PrismLightSelectionTests
+    LightSelectionTests.cpp
+)
+target_include_directories(PrismLightSelectionTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismLightSelectionTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismLightSelectionTests PRIVATE /utf-8)
+endif()
+add_test(NAME LightSelectionTests COMMAND PrismLightSelectionTests)
+
 # PrismPhysicsLayersTests: camadas de fisica e matriz de colisao (Physics/PhysicsLayers.h, so std).
 add_executable(PrismPhysicsLayersTests
     PhysicsLayersTests.cpp

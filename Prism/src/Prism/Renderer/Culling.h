@@ -71,6 +71,22 @@ namespace Prism::Culling {
             return true;
         }
 
+        // Esfera em espaco de MUNDO (ex: o alcance de uma luz). Conservador: so devolve false se
+        // esta TOTALMENTE fora de um plano. Frustum invalido ou entrada nao finita: true (nao descarta).
+        bool IntersectsSphere(const float center[3], float radius) const {
+            if (!Valid)
+                return true;
+            if (!std::isfinite(center[0]) || !std::isfinite(center[1]) || !std::isfinite(center[2]) || !std::isfinite(radius))
+                return true;
+            for (int p = 0; p < 6; p++) {
+                const float* plane = Planes[p];
+                float distance = plane[0] * center[0] + plane[1] * center[1] + plane[2] * center[2] + plane[3];
+                if (distance < -radius)
+                    return false;
+            }
+            return true;
+        }
+
         // Caixa LOCAL (min/max) transformada por 'model' (coluna-major) - inclui rotacao e escala.
         bool IntersectsLocalBox(const float localMin[3], const float localMax[3], const float* model) const {
             if (!Valid)

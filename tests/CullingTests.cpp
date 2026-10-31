@@ -130,6 +130,23 @@ int main() {
     Translation(0, 0, 40, model);
     CHECK(!g.IntersectsLocalBox(mn, mx, model));  // atras da camera
 
+    // --- esfera (alcance de luz) ---
+    {
+        auto sphere = [&](float x, float y, float z, float r) { float c[3] = { x, y, z }; return f.IntersectsSphere(c, r); };
+        CHECK(sphere(0, 0, -10, 1));        // dentro
+        CHECK(!sphere(0, 0, 10, 1));        // atras da camera, nao alcanca
+        CHECK(sphere(0, 0, 10, 12));        // atras, mas o raio atravessa o plano perto
+        CHECK(!sphere(0, 0, -200, 5));      // alem do plano longe
+        CHECK(sphere(0, 0, -200, 150));     // o raio chega ao frustum
+        CHECK(!sphere(60, 0, -10, 5));      // longe demais para o lado
+        CHECK(sphere(60, 0, -10, 60));      // raio grande alcanca
+        const float nanCenter[3] = { std::numeric_limits<float>::quiet_NaN(), 0, 0 };
+        CHECK(f.IntersectsSphere(nanCenter, 1.0f));   // entrada invalida: nao descarta
+        float zeroMatrix[16] = {};
+        const float anywhere[3] = { 0, 0, 1000 };
+        CHECK(Frustum::FromViewProjection(zeroMatrix).IntersectsSphere(anywhere, 1.0f)); // frustum invalido
+    }
+
     // --- entradas invalidas nao descartam nada ---
     float bad[16] = {};
     bad[0] = std::numeric_limits<float>::quiet_NaN();

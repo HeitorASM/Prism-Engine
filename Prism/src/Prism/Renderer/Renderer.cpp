@@ -6,6 +6,7 @@
 #include "../Core/Profiler.h"
 #include "GpuTimer.h"
 #include "DrawBatching.h"
+#include "LightSelection.h"
 #include "MaterialState.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
@@ -1026,9 +1027,12 @@ namespace Prism {
         s_LineShader->Unbind();
     }
 
-    std::vector<GPULight> Renderer::CollectGPULights(Scene& scene) {
+    namespace {
+
+    // Traduz TODA luz da cena (sem limite) na ordem do registro. Quem limita/escolhe sao
+    // as CollectGPULights abaixo.
+    std::vector<GPULight> TranslateAllLights(Scene& scene) {
         std::vector<GPULight> result;
-        result.reserve(MAX_LIGHTS);
 
         // Toda entidade com TransformComponent + LightComponent conta como
         // fonte de luz. Usa a transform de MUNDO (mesma logica que
@@ -1037,13 +1041,6 @@ namespace Prism {
         // posicao/rotacao do pai corretamente.
         auto view = scene.GetRegistry().view<TransformComponent, LightComponent>();
         for (auto entityHandle : view) {
-            if (result.size() >= MAX_LIGHTS) {
-                // Limite atingido - ver comentario em CollectGPULights
-                // (Renderer.h) sobre por que isso e silencioso por
-                // enquanto (sem priorizacao por distancia/importancia).
-                break;
-            }
-
             const auto& light = view.get<LightComponent>(entityHandle);
             glm::mat4 worldTransform = scene.GetWorldTransform(Entity(entityHandle, &scene));
 
@@ -1094,6 +1091,75 @@ namespace Prism {
 
             result.push_back(gpuLight);
         }
+
+        return result;
+    }
+
+    // Historico de escolha por (contexto GL, cena): a histerese precisa saber o que ESTA camera
+    // escolheu no quadro anterior. O editor desenha mais de uma vista (viewport + Game) e cada
+    // uma tem cena/contexto proprios, entao uma nao embaralha a outra.
+    struct LightHistoryEntry {
+        GLFWwindow* Context = nullptr;
+        const Scene* SceneKey = nullptr;
+        std::vector<uint32_t> SelectedIds; // ordem crescente (exigido por LightSelection::Select)
+        size_t LastTotal = 0;              // para avisar so quando o total de luzes mudar
+    };
+
+    LightHistoryEntry& LightHistoryFor(const Scene* scene) {
+        static std::vector<LightHistoryEntry> history;
+        GLFWwindow* context = glfwGetCurrentContext();
+        for (LightHistoryEntry& entry : history)
+            if (entry.Context == context && entry.SceneKey == scene)
+                return entry;
+        if (history.size() >= 8)
+            history.erase(history.begin()); // cenas antigas (trocas de mapa, Play) nao se acumulam
+        history.push_back(LightHistoryEntry{ context, scene, {}, 0 });
+        return history.back();
+    }
+
+    } // namespace
+
+    std::vector<GPULight> Renderer::CollectGPULights(Scene& scene) {
+        std::vector<GPULight> result = TranslateAllLights(scene);
+        if (result.size() > MAX_LIGHTS)
+            result.resize(MAX_LIGHTS);
+        return result;
+    }
+
+    std::vector<GPULight> Renderer::CollectGPULights(Scene& scene, const float* cameraWorldPos, const Culling::Frustum& frustum) {
+        std::vector<GPULight> all = TranslateAllLights(scene);
+
+        LightHistoryEntry& history = LightHistoryFor(&scene);
+
+        std::vector<LightSelection::Candidate> candidates;
+        candidates.reserve(all.size());
+        for (const GPULight& light : all) {
+            LightSelection::Candidate candidate;
+            candidate.Id = light.SourceEntityId;
+            candidate.Type = light.Type;
+            candidate.Position[0] = light.Position.x;
+            candidate.Position[1] = light.Position.y;
+            candidate.Position[2] = light.Position.z;
+            candidate.Range = light.Range;
+            candidate.Intensity = light.Intensity * std::max(light.Color.x, std::max(light.Color.y, light.Color.z));
+            candidates.push_back(candidate);
+        }
+
+        const std::vector<uint32_t> chosen = LightSelection::Select(candidates, frustum, cameraWorldPos, MAX_LIGHTS, history.SelectedIds);
+
+        std::vector<GPULight> result;
+        result.reserve(chosen.size());
+        history.SelectedIds.clear();
+        for (uint32_t index : chosen) {
+            result.push_back(all[index]);
+            history.SelectedIds.push_back(all[index].SourceEntityId);
+        }
+        std::sort(history.SelectedIds.begin(), history.SelectedIds.end());
+
+        if (all.size() > MAX_LIGHTS && all.size() != history.LastTotal)
+            PRISM_CORE_INFO("Iluminacao: a cena tem ", all.size(), " luzes; a cada quadro as ", (size_t)MAX_LIGHTS,
+                            " mais relevantes para a camera sao usadas (limite do shader).");
+        history.LastTotal = all.size();
 
         return result;
     }
@@ -1477,7 +1543,7 @@ namespace Prism {
         // lista de luzes ativas nao muda entre um mesh e outro do mesmo
         // frame. Ver CollectGPULights para a logica de traducao
         // LightComponent -> GPULight.
-        std::vector<GPULight> lights = CollectGPULights(scene);
+        std::vector<GPULight> lights = CollectGPULights(scene, cameraWorldPos, cameraFrustum);
 
         // Salva framebuffer + viewport ATUAIS antes de qualquer sub-pass
         // que desenhe em outro lugar (shadow map, G-buffer, SSAO) - todos

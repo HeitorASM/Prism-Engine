@@ -369,9 +369,12 @@ namespace Prism {
         // LightComponent e traduz cada uma para um GPULight (ver comentario
         // na struct acima) usando a posicao/rotacao de MUNDO da entidade
         // (Scene::GetWorldTransform - respeita parenting, igual DrawScene
-        // ja faz para meshes). Limita a MAX_LIGHTS resultados: luzes alem
-        // desse limite sao ignoradas silenciosamente (nao ha prioridade
-        // por distancia/importancia).
+        // ja faz para meshes).
+        //
+        // Esta sobrecarga (sem camera) limita a MAX_LIGHTS resultados NA ORDEM
+        // DO REGISTRO: luzes alem do limite ficam de fora sem criterio nenhum.
+        // Serve a ferramentas que so querem "a lista". O render usa a sobrecarga
+        // com camera, logo abaixo.
         //
         // Publica (nao so uso interno de DrawMesh/DrawScene) porque
         // ferramentas do editor - ex: um futuro gizmo que desenha o cone
@@ -379,6 +382,14 @@ namespace Prism {
         // podem precisar da mesma lista sem duplicar a logica de
         // traducao/coleta.
         static std::vector<GPULight> CollectGPULights(class Scene& scene);
+
+        // Versao usada por DrawScene: escolhe as MAX_LIGHTS luzes mais RELEVANTES para
+        // esta camera (ver LightSelection.h: alcance x frustum, distancia, intensidade,
+        // histerese) e devolve a lista ORDENADA da mais para a menos relevante. O
+        // ShadowSystem percorre a lista nessa ordem, entao as sombras (limite de 1
+        // directional, 4 spots e 2 points) vao para as luzes mais relevantes tambem.
+        // 'cameraWorldPos' = float[3]; 'frustum' da camera deste quadro.
+        static std::vector<GPULight> CollectGPULights(class Scene& scene, const float* cameraWorldPos, const Culling::Frustum& frustum);
 
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
         // Ver comentario grande em SSAO.h para o pipeline completo (3
