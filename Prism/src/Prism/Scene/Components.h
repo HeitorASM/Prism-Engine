@@ -998,4 +998,20 @@ namespace Prism {
         RaycastComponent(const RaycastComponent&) = default;
     };
 
+
+    // Blocos de component que ESTA engine nao conhece (gravados por uma versao mais
+    // nova, ou por uma extensao que nao esta carregada agora). Ficam guardados como
+    // bytes brutos na entidade e sao regravados no proximo save, em vez de serem
+    // perdidos em silencio (ver ComponentRegistry::ReadComponentBlocks/WriteComponentBlocks).
+    // Nao e um component "de verdade": nao esta no ComponentRegistry, nao aparece em
+    // Add Component, e nao e copiado por Duplicar/Prefab (so por Scene::Clone).
+    struct UnknownComponentsComponent {
+        struct Block {
+            std::string Name;
+            uint32_t Version = 1;
+            std::string Bytes; // payload exato do bloco, sem interpretar
+        };
+        std::vector<Block> Blocks;
+    };
+
 }

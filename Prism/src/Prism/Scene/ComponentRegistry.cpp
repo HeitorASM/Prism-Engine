@@ -39,7 +39,23 @@ namespace Prism {
     static constexpr uint32_t kMaxComponentBlockBytes = 64u * 1024u * 1024u;
 
     void ComponentRegistry::WriteComponentBlocks(std::ostream& out, Entity entity) {
-        uint32_t count = 0;
+        // Blocos desconhecidos guardados no load (ver ReadComponentBlocks) voltam para o
+        // arquivo. Se um component de mesmo nome ja foi registrado e esta presente na
+        // entidade (ex: a extensao dona dele foi carregada depois), vale o registrado -
+        // gravar os dois produziria um bloco duplicado.
+        std::vector<const UnknownComponentsComponent::Block*> preserved;
+        if (entity.HasComponent<UnknownComponentsComponent>()) {
+            for (const auto& block : entity.GetComponent<UnknownComponentsComponent>().Blocks) {
+                bool shadowed = false;
+                for (auto& info : s_Registry) {
+                    if (info.DisplayName == block.Name && info.Has(entity)) { shadowed = true; break; }
+                }
+                if (!shadowed)
+                    preserved.push_back(&block);
+            }
+        }
+
+        uint32_t count = (uint32_t)preserved.size();
         for (auto& info : s_Registry)
             if (info.Has(entity))
                 count++;
@@ -58,6 +74,14 @@ namespace Prism {
             WriteRaw(out, (uint32_t)bytes.size());
             if (!bytes.empty())
                 out.write(bytes.data(), (std::streamsize)bytes.size());
+        }
+
+        for (const auto* block : preserved) {
+            WriteString(out, block->Name);
+            WriteRaw(out, block->Version);
+            WriteRaw(out, (uint32_t)block->Bytes.size());
+            if (!block->Bytes.empty())
+                out.write(block->Bytes.data(), (std::streamsize)block->Bytes.size());
         }
     }
 
@@ -105,7 +129,11 @@ namespace Prism {
             }
             if (!found) {
                 if (warnedUnknown.insert(name).second)
-                    PRISM_CORE_WARN("ComponentRegistry: component desconhecido '", name, "' ignorado (arquivo de uma versao mais nova da engine?).");
+                    PRISM_CORE_WARN("ComponentRegistry: component desconhecido '", name, "' (versao mais nova da engine, ou extensao nao carregada?). Os dados serao preservados e regravados ao salvar, mas nao tem efeito nesta sessao.");
+                // Preserva os bytes: sem isso, abrir e salvar o mapa apagaria o dado para sempre.
+                if (!entity.HasComponent<UnknownComponentsComponent>())
+                    entity.AddComponent<UnknownComponentsComponent>();
+                entity.GetComponent<UnknownComponentsComponent>().Blocks.push_back({ name, version, std::move(bytes) });
                 continue;
             }
             if (found->Has(entity)) {

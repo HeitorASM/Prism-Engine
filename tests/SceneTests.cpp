@@ -187,6 +187,80 @@ static void TestBlockStreamFraming() {
     CHECK(!ComponentRegistry::ReadComponentBlocks(emptyIn, k, 0));
 }
 
+// Component desconhecido (versao mais nova / extensao ausente): os bytes sobrevivem a
+// ler -> regravar -> ler de novo, e a Scene::Clone() (copia do Play) tambem os leva.
+static void TestUnknownBlocksArePreserved() {
+    auto scene = Scene::Create("Unknown");
+    Entity source = scene->CreateEntity("source");
+    source.AddComponent<LightComponent>().Intensity = 2.0f;
+
+    std::ostringstream lightBytes(std::ios::out | std::ios::binary);
+    FindInfo("Light")->Serialize(lightBytes, source);
+
+    std::ostringstream mixed(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)2);
+    ComponentRegistry::WriteString(mixed, "ComponenteDoFuturo");
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)9);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)3);
+    mixed.write("abc", 3);
+    ComponentRegistry::WriteString(mixed, "Light");
+    ComponentRegistry::WriteRaw(mixed, FindInfo("Light")->Version);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)lightBytes.str().size());
+    mixed.write(lightBytes.str().data(), (std::streamsize)lightBytes.str().size());
+
+    // 1) a leitura guarda o bloco desconhecido (nome, versao e bytes exatos)
+    Entity first = scene->CreateEntity("first");
+    std::istringstream in1(mixed.str(), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in1, first, 0));
+    CHECK(first.HasComponent<LightComponent>());
+    CHECK(first.HasComponent<UnknownComponentsComponent>());
+    if (first.HasComponent<UnknownComponentsComponent>()) {
+        const auto& blocks = first.GetComponent<UnknownComponentsComponent>().Blocks;
+        CHECK(blocks.size() == 1);
+        if (blocks.size() == 1) {
+            CHECK(blocks[0].Name == "ComponenteDoFuturo");
+            CHECK(blocks[0].Version == 9);
+            CHECK(blocks[0].Bytes == "abc");
+        }
+    }
+
+    // 2) regravar e ler de novo mantem tudo (antes: o bloco sumia no primeiro save)
+    std::ostringstream rewritten(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteComponentBlocks(rewritten, first);
+    Entity second = scene->CreateEntity("second");
+    std::istringstream in2(rewritten.str(), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in2, second, 0));
+    CHECK(second.HasComponent<LightComponent>() && second.GetComponent<LightComponent>().Intensity == 2.0f);
+    CHECK(second.HasComponent<UnknownComponentsComponent>());
+    if (second.HasComponent<UnknownComponentsComponent>()) {
+        const auto& blocks = second.GetComponent<UnknownComponentsComponent>().Blocks;
+        CHECK(blocks.size() == 1 && blocks[0].Bytes == "abc" && blocks[0].Version == 9);
+    }
+
+    // 3) bloco guardado com o nome de um component que AGORA existe na entidade nao duplica
+    Entity shadowed = scene->CreateEntity("shadowed");
+    shadowed.AddComponent<LightComponent>();
+    auto& unknown = shadowed.AddComponent<UnknownComponentsComponent>();
+    unknown.Blocks.push_back({ "Light", 1, "lixo" });
+    unknown.Blocks.push_back({ "Outro", 3, "xyz" });
+    std::ostringstream shadowedOut(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteComponentBlocks(shadowedOut, shadowed);
+    std::istringstream shadowedIn(shadowedOut.str(), std::ios::in | std::ios::binary);
+    uint32_t written = 0;
+    CHECK(ComponentRegistry::ReadRaw(shadowedIn, written));
+    CHECK(written == 2); // Light (real) + Outro; o "Light" desconhecido foi descartado
+
+    // 4) Scene::Clone leva os blocos junto
+    Ref<Scene> cloned = scene->Clone();
+    size_t withUnknown = 0;
+    for (auto handle : cloned->GetRegistry().view<UnknownComponentsComponent>()) {
+        const auto& blocks = cloned->GetRegistry().get<UnknownComponentsComponent>(handle).Blocks;
+        if (!blocks.empty() && blocks[0].Bytes == "abc")
+            withUnknown++;
+    }
+    CHECK(withUnknown >= 2); // "first" e "second"
+}
+
 // Cenas antigas: blocos v1 (sem os campos acrescentados no fim) continuam abrindo.
 static void TestOldBlockVersionsStillLoad() {
     auto scene = Scene::Create("Compat");
@@ -537,6 +611,7 @@ int main() {
     TestEveryComponentRoundTrips();
     TestTruncatedBlocksNeverCrash();
     TestBlockStreamFraming();
+    TestUnknownBlocksArePreserved();
     TestOldBlockVersionsStillLoad();
     TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);

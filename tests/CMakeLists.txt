@@ -211,3 +211,30 @@ if(TARGET lua AND TARGET sol2)
         message(WARNING "ScriptEngine.cpp: marcadores LuaChunkCache nao encontrados; PrismLuaBytecodeTests nao sera criado.")
     endif()
 endif()
+
+# PrismAssertTests: formato da mensagem do PRISM_ASSERT (Core/Base.h). So headers, sem linkar a engine.
+add_executable(PrismAssertTests AssertTests.cpp)
+target_include_directories(PrismAssertTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismAssertTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismAssertTests PRIVATE /utf-8)
+endif()
+add_test(NAME AssertTests COMMAND PrismAssertTests)
+
+# PrismCrashReportTests: crash.log gerado por WriteCrashReport (Core/CrashHandler.cpp). Compila so o
+# CrashHandler e o LogBuffer; PRISM_PLATFORM_WINDOWS precisa bater com o da engine (ver Prism/CMakeLists.txt).
+add_executable(PrismCrashReportTests
+    CrashReportTests.cpp
+    ${PRISM_SRC}/Prism/Core/CrashHandler.cpp
+    ${PRISM_SRC}/Prism/Core/LogBuffer.cpp
+)
+target_include_directories(PrismCrashReportTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismCrashReportTests PRIVATE cxx_std_20)
+target_link_libraries(PrismCrashReportTests PRIVATE prism_version)
+if(WIN32)
+    target_compile_definitions(PrismCrashReportTests PRIVATE PRISM_PLATFORM_WINDOWS)
+endif()
+if(MSVC)
+    target_compile_options(PrismCrashReportTests PRIVATE /utf-8)
+endif()
+add_test(NAME CrashReportTests COMMAND PrismCrashReportTests)

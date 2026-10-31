@@ -162,6 +162,10 @@ namespace Prism {
                 if (info.Has(original))
                     info.Copy(original, copy);
             }
+
+            // Blocos desconhecidos preservados do arquivo (ver UnknownComponentsComponent).
+            if (original.HasComponent<UnknownComponentsComponent>())
+                copy.AddComponent<UnknownComponentsComponent>(original.GetComponent<UnknownComponentsComponent>());
         });
 
         // Segunda passada: RelationshipComponent - so depois que TODAS as

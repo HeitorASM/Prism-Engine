@@ -14,6 +14,7 @@
 #include "CommandLine.h"
 
 #include <exception>
+#include <string>
 #include <cstdlib>
 
 int main(int argc, char** argv) {
@@ -35,10 +36,16 @@ int main(int argc, char** argv) {
     }
     catch (const std::exception& e) {
         PRISM_CORE_ERROR("Excecao nao tratada, encerrando: ", e.what());
+        const std::string report = Prism::WriteCrashReport("Excecao C++ nao tratada", e.what());
+        if (!report.empty())
+            PRISM_CORE_ERROR("Relatorio de crash salvo em: ", report);
         return EXIT_FAILURE;
     }
     catch (...) {
         PRISM_CORE_ERROR("Excecao desconhecida (nao derivada de std::exception), encerrando.");
+        const std::string report = Prism::WriteCrashReport("Excecao desconhecida (nao derivada de std::exception)", "");
+        if (!report.empty())
+            PRISM_CORE_ERROR("Relatorio de crash salvo em: ", report);
         return EXIT_FAILURE;
     }
 }
