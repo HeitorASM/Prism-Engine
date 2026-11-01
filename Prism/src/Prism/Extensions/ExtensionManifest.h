@@ -54,6 +54,11 @@ namespace Prism {
 
     const char* ExtensionTargetName(ExtensionTarget target);
 
+    // Devolve 'text' com a chave 'key' definida como 'value' ("key = value"): troca a linha existente
+    // (a primeira, ignorando comentarios) ou acrescenta ao fim. Preserva o resto do arquivo, os
+    // comentarios e o estilo de quebra de linha. Usado pelo editor para ligar/desligar 'enabled'.
+    std::string SetManifestValue(const std::string& text, const std::string& key, const std::string& value);
+
     // Ordem de carga: dependencias antes de quem depende delas (estavel: empates seguem a ordem de
     // 'manifests'). Quem nao puder carregar (dependencia ausente, ciclica ou ela mesma com falha)
     // fica FORA do retorno e entra em 'failures' (nome -> motivo). 'alreadyLoaded' = extensoes que

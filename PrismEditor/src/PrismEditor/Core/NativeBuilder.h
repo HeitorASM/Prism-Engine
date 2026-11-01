@@ -36,6 +36,11 @@ namespace PrismEditor {
         // compilacao em andamento ou se Source/CMakeLists.txt nao existe.
         bool Start(const Prism::Project& project, std::string& error);
 
+        // Compila uma EXTENSAO (pasta com extension.ini + CMakeLists.txt, ver Prism/Extensions): mesmo
+        // cmake em segundo plano, saida pelo mesmo Poll. 'sdkFile' = PrismSDK.cmake do editor.
+        // O resultado (Binaries/ da extensao) so e carregado ao reiniciar o editor.
+        bool StartExtension(const std::filesystem::path& extensionDirectory, const std::filesystem::path& sdkFile, std::string& error);
+
         bool IsRunning() const { return m_Running.load(); }
 
         // Chamar todo frame na thread principal: recolhe as linhas novas e diz
@@ -50,6 +55,8 @@ namespace PrismEditor {
         std::thread m_Thread;
         std::string m_SourceDir, m_BuildDir, m_Config;
         std::filesystem::path m_BinariesDir;
+        std::string m_ExtraArgs;        // argumentos -D extras do cmake configure (extensoes: PRISM_SDK_FILE)
+        bool m_IsExtension = false;     // compilando uma extensao (sem PRISM_BUILD_ID nem limpeza de .pdb)
         std::atomic<bool> m_Running{ false };
         std::mutex m_Mutex;
         std::vector<Line> m_Lines;

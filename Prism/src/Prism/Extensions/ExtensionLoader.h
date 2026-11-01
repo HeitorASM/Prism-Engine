@@ -38,6 +38,7 @@ namespace Prism {
         ExtensionManifest Manifest;
         std::filesystem::path Directory;
         std::filesystem::path Library;   // vazio se nao chegou a achar o binario
+        std::filesystem::path LoadedFrom; // o que foi realmente aberto (no editor, uma COPIA em cache - ver .cpp)
         ExtensionState State = ExtensionState::Failed;
         std::string Message;
         bool FromProject = false;

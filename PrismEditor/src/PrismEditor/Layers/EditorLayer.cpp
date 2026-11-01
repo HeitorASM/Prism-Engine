@@ -95,6 +95,11 @@ namespace PrismEditor {
 
         // Clicar num erro/aviso da Saida de Build abre o arquivo no Editor de Codigo.
         m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*Prism::Project::GetActive()));
+        m_Extensions.SetOnCompile([this](const std::filesystem::path& directory) { StartExtensionBuild(directory); });
+        m_Extensions.SetOnOpenFile([this](const std::filesystem::path& filePath) {
+            if (m_ScriptEditor.Open(filePath))
+                ImGui::SetWindowFocus("###ScriptEditorPanel");
+        });
         m_BuildOutput.SetOnOpenFile([this](const std::filesystem::path& filePath) {
             if (m_ScriptEditor.Open(filePath))
                 ImGui::SetWindowFocus("###ScriptEditorPanel");
@@ -309,6 +314,8 @@ namespace PrismEditor {
         RenderConsolePanel();
         m_Profiler.OnImGuiRender();
         m_BuildOutput.OnImGuiRender();
+        m_Extensions.SetBusy(m_NativeBuilder.IsRunning() || m_GameExporter.IsRunning());
+        m_Extensions.OnImGuiRender();
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
         m_Docs.OnImGuiRender();
@@ -334,6 +341,7 @@ namespace PrismEditor {
         ImGui::DockBuilderDockWindow("###DocsPanel", center);         // painel de documentacao (aparece como aba quando aberto)
         ImGui::DockBuilderDockWindow("Conteudo do Projeto", bottom);
         ImGui::DockBuilderDockWindow("Console", bottom);
+        ImGui::DockBuilderDockWindow("Extensoes", bottom);
         ImGui::DockBuilderDockWindow("###BuildOutputPanel", bottom); // saida da compilacao dos scripts C++ (aba ao lado do Console)
         ImGui::DockBuilderFinish(root);
 
@@ -632,6 +640,8 @@ namespace PrismEditor {
                     m_ResetLayoutRequested = true;
                 if (ImGui::MenuItem("Desempenho (profiler)", nullptr, m_Profiler.IsOpen()))
                     m_Profiler.Toggle();
+                if (ImGui::MenuItem("Extensoes", nullptr, m_Extensions.IsOpen()))
+                    m_Extensions.Toggle();
                 ImGui::TextDisabled("Arraste as abas para reorganizar os paineis.");
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
                 ImGui::EndMenu();
@@ -716,6 +726,8 @@ namespace PrismEditor {
             }
         }
 
+        m_ExtensionBuildDirectory.clear();
+        m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*project));
         m_BuildOutput.BeginBuild();
         std::string error;
         if (m_NativeBuilder.Start(*project, error)) {
@@ -726,6 +738,26 @@ namespace PrismEditor {
             m_BuildOutput.AddLine(error);
             m_BuildOutput.EndBuild(false);
             m_LastNativeBuildFailed = true;
+            PRISM_ERROR(error);
+        }
+    }
+
+    // Aba Extensoes > Compilar: roda o cmake da extensao em segundo plano (mesmo NativeBuilder dos scripts).
+    void EditorLayer::StartExtensionBuild(const std::filesystem::path& extensionDirectory) {
+        if (m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+        m_BuildOutput.SetBaseDirectory(extensionDirectory);
+        m_BuildOutput.BeginBuild();
+        m_BuildOutput.AddLine("Compilando a extensao '" + extensionDirectory.filename().string() + "'...");
+        std::string error;
+        if (m_NativeBuilder.StartExtension(extensionDirectory, Prism::GetExecutableDirectory() / "PrismSDK.cmake", error)) {
+            m_ExtensionBuildDirectory = extensionDirectory;
+            PRISM_INFO("Compilando a extensao '", extensionDirectory.filename().string(), "'...");
+        }
+        else {
+            m_BuildOutput.AddLine(error);
+            m_BuildOutput.EndBuild(false);
+            m_Extensions.NotifyCompiled(extensionDirectory, false);
             PRISM_ERROR(error);
         }
     }
@@ -817,7 +849,7 @@ namespace PrismEditor {
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         if (building) {
-            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Compilando scripts C++...");
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), m_ExtensionBuildDirectory.empty() ? "Compilando scripts C++..." : "Compilando extensao...");
         }
         else if (m_LastNativeBuildFailed) {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Erro de build (ver Saida de Build)");
@@ -840,7 +872,17 @@ namespace PrismEditor {
         for (const auto& line : lines)
             m_BuildOutput.AddLine(line.Text);
 
-        if (justFinished) {
+        if (justFinished && !m_ExtensionBuildDirectory.empty()) {
+            // Build de uma EXTENSAO: nao mexe no modulo de scripts C++ nem no estado "ultimo build falhou".
+            m_BuildOutput.EndBuild(success);
+            m_Extensions.NotifyCompiled(m_ExtensionBuildDirectory, success);
+            if (success)
+                PRISM_INFO("Extensao '", m_ExtensionBuildDirectory.filename().string(), "' compilada. Reinicie o editor para carregar.");
+            else
+                PRISM_ERROR("Falha ao compilar a extensao (veja a aba Saida de Build).");
+            m_ExtensionBuildDirectory.clear();
+        }
+        else if (justFinished) {
             m_BuildOutput.EndBuild(success);
             if (success) {
                 m_LastNativeBuildFailed = false;

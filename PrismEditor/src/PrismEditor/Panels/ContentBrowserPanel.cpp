@@ -1,6 +1,7 @@
 #include "ContentBrowserPanel.h"
 #include "../Core/EditorIcons.h"
 #include "../Core/EditorTheme.h"
+#include "../Core/ShellOps.h"
 #include <Prism/Assets/AssetMeta.h>
 #include <Prism/Core/Log.h>
 #include <Prism/Renderer/ThumbnailCache.h>
@@ -239,10 +240,6 @@ namespace PrismEditor {
             default: return "NovoArquivo.txt";
             }
         }
-        // Aspas simples/duplas no caminho quebrariam o comando do shell.
-        bool SafeForShell(const std::string& s) {
-            return s.find_first_of("\"'`$&|;<>%^\n\r") == std::string::npos;
-        }
     }
 
     void ContentBrowserPanel::BeginNewFile(NewFileKind kind) {
@@ -330,33 +327,8 @@ namespace PrismEditor {
         return true;
     }
 
-    void ContentBrowserPanel::RevealInFileExplorer(const fs::path& path) {
-        const std::string p = path.string();
-        if (!SafeForShell(p)) { PRISM_CORE_WARN("ContentBrowser: caminho com caracteres especiais, nao foi possivel abrir no explorador."); return; }
-        std::error_code ec;
-        const bool isDir = fs::is_directory(path, ec);
-#if defined(_WIN32)
-        std::string cmd = isDir ? "start \"\" explorer \"" + p + "\"" : "explorer /select,\"" + p + "\"";
-#elif defined(__APPLE__)
-        std::string cmd = isDir ? "open \"" + p + "\"" : "open -R \"" + p + "\"";
-#else
-        std::string cmd = "xdg-open \"" + (isDir ? p : path.parent_path().string()) + "\" >/dev/null 2>&1 &";
-#endif
-        std::system(cmd.c_str());
-    }
-
-    void ContentBrowserPanel::OpenTerminalAt(const fs::path& directory) {
-        const std::string p = directory.string();
-        if (!SafeForShell(p)) { PRISM_CORE_WARN("ContentBrowser: caminho com caracteres especiais, nao foi possivel abrir o terminal."); return; }
-#if defined(_WIN32)
-        std::string cmd = "start \"\" /D \"" + p + "\" cmd";
-#elif defined(__APPLE__)
-        std::string cmd = "open -a Terminal \"" + p + "\"";
-#else
-        std::string cmd = "(cd \"" + p + "\" && (x-terminal-emulator || gnome-terminal || konsole || xterm) >/dev/null 2>&1 &) &";
-#endif
-        std::system(cmd.c_str());
-    }
+    void ContentBrowserPanel::RevealInFileExplorer(const fs::path& path) { ShellOps::RevealInFileExplorer(path); }
+    void ContentBrowserPanel::OpenTerminalAt(const fs::path& directory) { ShellOps::OpenTerminalAt(directory); }
 
     void ContentBrowserPanel::BeginRename(const fs::path& path) {
         if (IsProtected(path)) {

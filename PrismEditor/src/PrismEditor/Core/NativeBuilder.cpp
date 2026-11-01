@@ -47,7 +47,48 @@ namespace PrismEditor {
         m_BuildDir = buildDirectory.generic_string();
         m_Config = config;
         m_BinariesDir = project.GetProjectDirectory() / "Binaries";
+        m_ExtraArgs.clear();
+        m_IsExtension = false;
 
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Lines.clear();
+            m_Finished = false;
+            m_Success = false;
+        }
+        m_Running.store(true);
+        m_Thread = std::thread(&NativeBuilder::Run, this);
+        return true;
+    }
+
+    bool NativeBuilder::StartExtension(const std::filesystem::path& extensionDirectory, const std::filesystem::path& sdkFile, std::string& error) {
+        if (m_Running.load()) {
+            error = "Ja existe uma compilacao em andamento.";
+            return false;
+        }
+        std::error_code ec;
+        if (!std::filesystem::exists(extensionDirectory / "CMakeLists.txt", ec)) {
+            error = "A extensao nao tem CMakeLists.txt (so extensoes com codigo-fonte podem ser compiladas aqui).";
+            return false;
+        }
+        if (!std::filesystem::exists(sdkFile, ec)) {
+            error = "PrismSDK.cmake nao encontrado ao lado do editor (" + sdkFile.generic_string() + "). Recompile a engine.";
+            return false;
+        }
+        if (m_Thread.joinable())
+            m_Thread.join();
+
+#ifdef NDEBUG
+        const char* config = "Release";
+#else
+        const char* config = "Debug";
+#endif
+        m_SourceDir = extensionDirectory.generic_string();
+        m_BuildDir = (extensionDirectory / "build").generic_string();
+        m_Config = config;
+        m_BinariesDir.clear();
+        m_ExtraArgs = " -DPRISM_SDK_FILE=\"" + sdkFile.generic_string() + "\"";
+        m_IsExtension = true;
         {
             std::lock_guard<std::mutex> lock(m_Mutex);
             m_Lines.clear();
@@ -75,7 +116,7 @@ namespace PrismEditor {
 
         std::string command =
             "cmake -S \"" + m_SourceDir + "\" -B \"" + m_BuildDir + "\" -DCMAKE_BUILD_TYPE=" + m_Config +
-            " -DPRISM_BUILD_ID=" + std::to_string(id) +
+            (m_IsExtension ? std::string() : " -DPRISM_BUILD_ID=" + std::to_string(id)) + m_ExtraArgs +
             " 2>&1 && cmake --build \"" + m_BuildDir + "\" --config " + m_Config + " 2>&1";
 #if defined(_WIN32)
         command = "\"" + command + "\""; // cmd /c remove o primeiro e o ultimo '"'
@@ -90,6 +131,7 @@ namespace PrismEditor {
         for (int attempt = 1; attempt <= kMaxAttempts && !success; attempt++) {
             // .pdb de compilacoes anteriores: apaga os que nao estao travados (os travados ficam para a proxima).
             std::error_code ec;
+            if (!m_IsExtension)
             for (auto& entry : std::filesystem::directory_iterator(m_BinariesDir, ec)) {
                 const std::string name = entry.path().filename().string();
                 if (name.rfind("NativeScripts_", 0) == 0 && entry.path().extension() == ".pdb") {

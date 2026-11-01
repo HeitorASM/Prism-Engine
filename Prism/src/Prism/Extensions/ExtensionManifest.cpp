@@ -46,6 +46,48 @@ namespace Prism {
         return true;
     }
 
+    std::string SetManifestValue(const std::string& text, const std::string& key, const std::string& value) {
+        const std::string wantedKey = Lower(Trim(key));
+        const bool crlf = text.find("\r\n") != std::string::npos;
+        const std::string newline = crlf ? "\r\n" : "\n";
+        const std::string replacement = wantedKey + " = " + value;
+
+        std::string result;
+        bool replaced = false;
+        size_t pos = 0;
+        while (pos < text.size()) {
+            size_t end = text.find('\n', pos);
+            const bool hasNewline = end != std::string::npos;
+            if (!hasNewline) end = text.size();
+            std::string line = text.substr(pos, end - pos);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+
+            bool isTarget = false;
+            if (!replaced) {
+                const std::string trimmed = Trim(line);
+                if (!trimmed.empty() && trimmed[0] != '#' && trimmed[0] != ';') {
+                    const size_t eq = trimmed.find('=');
+                    if (eq != std::string::npos && Lower(Trim(trimmed.substr(0, eq))) == wantedKey)
+                        isTarget = true;
+                }
+            }
+            if (isTarget) {
+                result += replacement;
+                replaced = true;
+            }
+            else {
+                result += line;
+            }
+            if (hasNewline) result += newline;
+            pos = hasNewline ? end + 1 : end;
+        }
+        if (!replaced) {
+            if (!result.empty() && result.back() != '\n') result += newline;
+            result += replacement + newline;
+        }
+        return result;
+    }
+
     const char* ExtensionTargetName(ExtensionTarget target) {
         switch (target) {
             case ExtensionTarget::Editor: return "editor";

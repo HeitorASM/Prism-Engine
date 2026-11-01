@@ -9,6 +9,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <fstream>
 #include <sstream>
@@ -76,6 +77,38 @@ namespace Prism {
                 }
             }
             return {};
+        }
+
+        // No EDITOR a biblioteca e aberta a partir de uma COPIA numa pasta temporaria: no Windows uma
+        // dll carregada fica travada, e o botao "Compilar" da aba Extensoes precisa poder sobrescrever
+        // a original enquanto o editor roda. Copia os arquivos da pasta da biblioteca (dlls vizinhas e
+        // .pdb), nao recursivo. Devolve vazio se falhar (o chamador abre a original).
+        std::filesystem::path MakeCacheCopy(const std::filesystem::path& library, const std::string& name) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            static fs::path s_SessionRoot;
+            if (s_SessionRoot.empty()) {
+                const fs::path root = fs::temp_directory_path(ec) / "PrismExtensionCache";
+                // Sobras de sessoes anteriores (as de um editor ainda aberto falham ao apagar - sem problema).
+                for (const auto& entry : fs::directory_iterator(root, ec)) {
+                    std::error_code ignored;
+                    fs::remove_all(entry.path(), ignored);
+                }
+                const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                s_SessionRoot = root / std::to_string((long long)stamp);
+            }
+            const fs::path destinationDir = s_SessionRoot / name;
+            fs::create_directories(destinationDir, ec);
+            if (ec) return {};
+            for (const auto& entry : fs::directory_iterator(library.parent_path(), ec)) {
+                std::error_code fileError;
+                if (!entry.is_regular_file(fileError)) continue;
+                fs::copy_file(entry.path(), destinationDir / entry.path().filename(), fs::copy_options::overwrite_existing, fileError);
+                if (fileError && entry.path() == library) return {}; // a principal precisa ter sido copiada
+            }
+            const fs::path copy = destinationDir / library.filename();
+            return fs::is_regular_file(copy, ec) ? copy : fs::path();
         }
 
         bool ReadFile(const std::filesystem::path& path, std::string& out) {
@@ -249,7 +282,13 @@ namespace Prism {
                 continue;
             }
 
-            void* handle = OpenLibrary(info.Library);
+            info.LoadedFrom = info.Library;
+            if (isEditor) {
+                std::filesystem::path copy = MakeCacheCopy(info.Library, m.Name);
+                if (!copy.empty())
+                    info.LoadedFrom = copy;
+            }
+            void* handle = OpenLibrary(info.LoadedFrom);
             if (!handle) {
                 Record(info, ExtensionState::Failed, "nao foi possivel abrir '" + info.Library.string() + "' (compilador/configuracao diferentes da engine? dependencias faltando?).");
                 continue;

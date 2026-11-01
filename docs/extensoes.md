@@ -45,6 +45,27 @@ cmake -S . -B build -DPRISM_SDK_FILE=<pasta do editor>/PrismSDK.cmake
 cmake --build build --config Release
 ```
 
+### Pelo editor (aba Extensoes)
+
+Menu **Janela > Extensoes** abre a aba que gerencia tudo sem sair do editor:
+
+- **Lista** as extensoes globais e do projeto com o estado (Carregada / Falhou / Ignorada / Nao
+  carregada), versao, autor e o **motivo** da falha.
+- **Ativada**: grava `enabled` no `extension.ini`.
+- **Compilar**: roda o cmake da extensao em segundo plano; a saida vai para a aba **Saida de Build**
+  (erros viram links para o codigo). O resultado fica em `Binaries/` da extensao.
+- **Nova extensao...**: cria `<Projeto>/Extensions/<Nome>/` com `extension.ini`, `CMakeLists.txt` e um
+  `.cpp` de exemplo (component + sistema), e abre o `.cpp` no editor de codigo.
+- **Mostrar na pasta** e **Abrir codigo**.
+
+As extensoes continuam sendo carregadas **uma vez, ao abrir o editor**: ligar/desligar, compilar ou criar
+uma extensao so passa a valer depois de **reiniciar o editor** (a aba avisa). O editor abre uma **copia**
+da biblioteca numa pasta temporaria, entao compilar com o editor aberto nao e bloqueado pelo Windows.
+
+**Exportar jogo**: `<Projeto>/Extensions/` vai para `Game/Extensions/` so com o que roda (manifesto e
+biblioteca; sem codigo-fonte, `build/` nem `.pdb`). Extensao sem biblioteca compilada gera um aviso na
+exportacao. Extensoes **globais** (ao lado do editor) nao entram no jogo exportado.
+
 ### Regras da dll
 
 - Use **so** `RegisterComponent<T>(host, desc)`, `RegisterSystem<S>(host)` e `LogMessage(host, nivel, texto)`:
@@ -55,7 +76,7 @@ cmake --build build --config Release
   valor para o lambda; nao precisa linkar o ImGui.
 - Mesmo runtime (CRT) da engine: `RegisterSystem` passa a posse de um `new` da dll para a engine.
 - A engine **nunca descarrega** a dll antes de sair (objetos dela vivem nas cenas). Atualizar uma
-  extensao exige reiniciar o editor.
+  extensao exige reiniciar o editor (a aba Extensoes avisa).
 - Extensoes sao codigo nativo com acesso total: so abra projetos de quem voce confia.
 - Trocar de projeto na mesma sessao do editor nao carrega as extensoes do novo projeto; reinicie.
 

@@ -279,6 +279,30 @@ static void TestModuleWarnings() {
     }
 }
 
+static void TestExtensions() {
+    std::puts("[Extensoes do projeto]");
+    Fixture f = MakeFixture("extensoes");
+    const fs::path ext = f.Project / "Extensions" / "Health";
+    Touch(ext / "extension.ini", "name = Health\napi = 1\n");
+    Touch(ext / "Health.cpp");                                   // fonte: nao vai
+    Touch(ext / "CMakeLists.txt");                               // fonte: nao vai
+    Touch(ext / "build" / "CMakeCache.txt");                     // pasta de build: nao vai
+    Touch(ext / "Binaries" / (std::string("Health") + kModule)); // biblioteca: vai
+    Touch(ext / "Binaries" / "Health.pdb");                      // artefato: nao vai
+    Touch(f.Project / "Extensions" / "Sem" / "extension.ini", "name = Sem\napi = 1\n"); // sem biblioteca
+
+    GameExportResult r = ExportGame(f.Options);
+    CHECK(r.Success);
+    const fs::path out = f.Output / "Game" / "Extensions" / "Health";
+    CHECK(Exists(out / "extension.ini"));
+    CHECK(Exists(out / "Binaries" / (std::string("Health") + kModule)));
+    CHECK(!Exists(out / "Health.cpp"));
+    CHECK(!Exists(out / "CMakeLists.txt"));
+    CHECK(!Exists(out / "build"));
+    CHECK(!Exists(out / "Binaries" / "Health.pdb"));
+    CHECK(r.Warnings.size() == 1); // so a extensao 'Sem' avisa
+}
+
 int main() {
     fs::remove_all(Root());
     TestSanitize();
@@ -286,6 +310,7 @@ int main() {
     TestReexport();
     TestRefusals();
     TestModuleWarnings();
+    TestExtensions();
 
     std::printf("\n%d verificacoes, %d falha(s).\n", g_Checks, g_Failures);
     fs::remove_all(Root());

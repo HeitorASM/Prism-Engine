@@ -1,9 +1,13 @@
 // Testes do manifesto de extensoes (extension.ini) e da ordem de carga por dependencia.
 // So usa a std + Extensions/ExtensionManifest.cpp.
 #include <Prism/Extensions/ExtensionManifest.h>
+#include <Prism/Extensions/ExtensionTemplate.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using namespace Prism;
 
@@ -88,10 +92,56 @@ static void TestLoadOrder() {
     CHECK(failures.count("p") && failures.count("q"));
 }
 
+static void TestSetManifestValue() {
+    // troca a linha existente, preservando comentarios e CRLF
+    std::string text = "# topo\r\nname = A\r\n# enabled = false\r\nenabled = true\r\napi = 1\r\n";
+    std::string out = SetManifestValue(text, "enabled", "false");
+    CHECK(out == "# topo\r\nname = A\r\n# enabled = false\r\nenabled = false\r\napi = 1\r\n");
+    // chave ausente: acrescenta ao fim (mesmo sem quebra de linha final)
+    CHECK(SetManifestValue("name = A\napi = 1", "enabled", "false") == "name = A\napi = 1\nenabled = false\n");
+    // chave em outra caixa, com espacos
+    CHECK(SetManifestValue("  Enabled=true\n", "enabled", "false") == "enabled = false\n");
+    // o resultado continua sendo um manifesto valido com o valor novo
+    auto parsed = ParseExtensionManifest(SetManifestValue("name = A\napi = 1\n", "enabled", "false"));
+    CHECK(parsed.Ok && !parsed.Manifest.Enabled);
+}
+
+static void TestTemplate() {
+    CHECK(ExtensionIdentifier("My-Ext.v2") == "My_Ext_v2");
+    CHECK(ExtensionIdentifier("3d") == "_3d");
+
+    auto files = GenerateExtensionTemplate("Minha-Ext");
+    std::string manifest, source;
+    for (auto& [path, content] : files) {
+        if (path == "extension.ini") manifest = content;
+        if (path == "Minha-Ext.cpp") source = content;
+        CHECK(content.find("@NAME@") == std::string::npos && content.find("@IDENT@") == std::string::npos);
+    }
+    auto parsed = ParseExtensionManifest(manifest); // o manifesto gerado precisa ser valido
+    CHECK(parsed.Ok && parsed.Manifest.Name == "Minha-Ext" && parsed.Manifest.ApiVersion == 1);
+    CHECK(source.find("struct Minha_Ext ") != std::string::npos);
+
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "prism_ext_template_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::path dir;
+    std::string error;
+    CHECK(WriteExtensionTemplate(root, "Teste", dir, error));
+    CHECK(fs::exists(dir / "extension.ini") && fs::exists(dir / "CMakeLists.txt") && fs::exists(dir / "Teste.cpp"));
+    CHECK(!WriteExtensionTemplate(root, "Teste", dir, error)); // nao sobrescreve
+    CHECK(!WriteExtensionTemplate(root, "../fora", dir, error));
+    CHECK(!WriteExtensionTemplate(root, "", dir, error));
+    CHECK(!WriteExtensionTemplate(root, "..", dir, error));
+    fs::remove_all(root, ec);
+}
+
 int main() {
     TestParseOk();
     TestParseErrors();
     TestLoadOrder();
+    TestSetManifestValue();
+    TestTemplate();
     std::printf("%d checagens, %d falhas\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

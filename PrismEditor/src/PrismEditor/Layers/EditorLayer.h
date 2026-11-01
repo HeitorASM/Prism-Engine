@@ -40,6 +40,7 @@
 #include "../Panels/DocsPanel.h"
 #include "../Panels/ProfilerPanel.h"
 #include "../Panels/BuildOutputPanel.h"
+#include "../Panels/ExtensionsPanel.h"
 #include "../Panels/GamePanel.h"
 #include "../Play/PlayWindow.h"
 
@@ -74,6 +75,7 @@ namespace PrismEditor {
         // Scripts C++: botao "Compilar" da barra superior (gera Source/ se faltar, compila e recarrega o modulo).
         void RenderBuildToolbarGroup();
         void StartNativeBuild();
+        void StartExtensionBuild(const std::filesystem::path& extensionDirectory);
         void PollNativeBuild();
 
         // Arquivo > Exportar Jogo...: empacota o projeto + PrismRuntime numa pasta (ver
@@ -169,6 +171,12 @@ namespace PrismEditor {
         // Exportacao do jogo (thread de fundo, ver Core/GameExportRunner.h).
         GameExportRunner m_GameExporter;
         std::filesystem::path m_LastExportParent; // pasta onde o dialogo "Exportar" abre da proxima vez
+
+        // Aba "Extensoes" (ver Panels/ExtensionsPanel.h). A compilacao de uma extensao reutiliza o
+        // m_NativeBuilder e a aba Saida de Build; m_ExtensionBuildDirectory != vazio = o build em
+        // andamento e de uma extensao (nao dos scripts C++: nao recarrega o modulo ao terminar).
+        ExtensionsPanel m_Extensions;
+        std::filesystem::path m_ExtensionBuildDirectory;
     };
 
 }

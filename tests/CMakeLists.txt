@@ -134,6 +134,7 @@ add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)
 add_executable(PrismExtensionManifestTests
     ExtensionManifestTests.cpp
     ${PRISM_SRC}/Prism/Extensions/ExtensionManifest.cpp
+    ${PRISM_SRC}/Prism/Extensions/ExtensionTemplate.cpp
 )
 target_include_directories(PrismExtensionManifestTests PRIVATE ${PRISM_SRC})
 target_compile_features(PrismExtensionManifestTests PRIVATE cxx_std_20)
