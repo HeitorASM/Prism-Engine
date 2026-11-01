@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
 
 namespace PrismEditor {
 
@@ -208,6 +210,154 @@ namespace PrismEditor {
         return true;
     }
 
+    // ---- Criar arquivos / abrir no SO -----------------------------------------
+    namespace {
+        const char* KindExtension(int kind) {
+            switch (kind) {
+            case 0: return ".lua";
+            case 1: return ".prismui";
+            case 2: return ".prismmat";
+            case 3: return ".txt";
+            default: return "";
+            }
+        }
+        const char* KindLabel(int kind) {
+            switch (kind) {
+            case 0: return "Script Lua";
+            case 1: return "Documento de UI";
+            case 2: return "Material";
+            case 3: return "Arquivo de texto";
+            default: return "Arquivo vazio";
+            }
+        }
+        const char* KindDefaultName(int kind) {
+            switch (kind) {
+            case 0: return "NovoScript";
+            case 1: return "NovaUI";
+            case 2: return "NovoMaterial";
+            case 3: return "NovoTexto";
+            default: return "NovoArquivo.txt";
+            }
+        }
+        // Aspas simples/duplas no caminho quebrariam o comando do shell.
+        bool SafeForShell(const std::string& s) {
+            return s.find_first_of("\"'`$&|;<>%^\n\r") == std::string::npos;
+        }
+    }
+
+    void ContentBrowserPanel::BeginNewFile(NewFileKind kind) {
+        m_NewFileKind = kind;
+        const int k = (int)kind;
+        std::string base = KindDefaultName(k);
+        std::string ext = KindExtension(k);
+        std::string stem = base;
+        std::string suffix;
+        if (kind == NewFileKind::Empty) { // nome ja leva a extensao
+            const auto dot = base.rfind('.');
+            stem = base.substr(0, dot);
+            suffix = base.substr(dot);
+        }
+        std::string name = stem;
+        std::error_code ec;
+        for (int i = 2; fs::exists(m_CurrentDirectory / (name + ext + suffix), ec); ++i)
+            name = stem + std::to_string(i);
+        CopyName(m_NameBuffer, sizeof(m_NameBuffer), name + suffix);
+        m_PopupError.clear();
+        m_OpenNewFilePopup = true;
+    }
+
+    bool ContentBrowserPanel::CreateFileOfKind(NewFileKind kind, const std::string& name, std::string& error) {
+        if (!ValidName(name, error)) return false;
+        const int k = (int)kind;
+        std::string fileName = name;
+        const std::string ext = KindExtension(k);
+        if (!ext.empty()) {
+            // Acrescenta a extensao do tipo se o usuario nao digitou.
+            std::string lower = fileName;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+            if (lower.size() < ext.size() || lower.compare(lower.size() - ext.size(), ext.size(), ext) != 0)
+                fileName += ext;
+        }
+        if (!ValidName(fileName, error)) return false;
+        fs::path target = m_CurrentDirectory / fileName;
+        std::error_code ec;
+        if (fs::exists(target, ec)) { error = "Ja existe um item com esse nome."; return false; }
+
+        if (kind == NewFileKind::Material) {
+            Prism::MaterialComponent material;
+            Prism::MaterialSerializer::Serialize(material, target);
+            if (!fs::exists(target, ec)) { error = "Falha ao criar o material."; return false; }
+        }
+        else {
+            std::ofstream out(target, std::ios::binary);
+            if (!out) { error = "Falha ao criar o arquivo."; return false; }
+            if (kind == NewFileKind::Lua) {
+                out <<
+                    "-- " << fileName << "\n"
+                    "-- Funcoes opcionais: OnCreate(), OnUpdate(deltaTime), OnFixedUpdate(dt), OnDestroy().\n"
+                    "-- A variavel global `entity` e a entidade dona deste script.\n"
+                    "\n"
+                    "function OnCreate()\n"
+                    "    log(entity:GetName() .. \": OnCreate\")\n"
+                    "end\n"
+                    "\n"
+                    "function OnUpdate(deltaTime)\n"
+                    "\n"
+                    "end\n"
+                    "\n"
+                    "function OnDestroy()\n"
+                    "\n"
+                    "end\n";
+            }
+            else if (kind == NewFileKind::UIDocument) {
+                out <<
+                    "<UI scale=\"height\" reference=\"1920x1080\">\n"
+                    "  <!-- Salve o arquivo e a UI atualiza sozinha. -->\n"
+                    "  <Panel id=\"hud\" anchor=\"top-right\" margin=\"24\" padding=\"16\" layout=\"column\" gap=\"12\" color=\"#000000AA\">\n"
+                    "    <Text id=\"title\" size=\"36\" color=\"#FFCC00\">Ola</Text>\n"
+                    "  </Panel>\n"
+                    "</UI>\n";
+            }
+            if (!out.good()) { error = "Falha ao escrever o arquivo."; return false; }
+        }
+
+        if (auto project = Prism::Project::GetActive())
+            project->GetAssetRegistry().Refresh();
+        RefreshEntries();
+        m_SelectedPath = target;
+        if ((kind == NewFileKind::Lua || kind == NewFileKind::Text || kind == NewFileKind::UIDocument || kind == NewFileKind::Empty) && m_OnTextFileDoubleClicked)
+            m_OnTextFileDoubleClicked(target);
+        return true;
+    }
+
+    void ContentBrowserPanel::RevealInFileExplorer(const fs::path& path) {
+        const std::string p = path.string();
+        if (!SafeForShell(p)) { PRISM_CORE_WARN("ContentBrowser: caminho com caracteres especiais, nao foi possivel abrir no explorador."); return; }
+        std::error_code ec;
+        const bool isDir = fs::is_directory(path, ec);
+#if defined(_WIN32)
+        std::string cmd = isDir ? "start \"\" explorer \"" + p + "\"" : "explorer /select,\"" + p + "\"";
+#elif defined(__APPLE__)
+        std::string cmd = isDir ? "open \"" + p + "\"" : "open -R \"" + p + "\"";
+#else
+        std::string cmd = "xdg-open \"" + (isDir ? p : path.parent_path().string()) + "\" >/dev/null 2>&1 &";
+#endif
+        std::system(cmd.c_str());
+    }
+
+    void ContentBrowserPanel::OpenTerminalAt(const fs::path& directory) {
+        const std::string p = directory.string();
+        if (!SafeForShell(p)) { PRISM_CORE_WARN("ContentBrowser: caminho com caracteres especiais, nao foi possivel abrir o terminal."); return; }
+#if defined(_WIN32)
+        std::string cmd = "start \"\" /D \"" + p + "\" cmd";
+#elif defined(__APPLE__)
+        std::string cmd = "open -a Terminal \"" + p + "\"";
+#else
+        std::string cmd = "(cd \"" + p + "\" && (x-terminal-emulator || gnome-terminal || konsole || xterm) >/dev/null 2>&1 &) &";
+#endif
+        std::system(cmd.c_str());
+    }
+
     void ContentBrowserPanel::BeginRename(const fs::path& path) {
         if (IsProtected(path)) {
             PRISM_CORE_WARN("ContentBrowser: itens da raiz do projeto nao podem ser renomeados.");
@@ -235,6 +385,7 @@ namespace PrismEditor {
         if (m_OpenRenamePopup) { ImGui::OpenPopup("Renomear##CB"); m_OpenRenamePopup = false; }
         if (m_OpenDeletePopup) { ImGui::OpenPopup("Excluir##CB"); m_OpenDeletePopup = false; }
         if (m_OpenNewFolderPopup) { ImGui::OpenPopup("Nova Pasta##CB"); m_OpenNewFolderPopup = false; }
+        if (m_OpenNewFilePopup) { ImGui::OpenPopup("Novo Arquivo##CB"); m_OpenNewFilePopup = false; }
 
         const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
 
@@ -319,6 +470,30 @@ namespace PrismEditor {
             if (confirm) {
                 std::string error;
                 if (CreateFolder(m_NameBuffer, error)) ImGui::CloseCurrentPopup();
+                else m_PopupError = error;
+            }
+            else if (cancel) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        // --- Novo arquivo -----------------------------------------------------
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Novo Arquivo##CB", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextDisabled("%s", KindLabel((int)m_NewFileKind));
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            ImGui::SetNextItemWidth(320.0f);
+            bool enter = ImGui::InputText("##newfile", m_NameBuffer, sizeof(m_NameBuffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+            if (!m_PopupError.empty())
+                ImGui::TextColored(theme.Stop, "%s", m_PopupError.c_str());
+
+            const bool confirm = ImGui::Button("Criar", ImVec2(120, 0)) || enter;
+            ImGui::SameLine();
+            const bool cancel = ImGui::Button("Cancelar", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+
+            if (confirm) {
+                std::string error;
+                if (CreateFileOfKind(m_NewFileKind, m_NameBuffer, error)) ImGui::CloseCurrentPopup();
                 else m_PopupError = error;
             }
             else if (cancel) {
@@ -587,6 +762,11 @@ namespace PrismEditor {
                     if (!entry.IsDirectory && !isMapFile && !isTyped && !isProjectFile && m_OnTextFileDoubleClicked && ImGui::MenuItem("Abrir no editor de codigo"))
                         openTextPath = entry.Path;
                     ImGui::Separator();
+                    if (ImGui::MenuItem("Mostrar no explorador de arquivos"))
+                        RevealInFileExplorer(entry.Path);
+                    if (entry.IsDirectory && ImGui::MenuItem("Abrir terminal nesta pasta"))
+                        OpenTerminalAt(entry.Path);
+                    ImGui::Separator();
                     if (ImGui::MenuItem("Renomear", "F2", false, !isProtectedEntry))
                         renamePath = entry.Path;
                     if (ImGui::MenuItem("Excluir", "Del", false, !isProtectedEntry))
@@ -661,6 +841,20 @@ namespace PrismEditor {
                 m_PopupError.clear();
                 m_OpenNewFolderPopup = true;
             }
+            if (ImGui::BeginMenu("Criar arquivo")) {
+                if (ImGui::MenuItem("Script Lua (.lua)")) BeginNewFile(NewFileKind::Lua);
+                if (ImGui::MenuItem("Documento de UI (.prismui)")) BeginNewFile(NewFileKind::UIDocument);
+                if (ImGui::MenuItem("Material (.prismmat)")) BeginNewFile(NewFileKind::Material);
+                if (ImGui::MenuItem("Arquivo de texto (.txt)")) BeginNewFile(NewFileKind::Text);
+                if (ImGui::MenuItem("Arquivo vazio...")) BeginNewFile(NewFileKind::Empty);
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Abrir pasta no explorador"))
+                RevealInFileExplorer(m_CurrentDirectory);
+            if (ImGui::MenuItem("Abrir terminal aqui"))
+                OpenTerminalAt(m_CurrentDirectory);
+            ImGui::Separator();
             if (ImGui::MenuItem("Atualizar")) {
                 if (auto project = Prism::Project::GetActive())
                     project->GetAssetRegistry().Refresh();

@@ -85,6 +85,13 @@ namespace PrismEditor {
         bool MoveEntry(const std::filesystem::path& from, const std::filesystem::path& to, std::string& error);
         bool DeleteEntry(const std::filesystem::path& path, std::string& error);
         bool CreateFolder(const std::string& name, std::string& error);
+        // Tipos de arquivo criaveis pelo menu de contexto (extensao e modelo por tipo).
+        enum class NewFileKind { Lua, UIDocument, Material, Text, Empty };
+        bool CreateFileOfKind(NewFileKind kind, const std::string& name, std::string& error);
+        void BeginNewFile(NewFileKind kind);
+        // Abre pasta/arquivo no gerenciador de arquivos / terminal do SO.
+        static void RevealInFileExplorer(const std::filesystem::path& path);
+        static void OpenTerminalAt(const std::filesystem::path& directory);
         bool IsProtected(const std::filesystem::path& path) const;
         static bool ValidName(const std::string& name, std::string& error);
 
@@ -106,6 +113,8 @@ namespace PrismEditor {
         bool m_OpenRenamePopup = false;
         bool m_OpenDeletePopup = false;
         bool m_OpenNewFolderPopup = false;
+        bool m_OpenNewFilePopup = false;
+        NewFileKind m_NewFileKind = NewFileKind::Text;
 
         float m_CellSize = 88.0f; // tamanho dos icones (slider na barra)
 

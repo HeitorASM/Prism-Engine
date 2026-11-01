@@ -152,6 +152,7 @@ namespace PrismEditor {
         // vez de um comando por frame de movimento do mouse. Valido apenas
         // enquanto um drag esta em andamento.
         Prism::TransformComponent m_TransformBeforeEdit;
+        bool m_ScaleLinked = false; // escala proporcional no inspetor de Transform
 
         glm::vec3 m_ColorBeforeEdit{ 0.0f };
 
