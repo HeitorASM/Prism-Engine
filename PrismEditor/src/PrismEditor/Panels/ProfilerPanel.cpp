@@ -98,6 +98,15 @@ namespace PrismEditor {
         ImGui::SameLine();
         ImGui::TextDisabled("(desligue para comparar o numero de desenhos e o tempo)");
         ImGui::Text("Sombras: %u desenhos, %u triangulos", Profiler::CounterValue(C::ShadowDrawCalls), Profiler::CounterValue(C::ShadowTriangles));
+        {
+            const Prism::ShadowCacheStats cache = Prism::ShadowSystem::GetCacheStats();
+            ImGui::Text("Sombras spot/point (camadas): %u reaproveitadas, %u redesenhadas", cache.Reused, cache.Redrawn);
+            bool shadowCache = Prism::ShadowSystem::IsCacheEnabled();
+            if (ImGui::Checkbox("Cache de sombras", &shadowCache))
+                Prism::ShadowSystem::SetCacheEnabled(shadowCache);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(luz e objetos parados: nao redesenha; desligue para comparar GPU.Shadows)");
+        }
         const Prism::Renderer::CullStats& cull = Prism::Renderer::GetCullStats();
         ImGui::Text("Malhas: %u desenhadas, %u fora do frustum, %u em camadas escondidas", cull.Drawn, cull.FrustumCulled, cull.LayerHidden);
 

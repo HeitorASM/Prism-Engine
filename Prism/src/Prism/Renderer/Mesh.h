@@ -72,6 +72,11 @@ namespace Prism {
         bool IsSkinned() const { return m_Skinned; }
         uint32_t GetIndexCount() const { return m_IndexCount; }
 
+        // Identidade UNICA desta malha durante a execucao (nunca reusada, ao contrario do
+        // ponteiro, que pode ser reaproveitado depois que a malha e liberada). A geometria e
+        // imutavel apos criada, entao o mesmo id = a mesma geometria. Usado pelo cache de sombras.
+        uint64_t GetUniqueId() const { return m_UniqueId; }
+
         static Scope<Mesh> Create(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices);
 
         // VAOs NAO sao compartilhados entre contextos OpenGL com share list
@@ -121,6 +126,7 @@ namespace Prism {
         uint32_t m_VBO = 0;
         uint32_t m_EBO = 0;
         uint32_t m_IndexCount = 0;
+        uint64_t m_UniqueId = 0;
         bool m_Skinned = false;
         glm::vec3 m_LocalBoundsMin{ 0.0f };
         glm::vec3 m_LocalBoundsMax{ 0.0f };

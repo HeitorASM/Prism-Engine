@@ -29,6 +29,9 @@ namespace Prism {
 
     Mesh::Mesh(const std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices)
         : m_IndexCount((uint32_t)indices.size()) {
+        static uint64_t s_NextUniqueId = 0; // a engine cria malhas so na thread principal
+        m_UniqueId = ++s_NextUniqueId;
+
         // Bounding box local - ver comentario grande em Mesh.h. Calculada
         // aqui (CPU, uma unica vez) antes de subir 'vertices' para a GPU
         // abaixo - min/max comeca no primeiro vertice (nao em +-infinito)

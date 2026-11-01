@@ -18,6 +18,8 @@
 // ============================================================================
 #include <glad/gl.h>
 #include "OpenGLContext.h"
+#include "../Core/CrashHandler.h"
+#include <string>
 
 #include "../Core/Log.h"
 #include <GLFW/glfw3.h>
@@ -42,6 +44,13 @@ namespace Prism {
         PRISM_CORE_INFO("  Vendor:   ", (const char*)glGetString(GL_VENDOR));
         PRISM_CORE_INFO("  Renderer: ", (const char*)glGetString(GL_RENDERER));
         PRISM_CORE_INFO("  Version:  ", (const char*)glGetString(GL_VERSION));
+
+        // Guardado agora porque dentro do handler de crash nao e seguro chamar o GL
+        // (o contexto pode nem estar valido). Vai para o crash.log.
+        auto glText = [](GLenum name) { const GLubyte* text = glGetString(name); return std::string(text ? (const char*)text : "?"); };
+        SetCrashContext("GPU", glText(GL_RENDERER));
+        SetCrashContext("OpenGL", glText(GL_VERSION));
+        SetCrashContext("Vendor", glText(GL_VENDOR));
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);

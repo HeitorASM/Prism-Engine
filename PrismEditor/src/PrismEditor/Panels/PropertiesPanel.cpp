@@ -96,6 +96,10 @@ namespace PrismEditor {
         if (m_Ctx.SelectedEntity.HasComponent<Prism::EnvironmentComponent>())
             DrawEnvironmentUI();
 
+        // Components registrados por EXTENSOES (ComponentRegistry::RegisterExtension):
+        // o inspetor vem do proprio registro (DrawInspector) e o Undo e generico.
+        DrawExtensionComponentsUI();
+
         ImGui::Dummy(ImVec2(0, 8));
         RenderAddComponentButton();
 
@@ -148,11 +152,35 @@ namespace PrismEditor {
             // ja que o registro em si (Prism::ComponentRegistry) nao
             // conhece EditorCommands (que vive em PrismEditor, nao em
             // Prism) - ver comentario la sobre essa separacao proposital.
+            // Components do motor primeiro (Source vazio)...
             for (auto& info : registry) {
+                if (!info.Source.empty()) continue;
                 if (!info.Has(m_Ctx.SelectedEntity) && ImGui::MenuItem(info.DisplayName.c_str())) {
                     AddComponentByRegistryName(info.DisplayName);
                     ImGui::CloseCurrentPopup();
                 }
+            }
+
+            // ...depois os de extensao, agrupados por Category ("Extensoes" se vazia).
+            std::vector<std::string> categories;
+            for (auto& info : registry) {
+                if (info.Source.empty() || info.Has(m_Ctx.SelectedEntity)) continue;
+                std::string cat = info.Category.empty() ? "Extensoes" : info.Category;
+                if (std::find(categories.begin(), categories.end(), cat) == categories.end())
+                    categories.push_back(cat);
+            }
+            if (!categories.empty()) ImGui::Separator();
+            for (const std::string& cat : categories) {
+                if (!ImGui::BeginMenu(cat.c_str())) continue;
+                for (auto& info : registry) {
+                    if (info.Source.empty() || info.Has(m_Ctx.SelectedEntity)) continue;
+                    if ((info.Category.empty() ? std::string("Extensoes") : info.Category) != cat) continue;
+                    if (ImGui::MenuItem(info.DisplayName.c_str())) {
+                        AddComponentByRegistryName(info.DisplayName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::EndMenu();
             }
             ImGui::EndPopup();
         }
@@ -219,17 +247,10 @@ namespace PrismEditor {
         else if (displayName == "Environment")
             m_Ctx.History.Execute(Prism::CreateScope<AddComponentCommand<Prism::EnvironmentComponent>>(entity, displayName));
         else {
-            // Fallback generico SEM Undo - usado so se um Component for
-            // registrado em ComponentRegistration.cpp mas esquecido aqui
-            // (ver comentario grande acima) - melhor funcionar sem
-            // desfazer do que nao adicionar nada.
-            PRISM_CORE_WARN("PropertiesPanel::AddComponentByRegistryName: '", displayName, "' nao tem um AddComponentCommand mapeado - adicionando sem Undo.");
-            for (auto& info : Prism::ComponentRegistry::GetAll()) {
-                if (info.DisplayName == displayName) {
-                    info.AddDefault(entity);
-                    break;
-                }
-            }
+            // Fallback generico COM Undo: components de extensao (e qualquer
+            // component registrado sem template proprio acima) usam os
+            // Commands baseados no registro (EditorCommands.h).
+            m_Ctx.History.Execute(Prism::CreateScope<AddRegisteredComponentCommand>(entity, displayName));
         }
 
         // OnAfterAddInEditor (ver ComponentRegistry.h) - cobre ajustes de

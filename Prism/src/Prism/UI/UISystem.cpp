@@ -10,8 +10,11 @@
 #include "../Project/Project.h"
 #include "UIMarkup.h"
 #include "UILayout.h"
+#include "UIWorld.h"
 
 #include <glad/gl.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
 #include <stb_truetype.h>
@@ -162,10 +165,21 @@ namespace Prism {
             std::vector<Renderer::UIQuad> Quads;
             const Texture2D* Texture = nullptr;
             float Width = 0, Height = 0;
+            // Modo mundo: os quads vao para Renderer::DrawUIQuadsWorld (Width/Height = tamanho do canvas).
+            bool World = false;
+            glm::mat4 Model{ 1.0f };
+            glm::mat4 ViewProjection{ 1.0f };
+            float PixelsPerMeter = 200.0f;
+            bool DepthTest = true;
 
             void Flush() {
-                if (!Quads.empty())
-                    Renderer::DrawUIQuads(Quads.data(), (uint32_t)Quads.size(), Width, Height, Texture, s_FontTexture);
+                if (!Quads.empty()) {
+                    if (World)
+                        Renderer::DrawUIQuadsWorld(Quads.data(), (uint32_t)Quads.size(), glm::value_ptr(Model), glm::value_ptr(ViewProjection),
+                                                   Width, Height, PixelsPerMeter, Texture, s_FontTexture, DepthTest);
+                    else
+                        Renderer::DrawUIQuads(Quads.data(), (uint32_t)Quads.size(), Width, Height, Texture, s_FontTexture);
+                }
                 Quads.clear();
             }
             void Solid(const Rect& r, const glm::vec4& color) {
@@ -444,8 +458,10 @@ namespace Prism {
             const EngineMeasure measure;
             for (entt::entity handle : docView) {
                 auto& component = registry.get<UIDocumentComponent>(handle);
+                if (component.WorldSpace)
+                    continue; // painel de mundo: desenhado por RenderWorld / UpdateWorldInteraction
                 EnsureDocument(component);
-                if (!component.Visible || !component.Runtime.Ptr || !component.Runtime.Ptr->HasDocument)
+                if (!component.Visible || !scene.IsEntityVisible(handle) || !component.Runtime.Ptr || !component.Runtime.Ptr->HasDocument)
                     continue;
                 Ui::LayoutDocument(component.Runtime.Ptr->Doc, layoutWidth, layoutHeight, measure);
                 docs.push_back({ handle, &component, component.Runtime.Ptr.get() });
@@ -492,6 +508,170 @@ namespace Prism {
             const std::string handler = n.OnClick, id = n.Id; // copia: o script pode recarregar o documento
             ScriptEngine::DispatchUIDocumentClick(Entity(item.Handle, &scene), handler, id);
         }
+    }
+
+    // --- UI em espaco de mundo -------------------------------------------------------------
+    namespace {
+        struct WorldDoc {
+            entt::entity Handle;
+            UIDocumentComponent* Component;
+            UIDocumentRuntime* Runtime;
+            glm::mat4 Model;
+            float CanvasW, CanvasH, Ppm;
+        };
+
+        float SanitizeCanvas(float v) { return (v >= 1.0f && v <= 16384.0f) ? v : 1.0f; }
+
+        // Documentos de mundo visiveis e carregados, com o layout ja calculado no tamanho do canvas.
+        std::vector<WorldDoc> CollectWorldDocs(Scene& scene, const glm::mat4& view) {
+            std::vector<WorldDoc> result;
+            entt::registry& registry = scene.GetRegistry();
+            auto docView = registry.view<UIDocumentComponent>();
+            const EngineMeasure measure;
+            for (entt::entity handle : docView) {
+                auto& c = registry.get<UIDocumentComponent>(handle);
+                if (!c.WorldSpace || !c.Visible || !scene.IsEntityVisible(handle))
+                    continue;
+                EnsureDocument(c);
+                if (!c.Runtime.Ptr || !c.Runtime.Ptr->HasDocument)
+                    continue;
+                WorldDoc item;
+                item.Handle = handle;
+                item.Component = &c;
+                item.Runtime = c.Runtime.Ptr.get();
+                item.CanvasW = SanitizeCanvas(c.CanvasSize.x);
+                item.CanvasH = SanitizeCanvas(c.CanvasSize.y);
+                item.Ppm = (c.PixelsPerMeter >= 1.0f && c.PixelsPerMeter <= 100000.0f) ? c.PixelsPerMeter : 200.0f;
+                item.Model = Ui::CanvasModel(scene.GetWorldTransform(Entity(handle, &scene)), c.Billboard, view);
+                Ui::LayoutDocument(item.Runtime->Doc, item.CanvasW, item.CanvasH, measure);
+                result.push_back(item);
+            }
+            return result;
+        }
+    }
+
+    void UISystem::RenderWorld(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos) {
+        if (!view || !projection)
+            return;
+        const glm::mat4 viewMatrix = glm::make_mat4(view);
+        const glm::mat4 viewProjection = glm::make_mat4(projection) * viewMatrix;
+
+        EnsureFont();
+        std::vector<WorldDoc> docs = CollectWorldDocs(scene, viewMatrix);
+        if (docs.empty())
+            return;
+
+        // De tras para frente (blend normal): o mais distante primeiro; empate = Layer menor primeiro.
+        const glm::vec3 camera = cameraWorldPos ? glm::vec3(cameraWorldPos[0], cameraWorldPos[1], cameraWorldPos[2]) : glm::vec3(0.0f);
+        auto distance2 = [&](const WorldDoc& d) { glm::vec3 delta = glm::vec3(d.Model[3]) - camera; return glm::dot(delta, delta); };
+        std::stable_sort(docs.begin(), docs.end(), [&](const WorldDoc& a, const WorldDoc& b) {
+            const float da = distance2(a), db = distance2(b);
+            if (da != db) return da > db;
+            return a.Component->Layer < b.Component->Layer;
+        });
+
+        for (const WorldDoc& d : docs) {
+            Batcher batch;
+            batch.World = true;
+            batch.Model = d.Model;
+            batch.ViewProjection = viewProjection;
+            batch.PixelsPerMeter = d.Ppm;
+            batch.DepthTest = d.Component->DepthTest;
+            batch.Width = d.CanvasW;
+            batch.Height = d.CanvasH;
+            DrawDocument(batch, d.Runtime->Doc, d.Runtime->Input.Hovered(), d.Runtime->Input.Pressed());
+            batch.Flush();
+        }
+    }
+
+    void UISystem::UpdateWorldInteraction(Scene& scene, const float* view, const float* projection,
+                                          float layoutWidth, float layoutHeight, bool pointerAllowed) {
+        if (!view || !projection || layoutWidth <= 0.0f || layoutHeight <= 0.0f)
+            return;
+        const glm::mat4 viewMatrix = glm::make_mat4(view);
+        std::vector<WorldDoc> docs = CollectWorldDocs(scene, viewMatrix);
+        if (docs.empty())
+            return;
+
+        // Raio do ponteiro: o mouse, ou o centro da tela se o cursor esta travado (modo camera).
+        const bool locked = Input::GetCursorMode() == CursorMode::Locked;
+        const float ndcX = locked ? 0.0f : Input::GetMouseX() / layoutWidth * 2.0f - 1.0f;
+        const float ndcY = locked ? 0.0f : 1.0f - Input::GetMouseY() / layoutHeight * 2.0f;
+        glm::vec3 origin(0.0f), direction(0.0f, 0.0f, -1.0f);
+        const bool haveRay = Ui::ScreenRay(ndcX, ndcY, glm::inverse(glm::make_mat4(projection) * viewMatrix), origin, direction);
+
+        // Painel mais proximo sob o raio.
+        int best = -1;
+        Ui::CanvasHit bestHit;
+        if (haveRay) {
+            for (size_t k = 0; k < docs.size(); k++) {
+                Ui::CanvasHit hit = Ui::RayCanvasHit(origin, direction, docs[k].Model, docs[k].CanvasW, docs[k].CanvasH, docs[k].Ppm);
+                if (hit.Hit && (best < 0 || hit.Distance < bestHit.Distance)) {
+                    best = (int)k;
+                    bestHit = hit;
+                }
+            }
+        }
+        // Um objeto da cena na frente do painel (que nao seja a propria entidade) barra o ponteiro.
+        if (best >= 0) {
+            VisualRaycastHit blocker = scene.VisualRaycast(VisualRay{ origin, direction }, bestHit.Distance);
+            if (blocker.Hit && blocker.Entity != docs[(size_t)best].Handle && blocker.Distance < bestHit.Distance - 0.02f)
+                best = -1;
+        }
+
+        const bool mouseDown = Input::IsMouseButtonDown(MouseButton::Left);
+        bool worldBlocks = false;
+        std::vector<std::pair<size_t, int>> clicks;
+        for (size_t k = 0; k < docs.size(); k++) {
+            const bool over = ((int)k == best) && pointerAllowed;
+            Ui::Interaction::Result res = docs[k].Runtime->Input.Update(
+                docs[k].Runtime->Doc, over ? bestHit.X : -1.0f, over ? bestHit.Y : -1.0f, mouseDown, over);
+            worldBlocks = worldBlocks || res.PointerOverUI;
+            for (int node : res.Clicked)
+                clicks.emplace_back(k, node);
+        }
+        s_PointerOverUI = s_PointerOverUI || worldBlocks;
+
+        // Cliques por ultimo: um script pode destruir/alterar elementos.
+        entt::registry& registry = scene.GetRegistry();
+        for (const auto& [k, node] : clicks) {
+            const WorldDoc& item = docs[k];
+            if (!registry.valid(item.Handle) || !item.Runtime->Doc.IsValidIndex(node))
+                continue;
+            const Ui::Node& n = item.Runtime->Doc.Nodes[(size_t)node];
+            const std::string handler = n.OnClick, id = n.Id; // copia: o script pode recarregar o documento
+            ScriptEngine::DispatchUIDocumentClick(Entity(item.Handle, &scene), handler, id);
+        }
+    }
+
+    uint32_t UISystem::GetFontTexture() {
+        EnsureFont();
+        return s_FontTexture;
+    }
+
+    float UISystem::MeasureText(const std::string& utf8, float fontSize) {
+        EnsureFont();
+        if (s_FontTexture == 0 || fontSize <= 0.0f)
+            return 0.0f;
+        float widest = 0.0f;
+        size_t start = 0;
+        while (start <= utf8.size()) {
+            size_t end = utf8.find('\n', start);
+            if (end == std::string::npos) end = utf8.size();
+            widest = std::max(widest, LineWidth(utf8.substr(start, end - start), fontSize / kEmSize));
+            start = end + 1;
+        }
+        return widest;
+    }
+
+    void UISystem::BuildTextQuads(std::vector<Renderer::UIQuad>& out, const std::string& utf8, float x, float y,
+                                  float fontSize, int align, float boxWidth, const glm::vec4& color) {
+        EnsureFont();
+        if (s_FontTexture == 0 || utf8.empty())
+            return;
+        Batcher batch;
+        DrawUIText(batch, utf8, Rect{ x, y, boxWidth, 0.0f }, fontSize, align, false, color);
+        out.insert(out.end(), batch.Quads.begin(), batch.Quads.end());
     }
 
 }

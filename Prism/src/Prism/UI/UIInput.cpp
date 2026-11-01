@@ -38,6 +38,7 @@ namespace Prism::Ui {
             m_Pressed = -1;
         m_PreviousDown = mouseDown;
 
+        m_Hovered = result.Hovered;
         result.Pressed = m_Pressed;
         return result;
     }

@@ -164,6 +164,16 @@ namespace Prism {
             return ext == ".bak" || ext == ".tmp" || ext == ".blend" || ext == ".blend1" || ext == ".psd" || ext == ".kra" || ext == ".xcf";
         }
 
+        // Extensions/<Nome>/ do projeto vai para o jogo, mas so o que roda: manifesto + biblioteca
+        // (e arquivos de dados). Fica de fora o codigo-fonte, a pasta de build e os artefatos do compilador.
+        bool IsExtensionBuildArtifact(const fs::path& path) {
+            const std::string ext = Lower(ToUtf8(path.extension()));
+            return ext == ".pdb" || ext == ".ilk" || ext == ".lib" || ext == ".exp" || ext == ".obj" || ext == ".o" || ext == ".a";
+        }
+        bool IsExtensionBuildDirectory(const std::string& lowerName) {
+            return lowerName == "build" || lowerName == "cmakefiles" || lowerName == ".vs" || lowerName == "out";
+        }
+
         bool IsSourceFile(const fs::path& path) {
             const std::string ext = Lower(ToUtf8(path.extension()));
             const std::string name = ToUtf8(path.filename());
@@ -189,6 +199,7 @@ namespace Prism {
             void CopyRuntime(const fs::path& runtimeExe, const std::string& exeName);
             void CopyProject();
             void CheckNativeModule();
+            void CheckExtensions();
             void CopyOne(const fs::path& source, const fs::path& relativeDestination);
 
             const GameExportOptions& m_Options;
@@ -308,8 +319,11 @@ namespace Prism {
                 const bool topLevel = std::distance(relative.begin(), relative.end()) == 1;
                 std::error_code ec;
 
+                const bool inExtensions = Lower(ToUtf8(*relative.begin())) == "extensions";
+
                 if (it->is_directory(ec)) {
-                    if (SkipProjectDirectory(ToUtf8(path.filename()), topLevel)) {
+                    if (SkipProjectDirectory(ToUtf8(path.filename()), topLevel)
+                        || (inExtensions && !topLevel && IsExtensionBuildDirectory(Lower(ToUtf8(path.filename()))))) {
                         it.disable_recursion_pending();
                         skipped++;
                     }
@@ -317,6 +331,10 @@ namespace Prism {
                 }
                 if (!it->is_regular_file(ec))
                     continue;
+                if (inExtensions && (IsSourceFile(path) || IsExtensionBuildArtifact(path))) {
+                    skipped++;
+                    continue;
+                }
                 if (SkipProjectFile(path)) {
                     skipped++;
                     continue;
@@ -330,6 +348,40 @@ namespace Prism {
             }
             Say("  " + std::to_string(m_Result.FilesCopied - before) + " arquivo(s) do projeto ("
                 + std::to_string(skipped) + " ignorado(s): Source, Cache, backups...).");
+        }
+
+        // Extensoes do projeto sem biblioteca compilada nao funcionam no jogo exportado.
+        void Exporter::CheckExtensions() {
+            std::error_code ec;
+            const fs::path root = m_Options.ProjectDirectory / "Extensions";
+            if (!fs::is_directory(root, ec))
+                return;
+            const char* libraryExtension =
+#if defined(_WIN32)
+                ".dll";
+#elif defined(__APPLE__)
+                ".dylib";
+#else
+                ".so";
+#endif
+            for (const auto& entry : fs::directory_iterator(root, ec)) {
+                std::error_code entryError;
+                if (!entry.is_directory(entryError) || !fs::is_regular_file(entry.path() / "extension.ini", entryError))
+                    continue;
+                bool hasBinary = false;
+                for (const fs::path& base : { entry.path(), entry.path() / "Binaries" }) {
+                    for (const auto& file : fs::directory_iterator(base, entryError)) {
+                        if (file.is_regular_file(entryError) && ToUtf8(file.path().extension()) == libraryExtension) {
+                            hasBinary = true;
+                            break;
+                        }
+                    }
+                    if (hasBinary) break;
+                }
+                if (!hasBinary)
+                    m_Result.Warnings.push_back("A extensao '" + ToUtf8(entry.path().filename()) + "' (Extensions/) nao tem biblioteca compilada"
+                                                " - no jogo exportado ela nao vai carregar. Compile-a na aba Extensoes e exporte de novo.");
+            }
         }
 
         void Exporter::CheckNativeModule() {
@@ -368,6 +420,7 @@ namespace Prism {
                 Say("Nome do executavel ajustado para '" + exeName + "'.");
 
             CheckNativeModule();
+            CheckExtensions();
             CopyRuntime(runtimeExe, exeName);
             CopyProject();
         }

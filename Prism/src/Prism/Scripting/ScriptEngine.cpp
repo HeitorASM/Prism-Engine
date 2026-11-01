@@ -408,6 +408,9 @@ namespace Prism {
         lua.new_usertype<Entity>("Entity",
             "GetTransform", [](Entity& e) -> TransformComponent& { return e.GetComponent<TransformComponent>(); },
             "GetName", [](Entity& e) -> const std::string& { return e.GetComponent<TagComponent>().Tag; },
+            // Visibilidade (estilo Godot: esconde a entidade e os filhos; fisica/scripts continuam).
+            "SetVisible", [](Entity& e, bool visible) { if (Scene* s = e.GetScene()) s->SetEntityHidden(e.GetHandle(), !visible); },
+            "IsVisible", [](Entity& e) -> bool { Scene* s = e.GetScene(); return s ? s->IsEntityVisible(e.GetHandle()) : true; },
             // --- Direcoes de mundo derivadas da rotacao ---------------------
             // Mesma tecnica ja usada pelo Renderer para a direcao de luzes
             // Spot/Directional (ver Renderer::CollectGPULights,

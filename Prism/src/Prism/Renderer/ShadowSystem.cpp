@@ -17,6 +17,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include "ShadowCache.h"
 
 namespace Prism {
 
@@ -40,6 +41,12 @@ namespace Prism {
         bool s_WarnedSpotLimit = false;
         bool s_WarnedPointLimit = false;
         bool s_WarnedIncomplete = false;
+
+        // Cache das camadas spot/point (ver ShadowCache.h). Indice = camada da textura (point: slot * 6 + face).
+        ShadowCache::LayerCache s_SpotCache(kMaxSpotShadows);
+        ShadowCache::LayerCache s_PointCache(kMaxPointShadows * 6);
+        bool s_CacheEnabled = true;
+        ShadowCacheStats s_CacheStats;
 
         uint32_t MakeDepthTexture(GLenum target, uint32_t resolution, uint32_t layers) {
             GLuint texture = 0;
@@ -194,6 +201,53 @@ namespace Prism {
             glBindVertexArray(0);
         }
 
+        // Assinatura do que o passe com este frustum desenharia: todo caster que toca o volume (ver
+        // CasterVisible) entra com malha + transform. Caster animado: se a caixa dele (da pose de
+        // repouso, com folga de uma diagonal para a pose se mexer) toca o volume, a camada vira
+        // DINAMICA. Ver ShadowCache.h. Usa s_SortedItems, preenchido por SortCasters neste quadro.
+        ShadowCache::Signature VolumeSignature(const std::vector<ShadowCaster>& casters, const Culling::Frustum& frustum) {
+            ShadowCache::Signature signature;
+            for (const Batching::Item& item : s_SortedItems) {
+                const ShadowCaster& caster = casters[item.Index];
+                const bool animated = caster.Bones && caster.BoneCount > 0;
+                if (animated) {
+                    const glm::vec3 minimum = caster.Geometry->GetLocalBoundsMin();
+                    const glm::vec3 maximum = caster.Geometry->GetLocalBoundsMax();
+                    const glm::vec3 margin(glm::length(maximum - minimum));
+                    const glm::vec3 paddedMin = minimum - margin, paddedMax = maximum + margin;
+                    if (frustum.IntersectsLocalBox(glm::value_ptr(paddedMin), glm::value_ptr(paddedMax), glm::value_ptr(caster.Model)))
+                        signature.MarkDynamic();
+                    continue;
+                }
+                if (!CasterVisible(caster, frustum))
+                    continue;
+                signature.AddCaster(caster.Geometry->GetUniqueId(), glm::value_ptr(caster.Model));
+            }
+            return signature;
+        }
+
+        // Decide e registra: true = a camada ja tem o desenho certo (nao redesenhar).
+        // Quando precisa redesenhar, o chamador desenha e chama FinishLayer.
+        bool TryReuseLayer(ShadowCache::LayerCache& cache, size_t layer, const ShadowCache::Signature& signature, uint64_t lightHash) {
+            if (!s_CacheEnabled || signature.Dynamic) {
+                cache.Invalidate(layer);
+                return false;
+            }
+            if (cache.Matches(layer, signature.Finish(lightHash))) {
+                s_CacheStats.Reused++;
+                return true;
+            }
+            return false;
+        }
+
+        void FinishLayer(ShadowCache::LayerCache& cache, size_t layer, const ShadowCache::Signature& signature, uint64_t lightHash) {
+            s_CacheStats.Redrawn++;
+            if (s_CacheEnabled && !signature.Dynamic)
+                cache.Store(layer, signature.Finish(lightHash));
+            else
+                cache.Invalidate(layer);
+        }
+
         glm::vec3 SafeUp(const glm::vec3& direction) {
             return std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
         }
@@ -309,15 +363,27 @@ namespace Prism {
             frame.SpotNear[slot] = nearPlane;
             frame.SpotFar[slot] = farPlane;
 
-            if (!s_SpotTexture)
+            if (!s_SpotTexture) {
                 s_SpotTexture = MakeDepthTexture(GL_TEXTURE_2D_ARRAY, kSpotResolution, kMaxSpotShadows);
+                s_SpotCache.InvalidateAll(); // textura nova: as camadas nao tem desenho nenhum
+            }
 
-            if (!BeginLayer(framebuffer, s_SpotTexture, (uint32_t)slot, kSpotResolution))
+            const Culling::Frustum lightFrustum = Culling::Frustum::FromViewProjection(glm::value_ptr(frame.SpotMatrix[slot]));
+            const ShadowCache::Signature signature = VolumeSignature(casters, lightFrustum);
+            // A matriz de luz ja carrega posicao, direcao, angulo, near e far.
+            const uint64_t lightHash = ShadowCache::HashFloats(glm::value_ptr(frame.SpotMatrix[slot]), 16);
+            if (TryReuseLayer(s_SpotCache, (size_t)slot, signature, lightHash))
+                return true;
+
+            if (!BeginLayer(framebuffer, s_SpotTexture, (uint32_t)slot, kSpotResolution)) {
+                s_SpotCache.Invalidate((size_t)slot);
                 return false;
+            }
             s_DepthShader->Bind();
             s_DepthShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(frame.SpotMatrix[slot]));
-            DrawCasters(casters, *s_DepthShader, Culling::Frustum::FromViewProjection(glm::value_ptr(frame.SpotMatrix[slot])));
+            DrawCasters(casters, *s_DepthShader, lightFrustum);
             s_DepthShader->Unbind();
+            FinishLayer(s_SpotCache, (size_t)slot, signature, lightHash);
             return true;
         }
 
@@ -326,27 +392,44 @@ namespace Prism {
             const float farPlane = std::max(light.Range > 0.0f ? light.Range : 50.0f, nearPlane + 1.0f);
             frame.PointFar[slot] = farPlane;
 
-            if (!s_PointTexture)
+            if (!s_PointTexture) {
                 s_PointTexture = MakeDepthTexture(GL_TEXTURE_CUBE_MAP_ARRAY, kPointResolution, kMaxPointShadows * 6);
+                s_PointCache.InvalidateAll();
+            }
 
             // Ordem das faces do cubemap: +X, -X, +Y, -Y, +Z, -Z (com os "ups" da convencao do GL).
             const glm::vec3 directions[6] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
             const glm::vec3 ups[6] = { { 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 } };
             const glm::mat4 projection = glm::perspective(glm::radians(90.0f), 1.0f, nearPlane, farPlane);
 
-            s_PointShader->Bind();
-            s_PointShader->SetFloat3("u_LightPos", light.Position.x, light.Position.y, light.Position.z);
-            s_PointShader->SetFloat("u_Far", farPlane);
+            bool shaderBound = false; // so liga o shader se alguma face precisar mesmo ser redesenhada
             for (int face = 0; face < 6; ++face) {
-                if (!BeginLayer(framebuffer, s_PointTexture, (uint32_t)(slot * 6 + face), kPointResolution)) {
+                const glm::mat4 matrix = projection * glm::lookAt(light.Position, light.Position + directions[face], ups[face]);
+                const Culling::Frustum faceFrustum = Culling::Frustum::FromViewProjection(glm::value_ptr(matrix));
+                const ShadowCache::Signature signature = VolumeSignature(casters, faceFrustum);
+                // A matriz da face carrega posicao e far; o shader tambem usa a posicao da luz como origem das distancias.
+                const uint64_t lightHash = ShadowCache::HashFloats(glm::value_ptr(matrix), 16);
+                const size_t layer = (size_t)(slot * 6 + face);
+                if (TryReuseLayer(s_PointCache, layer, signature, lightHash))
+                    continue;
+
+                if (!shaderBound) {
+                    s_PointShader->Bind();
+                    s_PointShader->SetFloat3("u_LightPos", light.Position.x, light.Position.y, light.Position.z);
+                    s_PointShader->SetFloat("u_Far", farPlane);
+                    shaderBound = true;
+                }
+                if (!BeginLayer(framebuffer, s_PointTexture, (uint32_t)layer, kPointResolution)) {
+                    s_PointCache.Invalidate(layer);
                     s_PointShader->Unbind();
                     return false;
                 }
-                const glm::mat4 matrix = projection * glm::lookAt(light.Position, light.Position + directions[face], ups[face]);
                 s_PointShader->SetMat4("u_LightSpaceMatrix", glm::value_ptr(matrix));
-                DrawCasters(casters, *s_PointShader, Culling::Frustum::FromViewProjection(glm::value_ptr(matrix)));
+                DrawCasters(casters, *s_PointShader, faceFrustum);
+                FinishLayer(s_PointCache, layer, signature, lightHash);
             }
-            s_PointShader->Unbind();
+            if (shaderBound)
+                s_PointShader->Unbind();
             return true;
         }
     }
@@ -370,18 +453,34 @@ namespace Prism {
         if (s_SpotTexture) { glDeleteTextures(1, &s_SpotTexture); s_SpotTexture = 0; }
         if (s_PointTexture) { glDeleteTextures(1, &s_PointTexture); s_PointTexture = 0; }
         s_Frame = ShadowFrame{};
+        s_SpotCache.InvalidateAll();
+        s_PointCache.InvalidateAll();
     }
 
     bool ShadowSystem::ReloadChangedShaders() {
         bool any = false;
         if (s_DepthShader) any |= s_DepthShader->ReloadIfChanged();
         if (s_PointShader) any |= s_PointShader->ReloadIfChanged();
+        if (any) {
+            // Shader de profundidade novo pode desenhar diferente: nada do cache vale mais.
+            s_SpotCache.InvalidateAll();
+            s_PointCache.InvalidateAll();
+        }
         return any;
     }
+
+    void ShadowSystem::SetCacheEnabled(bool enabled) {
+        s_CacheEnabled = enabled;
+        s_SpotCache.InvalidateAll();
+        s_PointCache.InvalidateAll();
+    }
+    bool ShadowSystem::IsCacheEnabled() { return s_CacheEnabled; }
+    ShadowCacheStats ShadowSystem::GetCacheStats() { return s_CacheStats; }
 
     const ShadowFrame& ShadowSystem::Render(const std::vector<ShadowCaster>& casters, std::vector<GPULight>& lights,
                                             const float* view, const float* projection) {
         s_Frame = ShadowFrame{};
+        s_CacheStats = ShadowCacheStats{};
         s_Frame.Generation = ++s_Generation;
         for (GPULight& light : lights)
             light.ShadowSlot = -1;

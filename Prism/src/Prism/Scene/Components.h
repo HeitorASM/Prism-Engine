@@ -30,6 +30,14 @@
 
 namespace Prism {
 
+    // Marca uma entidade como ESCONDIDA (estilo Godot: o "olho" da Hierarquia). So existe
+    // quando escondida - visivel e a ausencia do component, entao nao custa nada no caso comum.
+    // Esconde a entidade E todos os descendentes (ver Scene::IsEntityVisible): malhas, luzes,
+    // particulas, documentos de UI e sombras. Colisao, fisica e scripts continuam funcionando.
+    struct HiddenComponent {
+        uint8_t Reserved = 0; // evita tipo vazio; sem uso
+    };
+
     // Todo Entity criada por Scene::CreateEntity ja recebe este component -
     // e o que da um nome legivel a entidade na Hierarchy panel do editor.
     struct TagComponent {
@@ -104,6 +112,10 @@ namespace Prism {
     // continuar simples (so zerar ModelAsset), sem perder/recriar o
     // component inteiro.
     struct MeshRendererComponent {
+        // Este objeto projeta sombra? (desligar economiza o desenho no mapa de sombras.)
+        // Independente de Layers: o objeto escondido de uma camera ainda pode projetar sombra.
+        bool CastShadows = true;
+
         PrimitiveMesh Mesh = PrimitiveMesh::Cube;
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
         AssetID ModelAsset; // ver comentario acima - invalido = usa 'Mesh' (primitiva)
@@ -802,6 +814,16 @@ namespace Prism {
         bool Visible = true;
         int Layer = 0;         // ordem entre documentos: maior = por cima
 
+        // --- UI em ESPACO DE MUNDO (ver UI/UIWorld.h e docs/ui-prismui.md) ---
+        // Com WorldSpace, o documento deixa de ser desenhado na tela e vira um painel no mundo:
+        // o layout roda em CanvasSize pixels, o canvas fica centrado na origem da entidade (face +Z,
+        // dimensionado por PixelsPerMeter, e pela escala da entidade) e e visto pela camera.
+        bool WorldSpace = false;
+        glm::vec2 CanvasSize{ 800.0f, 600.0f };   // pixels do canvas (espaco do layout)
+        float PixelsPerMeter = 200.0f;            // 200 px = 1 m (800x600 = 4 x 3 m)
+        bool Billboard = false;                   // gira para olhar a camera
+        bool DepthTest = true;                    // objetos a frente escondem o painel
+
         ResetOnCopy<UIDocumentRuntime> Runtime;
 
         UIDocumentComponent() = default;
@@ -996,6 +1018,22 @@ namespace Prism {
 
         RaycastComponent() = default;
         RaycastComponent(const RaycastComponent&) = default;
+    };
+
+
+    // Blocos de component que ESTA engine nao conhece (gravados por uma versao mais
+    // nova, ou por uma extensao que nao esta carregada agora). Ficam guardados como
+    // bytes brutos na entidade e sao regravados no proximo save, em vez de serem
+    // perdidos em silencio (ver ComponentRegistry::ReadComponentBlocks/WriteComponentBlocks).
+    // Nao e um component "de verdade": nao esta no ComponentRegistry, nao aparece em
+    // Add Component, e nao e copiado por Duplicar/Prefab (so por Scene::Clone).
+    struct UnknownComponentsComponent {
+        struct Block {
+            std::string Name;
+            uint32_t Version = 1;
+            std::string Bytes; // payload exato do bloco, sem interpretar
+        };
+        std::vector<Block> Blocks;
     };
 
 }

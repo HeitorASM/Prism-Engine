@@ -7,6 +7,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Animation/AnimationSystem.h"
 #include "SceneSerializer.h"
+#include "../Extensions/SystemRegistry.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
@@ -162,6 +163,10 @@ namespace Prism {
                 if (info.Has(original))
                     info.Copy(original, copy);
             }
+
+            // Blocos desconhecidos preservados do arquivo (ver UnknownComponentsComponent).
+            if (original.HasComponent<UnknownComponentsComponent>())
+                copy.AddComponent<UnknownComponentsComponent>(original.GetComponent<UnknownComponentsComponent>());
         });
 
         // Segunda passada: RelationshipComponent - so depois que TODAS as
@@ -307,6 +312,36 @@ namespace Prism {
         return IsAncestorOf(possibleAncestor, rel->Parent);
     }
 
+    bool Scene::IsEntityVisible(entt::entity entity) const {
+        // No registry const, storage<T>() devolve ponteiro (nullptr se o tipo nunca foi usado).
+        const auto* hiddenStorage = m_Registry.storage<HiddenComponent>();
+        if (!hiddenStorage || hiddenStorage->empty())
+            return true;
+        // Limite de profundidade defensivo contra uma hierarquia corrompida com ciclo.
+        for (int guard = 0; entity != entt::null && guard < 4096; ++guard) {
+            if (!m_Registry.valid(entity))
+                return true;
+            if (m_Registry.all_of<HiddenComponent>(entity))
+                return false;
+            const auto* rel = m_Registry.try_get<RelationshipComponent>(entity);
+            entity = rel ? rel->Parent : entt::null;
+        }
+        return true;
+    }
+
+    bool Scene::IsEntityHiddenSelf(entt::entity entity) const {
+        return m_Registry.valid(entity) && m_Registry.all_of<HiddenComponent>(entity);
+    }
+
+    void Scene::SetEntityHidden(entt::entity entity, bool hidden) {
+        if (!m_Registry.valid(entity))
+            return;
+        if (hidden)
+            m_Registry.emplace_or_replace<HiddenComponent>(entity);
+        else
+            m_Registry.remove<HiddenComponent>(entity);
+    }
+
     bool Scene::SetParent(Entity child, Entity newParent) {
         entt::entity childHandle = child.GetHandle();
         entt::entity newParentHandle = newParent ? newParent.GetHandle() : entt::null;
@@ -436,6 +471,8 @@ namespace Prism {
 
         auto view = m_Registry.view<MeshRendererComponent>();
         for (auto handle : view) {
+            if (!IsEntityVisible(handle))
+                continue; // escondida nao e clicavel nem ocluir UI de mundo
             Entity entity(handle, this);
             glm::mat4 world = GetWorldTransform(entity);
             glm::mat4 inverseWorld = glm::inverse(world);
@@ -491,6 +528,8 @@ namespace Prism {
         // dentro de salas/escadas).
         auto levelView = m_Registry.view<LevelMeshComponent>();
         for (auto handle : levelView) {
+            if (!IsEntityVisible(handle))
+                continue;
             const glm::mat4 world = GetWorldTransform(Entity(handle, this));
             const glm::mat4 inverseWorld = glm::inverse(world);
             const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(ray.Origin, 1.0f));
@@ -588,6 +627,13 @@ namespace Prism {
             AnimationSystem::Update(*this, deltaTime, false);
         }
 
+        // Sistemas registrados (SystemRegistry, ex: de extensoes): depois de tudo que a engine ja
+        // faz no quadro e ANTES do audio, que assim aplica o que eles mudaram.
+        {
+            PRISM_PROFILE_SCOPE("Scene.Extensions");
+            SystemRegistry::Update(*this, deltaTime);
+        }
+
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
         AudioEngine::OnSceneUpdate(*this);
@@ -610,6 +656,8 @@ namespace Prism {
             if (m_Registry.valid(entityHandle))
                 NativeScripting::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
         }
+
+        SystemRegistry::FixedUpdate(*this, fixedDeltaTime);
     }
 
     void Scene::UpdateRaycastComponents() {
@@ -725,12 +773,18 @@ namespace Prism {
             if (m_Registry.valid(entityHandle))
                 NativeScripting::LoadScript(Entity(entityHandle, this));
         }
+
+        // Sistemas registrados (SystemRegistry): por ultimo, com a fisica e os scripts ja prontos.
+        SystemRegistry::SceneStart(*this);
     }
 
     void Scene::OnScriptsStop() {
         if (!m_IsRunning)
             return; // idempotente
         m_IsRunning = false;
+
+        // Sistemas registrados primeiro: ainda enxergam scripts e fisica inteiros ao se despedir.
+        SystemRegistry::SceneStop(*this);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view)

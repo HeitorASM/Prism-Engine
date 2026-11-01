@@ -102,6 +102,15 @@ namespace PrismEditor {
             ImGui::Separator();
 
             {
+                // Sombras: desligar tira este objeto do mapa de sombras (mais barato). Independe de Camadas.
+                auto beforeShadow = meshRenderer;
+                if (ImGui::Checkbox("Projetar sombras##Mesh", &meshRenderer.CastShadows))
+                    CommitComponentEdit(m_Ctx, beforeShadow, meshRenderer, "Mesh Renderer");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Se desligado, este objeto nao projeta sombra (ele ainda pode RECEBER sombra).");
+            }
+
+            {
                 // Camadas (estilo Godot): so cameras com alguma destas camadas na "Enxerga camadas" desenham o objeto.
                 auto beforeLayers = meshRenderer;
                 if (DrawLayerMask("Camadas##Mesh", meshRenderer.Layers))

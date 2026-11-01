@@ -96,6 +96,28 @@ if(MSVC)
 endif()
 add_test(NAME CullingTests COMMAND PrismCullingTests)
 
+# PrismLightSelectionTests: escolha das luzes por relevancia (Renderer/LightSelection.h, so std + Culling.h).
+add_executable(PrismLightSelectionTests
+    LightSelectionTests.cpp
+)
+target_include_directories(PrismLightSelectionTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismLightSelectionTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismLightSelectionTests PRIVATE /utf-8)
+endif()
+add_test(NAME LightSelectionTests COMMAND PrismLightSelectionTests)
+
+# PrismShadowCacheTests: assinatura e cache das camadas de sombra (Renderer/ShadowCache.h, so std).
+add_executable(PrismShadowCacheTests
+    ShadowCacheTests.cpp
+)
+target_include_directories(PrismShadowCacheTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismShadowCacheTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismShadowCacheTests PRIVATE /utf-8)
+endif()
+add_test(NAME ShadowCacheTests COMMAND PrismShadowCacheTests)
+
 # PrismPhysicsLayersTests: camadas de fisica e matriz de colisao (Physics/PhysicsLayers.h, so std).
 add_executable(PrismPhysicsLayersTests
     PhysicsLayersTests.cpp
@@ -106,6 +128,44 @@ if(MSVC)
     target_compile_options(PrismPhysicsLayersTests PRIVATE /utf-8)
 endif()
 add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)
+
+# PrismExtensionManifestTests: manifesto extension.ini e ordem de carga por dependencia
+# (Extensions/ExtensionManifest.*, so std).
+add_executable(PrismExtensionManifestTests
+    ExtensionManifestTests.cpp
+    ${PRISM_SRC}/Prism/Extensions/ExtensionManifest.cpp
+    ${PRISM_SRC}/Prism/Extensions/ExtensionTemplate.cpp
+)
+target_include_directories(PrismExtensionManifestTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismExtensionManifestTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismExtensionManifestTests PRIVATE /utf-8)
+endif()
+add_test(NAME ExtensionManifestTests COMMAND PrismExtensionManifestTests)
+
+# PrismDrawCommandTests: buffer de comandos do desenho imediato (Renderer/DrawCommands.h, so glm + std).
+add_executable(PrismDrawCommandTests
+    DrawCommandTests.cpp
+)
+target_include_directories(PrismDrawCommandTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDrawCommandTests PRIVATE cxx_std_20)
+target_link_libraries(PrismDrawCommandTests PRIVATE glm)
+if(MSVC)
+    target_compile_options(PrismDrawCommandTests PRIVATE /utf-8)
+endif()
+add_test(NAME DrawCommandTests COMMAND PrismDrawCommandTests)
+
+# PrismUIWorldTests: matematica da UI em espaco de mundo (UI/UIWorld.h, so glm).
+add_executable(PrismUIWorldTests
+    UIWorldTests.cpp
+)
+target_include_directories(PrismUIWorldTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismUIWorldTests PRIVATE cxx_std_20)
+target_link_libraries(PrismUIWorldTests PRIVATE glm)
+if(MSVC)
+    target_compile_options(PrismUIWorldTests PRIVATE /utf-8)
+endif()
+add_test(NAME UIWorldTests COMMAND PrismUIWorldTests)
 
 # PrismSceneTests: serializacao de cena, ComponentRegistry e PrefabSyncer. Linka a
 # biblioteca Prism inteira (Scene depende de Fisica/Audio/Scripts), entao so existe
@@ -211,3 +271,30 @@ if(TARGET lua AND TARGET sol2)
         message(WARNING "ScriptEngine.cpp: marcadores LuaChunkCache nao encontrados; PrismLuaBytecodeTests nao sera criado.")
     endif()
 endif()
+
+# PrismAssertTests: formato da mensagem do PRISM_ASSERT (Core/Base.h). So headers, sem linkar a engine.
+add_executable(PrismAssertTests AssertTests.cpp)
+target_include_directories(PrismAssertTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismAssertTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismAssertTests PRIVATE /utf-8)
+endif()
+add_test(NAME AssertTests COMMAND PrismAssertTests)
+
+# PrismCrashReportTests: crash.log gerado por WriteCrashReport (Core/CrashHandler.cpp). Compila so o
+# CrashHandler e o LogBuffer; PRISM_PLATFORM_WINDOWS precisa bater com o da engine (ver Prism/CMakeLists.txt).
+add_executable(PrismCrashReportTests
+    CrashReportTests.cpp
+    ${PRISM_SRC}/Prism/Core/CrashHandler.cpp
+    ${PRISM_SRC}/Prism/Core/LogBuffer.cpp
+)
+target_include_directories(PrismCrashReportTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismCrashReportTests PRIVATE cxx_std_20)
+target_link_libraries(PrismCrashReportTests PRIVATE prism_version)
+if(WIN32)
+    target_compile_definitions(PrismCrashReportTests PRIVATE PRISM_PLATFORM_WINDOWS)
+endif()
+if(MSVC)
+    target_compile_options(PrismCrashReportTests PRIVATE /utf-8)
+endif()
+add_test(NAME CrashReportTests COMMAND PrismCrashReportTests)

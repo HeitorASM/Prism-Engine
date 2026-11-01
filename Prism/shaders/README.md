@@ -10,6 +10,8 @@ Todos os shaders da engine ficam aqui, em arquivos (antes eram strings dentro de
 | `Line` | `line.vert` | `line.frag` | Linhas de gizmo (cor sólida) |
 | `Particle` | `particle.vert` | `particle.frag` | Partículas: billboards instanciados lendo um SSBO |
 | `UI` | `ui.vert` | `ui.frag` | UI in-game: quads em pixels lendo um SSBO (cor, textura ou glifo da fonte) |
+| `DrawLine` | `draw_line.vert` | `draw_line.frag` | Desenho imediato (`DrawContext`): segmentos com espessura em pixels, expandidos no vertex shader a partir de um SSBO (mundo ou tela) |
+| `UIWorld` | `ui_world.vert` | `ui_world.frag` | UI em espaço de mundo (`UIDocumentComponent::WorldSpace`): os quads do `ui.vert` posicionados por modelo e vistos pela câmera |
 | `Sky` | `sky.vert` | `sky.frag` | Skybox: cor, gradiente do ambiente ou panorama equirretangular |
 | `ShadowDepth` | `shadow_depth.vert` | `shadow_depth.frag` | Profundidade do ponto de vista da luz (cascatas Directional e Spot) |
 | `IBLEquirect` | `ibl.vert` | `ibl_equirect.frag` | IBL: panorama equirretangular -> face de cubemap |

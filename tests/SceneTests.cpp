@@ -11,6 +11,8 @@
 #include <Prism/Scene/MaterialSerializer.h>
 #include <Prism/Scene/PrefabSerializer.h>
 #include <Prism/Scene/PrefabSyncer.h>
+#include <Prism/Extensions/SystemRegistry.h>
+#include <Prism/Extensions/ExtensionLoader.h>
 
 #include <cmath>
 #include <cstdio>
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -185,6 +188,80 @@ static void TestBlockStreamFraming() {
     CHECK(!ComponentRegistry::ReadComponentBlocks(absurdIn, k, 0));
     std::istringstream emptyIn("", std::ios::in | std::ios::binary);
     CHECK(!ComponentRegistry::ReadComponentBlocks(emptyIn, k, 0));
+}
+
+// Component desconhecido (versao mais nova / extensao ausente): os bytes sobrevivem a
+// ler -> regravar -> ler de novo, e a Scene::Clone() (copia do Play) tambem os leva.
+static void TestUnknownBlocksArePreserved() {
+    auto scene = Scene::Create("Unknown");
+    Entity source = scene->CreateEntity("source");
+    source.AddComponent<LightComponent>().Intensity = 2.0f;
+
+    std::ostringstream lightBytes(std::ios::out | std::ios::binary);
+    FindInfo("Light")->Serialize(lightBytes, source);
+
+    std::ostringstream mixed(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)2);
+    ComponentRegistry::WriteString(mixed, "ComponenteDoFuturo");
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)9);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)3);
+    mixed.write("abc", 3);
+    ComponentRegistry::WriteString(mixed, "Light");
+    ComponentRegistry::WriteRaw(mixed, FindInfo("Light")->Version);
+    ComponentRegistry::WriteRaw(mixed, (uint32_t)lightBytes.str().size());
+    mixed.write(lightBytes.str().data(), (std::streamsize)lightBytes.str().size());
+
+    // 1) a leitura guarda o bloco desconhecido (nome, versao e bytes exatos)
+    Entity first = scene->CreateEntity("first");
+    std::istringstream in1(mixed.str(), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in1, first, 0));
+    CHECK(first.HasComponent<LightComponent>());
+    CHECK(first.HasComponent<UnknownComponentsComponent>());
+    if (first.HasComponent<UnknownComponentsComponent>()) {
+        const auto& blocks = first.GetComponent<UnknownComponentsComponent>().Blocks;
+        CHECK(blocks.size() == 1);
+        if (blocks.size() == 1) {
+            CHECK(blocks[0].Name == "ComponenteDoFuturo");
+            CHECK(blocks[0].Version == 9);
+            CHECK(blocks[0].Bytes == "abc");
+        }
+    }
+
+    // 2) regravar e ler de novo mantem tudo (antes: o bloco sumia no primeiro save)
+    std::ostringstream rewritten(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteComponentBlocks(rewritten, first);
+    Entity second = scene->CreateEntity("second");
+    std::istringstream in2(rewritten.str(), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in2, second, 0));
+    CHECK(second.HasComponent<LightComponent>() && second.GetComponent<LightComponent>().Intensity == 2.0f);
+    CHECK(second.HasComponent<UnknownComponentsComponent>());
+    if (second.HasComponent<UnknownComponentsComponent>()) {
+        const auto& blocks = second.GetComponent<UnknownComponentsComponent>().Blocks;
+        CHECK(blocks.size() == 1 && blocks[0].Bytes == "abc" && blocks[0].Version == 9);
+    }
+
+    // 3) bloco guardado com o nome de um component que AGORA existe na entidade nao duplica
+    Entity shadowed = scene->CreateEntity("shadowed");
+    shadowed.AddComponent<LightComponent>();
+    auto& unknown = shadowed.AddComponent<UnknownComponentsComponent>();
+    unknown.Blocks.push_back({ "Light", 1, "lixo" });
+    unknown.Blocks.push_back({ "Outro", 3, "xyz" });
+    std::ostringstream shadowedOut(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteComponentBlocks(shadowedOut, shadowed);
+    std::istringstream shadowedIn(shadowedOut.str(), std::ios::in | std::ios::binary);
+    uint32_t written = 0;
+    CHECK(ComponentRegistry::ReadRaw(shadowedIn, written));
+    CHECK(written == 2); // Light (real) + Outro; o "Light" desconhecido foi descartado
+
+    // 4) Scene::Clone leva os blocos junto
+    Ref<Scene> cloned = scene->Clone();
+    size_t withUnknown = 0;
+    for (auto handle : cloned->GetRegistry().view<UnknownComponentsComponent>()) {
+        const auto& blocks = cloned->GetRegistry().get<UnknownComponentsComponent>(handle).Blocks;
+        if (!blocks.empty() && blocks[0].Bytes == "abc")
+            withUnknown++;
+    }
+    CHECK(withUnknown >= 2); // "first" e "second"
 }
 
 // Cenas antigas: blocos v1 (sem os campos acrescentados no fim) continuam abrindo.
@@ -468,6 +545,63 @@ static bool NearlyEqual(const glm::mat4& a, const glm::mat4& b) {
     return true;
 }
 
+// Visibilidade (HiddenComponent): herdada pelos filhos, caminho rapido sem escondidos,
+// sobrevive a Duplicar/serializacao, e a flag CastShadows do MeshRenderer le blocos antigos.
+static void TestVisibility() {
+    Scene scene("Visibility");
+    Entity root = scene.CreateEntity("Raiz");
+    Entity mid = scene.CreateEntity("Meio");
+    Entity leaf = scene.CreateEntity("Folha");
+    Entity other = scene.CreateEntity("Outro");
+    scene.SetParent(mid, root);
+    scene.SetParent(leaf, mid);
+
+    CHECK(scene.IsEntityVisible(leaf.GetHandle())); // nada escondido: caminho rapido
+
+    scene.SetEntityHidden(mid.GetHandle(), true);
+    CHECK(scene.IsEntityHiddenSelf(mid.GetHandle()));
+    CHECK(!scene.IsEntityVisible(mid.GetHandle()));
+    CHECK(!scene.IsEntityVisible(leaf.GetHandle()));     // herda do ancestral
+    CHECK(!scene.IsEntityHiddenSelf(leaf.GetHandle()));  // mas nao esta marcada
+    CHECK(scene.IsEntityVisible(root.GetHandle()));      // o pai continua visivel
+    CHECK(scene.IsEntityVisible(other.GetHandle()));
+
+    scene.SetEntityHidden(mid.GetHandle(), false);
+    CHECK(scene.IsEntityVisible(leaf.GetHandle()));
+
+    // Copy (Duplicar/Prefab) preserva o estado
+    scene.SetEntityHidden(other.GetHandle(), true);
+    const ComponentTypeInfo* info = FindInfo("Hidden");
+    CHECK(info != nullptr);
+    if (info) {
+        Entity copy = scene.CreateEntity("Copia");
+        info->Copy(other, copy);
+        CHECK(!scene.IsEntityVisible(copy.GetHandle()));
+    }
+
+    // MeshRenderer: bloco v2 (sem CastShadows) continua projetando sombra
+    const ComponentTypeInfo* mesh = FindInfo("Mesh Renderer");
+    CHECK(mesh && mesh->Version >= 3);
+    if (mesh) {
+        Entity src = scene.CreateEntity("m");
+        src.AddComponent<MeshRendererComponent>().CastShadows = false;
+        std::ostringstream out(std::ios::out | std::ios::binary);
+        mesh->Serialize(out, src);
+
+        Entity dst = scene.CreateEntity("d");
+        std::istringstream in(MakeBlockStream("Mesh Renderer", mesh->Version, out.str()), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+        CHECK(dst.HasComponent<MeshRendererComponent>() && !dst.GetComponent<MeshRendererComponent>().CastShadows);
+
+        std::string bytes = out.str();
+        bytes.resize(bytes.size() - 1); // v2: sem o byte final de CastShadows
+        Entity old = scene.CreateEntity("o");
+        std::istringstream inOld(MakeBlockStream("Mesh Renderer", 2, bytes), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(inOld, old, 0));
+        CHECK(old.HasComponent<MeshRendererComponent>() && old.GetComponent<MeshRendererComponent>().CastShadows);
+    }
+}
+
 static void TestWorldTransformScope() {
     Scene scene("WorldCache");
     std::vector<Entity> chain;
@@ -527,6 +661,191 @@ static void TestWorldTransformScope() {
     }
 }
 
+
+// ---- Extensoes: components registrados por plugins e sistemas --------------------------------
+struct TestHealth { float Hp = 10.0f; int Armor = 3; };
+struct TestOther { int V = 0; };
+struct TestSecondName { int V = 0; };
+
+static ExtensionComponentDesc MakeHealthDesc(const std::string& name) {
+    ExtensionComponentDesc d;
+    d.Name = name;
+    d.Source = "TestExt";
+    d.Category = "Teste";
+    d.Version = 1;
+    d.Serialize = [](std::ostream& o, Entity e) {
+        const auto& h = e.GetComponent<TestHealth>();
+        ComponentRegistry::WriteRaw(o, h.Hp);
+        ComponentRegistry::WriteRaw(o, h.Armor);
+    };
+    d.Deserialize = [](std::istream& i, Entity e, uint32_t) {
+        TestHealth h;
+        if (!ComponentRegistry::ReadRaw(i, h.Hp) || !ComponentRegistry::ReadRaw(i, h.Armor)) return false;
+        if (e.HasComponent<TestHealth>()) e.RemoveComponent<TestHealth>();
+        e.AddComponent<TestHealth>(h);
+        return true;
+    };
+    return d;
+}
+
+static void TestExtensionComponents() {
+    CHECK(ComponentRegistry::RegisterExtension<TestHealth>(MakeHealthDesc("Test Health")));
+    // rejeicoes
+    CHECK(!ComponentRegistry::RegisterExtension<TestHealth>(MakeHealthDesc("Test Health 2")));   // tipo repetido
+    CHECK(!ComponentRegistry::RegisterExtension<TestOther>(MakeHealthDesc("Test Health")));      // nome repetido
+    CHECK(!ComponentRegistry::RegisterExtension<TestOther>(MakeHealthDesc("Light")));            // nome de built-in
+    CHECK(!ComponentRegistry::RegisterExtension<TestSecondName>(MakeHealthDesc("")));            // nome vazio
+    { auto d = MakeHealthDesc("Sem Source"); d.Source.clear();
+      CHECK(!ComponentRegistry::RegisterExtension<TestSecondName>(d)); }
+    { auto d = MakeHealthDesc("Sem Serialize"); d.Serialize = nullptr;
+      CHECK(!ComponentRegistry::RegisterExtension<TestSecondName>(d)); }
+
+    const ComponentTypeInfo* info = ComponentRegistry::FindByName("Test Health");
+    CHECK(info != nullptr);
+    if (!info) return;
+    CHECK(info->Source == "TestExt");
+
+    auto scene = Scene::Create("Ext");
+    Entity a = scene->CreateEntity("a");
+    CHECK(!info->Has(a));
+    info->AddDefault(a);
+    CHECK(info->Has(a));
+    a.GetComponent<TestHealth>().Hp = 42.0f;
+    a.GetComponent<TestHealth>().Armor = 7;
+
+    // helpers type-erased (usados pelo Undo do editor)
+    std::string bytes = ComponentRegistry::SerializeComponent(*info, a);
+    CHECK(!bytes.empty());
+    a.GetComponent<TestHealth>().Hp = 1.0f;
+    CHECK(ComponentRegistry::DeserializeComponent(*info, a, bytes));
+    CHECK(a.GetComponent<TestHealth>().Hp == 42.0f);
+
+    // ida e volta pelo formato de blocos do arquivo
+    std::ostringstream out(std::ios::out | std::ios::binary);
+    ComponentRegistry::WriteComponentBlocks(out, a);
+    Entity b = scene->CreateEntity("b");
+    std::istringstream in(out.str(), std::ios::in | std::ios::binary);
+    CHECK(ComponentRegistry::ReadComponentBlocks(in, b, 0));
+    CHECK(b.HasComponent<TestHealth>());
+    if (b.HasComponent<TestHealth>()) {
+        CHECK(b.GetComponent<TestHealth>().Hp == 42.0f);
+        CHECK(b.GetComponent<TestHealth>().Armor == 7);
+    }
+
+    // Scene::Clone leva o component
+    auto clone = scene->Clone();
+    bool found = false;
+    for (auto e : clone->GetRegistry().view<TestHealth>()) { (void)e; found = true; }
+    CHECK(found);
+
+    info->Remove(a);
+    CHECK(!info->Has(a));
+}
+
+struct RecSystem : IEngineSystem {
+    std::string Name; int Order = 0; bool Throw = false;
+    int Starts = 0, Stops = 0, Updates = 0, Fixed = 0, Shutdowns = 0;
+    std::vector<std::string>* Log = nullptr;
+    RecSystem(std::string n, int o, std::vector<std::string>* log = nullptr) : Name(std::move(n)), Order(o), Log(log) {}
+    const char* GetName() const override { return Name.c_str(); }
+    int GetOrder() const override { return Order; }
+    void OnSceneStart(Scene&) override { ++Starts; }
+    void OnSceneStop(Scene&) override { ++Stops; }
+    void OnUpdate(Scene&, float) override { ++Updates; if (Log) Log->push_back(Name); if (Throw) throw std::runtime_error("boom"); }
+    void OnFixedUpdate(Scene&, float) override { ++Fixed; }
+    void OnShutdown() override { ++Shutdowns; }
+};
+
+static void TestSystemRegistry() {
+    SystemRegistry::Shutdown();
+    auto scene = Scene::Create("Sys");
+    std::vector<std::string> log;
+    int shutdownCount = 0;
+    (void)shutdownCount;
+
+    CHECK(SystemRegistry::Register(CreateScope<RecSystem>("c", 5, &log), "ext"));
+    CHECK(SystemRegistry::Register(CreateScope<RecSystem>("a", 0, &log), "ext"));
+    CHECK(SystemRegistry::Register(CreateScope<RecSystem>("b", 0, &log), "other"));
+    CHECK(!SystemRegistry::Register(CreateScope<RecSystem>("a", 1, &log), "ext")); // nome repetido
+    CHECK(!SystemRegistry::Register(nullptr, "ext"));
+    CHECK(SystemRegistry::Count() == 3);
+
+    // ordem: Order, depois sequencia de registro => a, b, c
+    auto names = SystemRegistry::GetNames();
+    CHECK(names.size() == 3 && names[0] == "a" && names[1] == "b" && names[2] == "c");
+
+    SystemRegistry::SceneStart(*scene);
+    SystemRegistry::Update(*scene, 0.016f);
+    CHECK(log.size() == 3 && log[0] == "a" && log[1] == "b" && log[2] == "c");
+    SystemRegistry::FixedUpdate(*scene, 0.02f);
+    SystemRegistry::SceneStop(*scene);
+
+    // excecao isola so o sistema com defeito
+    SystemRegistry::Unregister("c");
+    auto bad = CreateScope<RecSystem>("bad", 1, &log);
+    bad->Throw = true;
+    CHECK(SystemRegistry::Register(std::move(bad), "ext"));
+    log.clear();
+    SystemRegistry::Update(*scene, 0.016f);
+    CHECK(SystemRegistry::IsFaulted("bad"));
+    CHECK(!SystemRegistry::IsFaulted("a"));
+    log.clear();
+    SystemRegistry::Update(*scene, 0.016f); // 'bad' nao roda mais
+    bool badRan = false;
+    for (auto& n : log) if (n == "bad") badRan = true;
+    CHECK(!badRan);
+
+    // UnregisterSource remove todos de uma extensao
+    SystemRegistry::UnregisterSource("ext");
+    names = SystemRegistry::GetNames();
+    CHECK(names.size() == 1 && names[0] == "b");
+
+    SystemRegistry::Shutdown();
+    CHECK(SystemRegistry::Count() == 0);
+}
+
+// Carregador de extensoes: estados por pasta (sem dll real: so valida descoberta, filtros e erros).
+static void TestExtensionLoader(const fs::path& dir) {
+    const fs::path root = dir / "ExtRoot";
+    auto write = [&](const std::string& folder, const std::string& ini) {
+        fs::create_directories(root / folder);
+        WriteFileBytes(root / folder / "extension.ini", ini);
+    };
+    write("Good", "name = Good\napi = 1\n");
+    write("Bad", "isto nao e um manifesto\n");
+    write("Edt", "name = Edt\napi = 1\ntarget = editor\n");
+    write("Dis", "name = Dis\napi = 1\nenabled = false\n");
+    write("Old", "name = Old\napi = 99\n");
+    write("NeedsGood", "name = NeedsGood\napi = 1\ndepends = Good\n");
+    write("Orphan", "name = Orphan\napi = 1\ndepends = Nao.Existe\n");
+
+    ExtensionLoader::LoadFromDirectory(root, /*isEditor*/ false, false, {});
+    auto find = [](const std::string& name) -> const ExtensionInfo* {
+        for (const ExtensionInfo& e : ExtensionLoader::GetExtensions())
+            if (e.Manifest.Name == name) return &e;
+        return nullptr;
+    };
+    const size_t count = ExtensionLoader::GetExtensions().size();
+    CHECK(count == 7);
+    CHECK(find("Good") && find("Good")->State == ExtensionState::Failed);      // sem biblioteca
+    CHECK(find("Bad") && find("Bad")->State == ExtensionState::Failed);        // manifesto invalido
+    CHECK(find("Edt") && find("Edt")->State == ExtensionState::Skipped);       // alvo so editor
+    CHECK(find("Dis") && find("Dis")->State == ExtensionState::Skipped);       // enabled = false
+    CHECK(find("Old") && find("Old")->State == ExtensionState::Failed);        // API diferente
+    CHECK(find("NeedsGood") && find("NeedsGood")->State == ExtensionState::Failed);
+    CHECK(find("Orphan") && find("Orphan")->State == ExtensionState::Failed);  // dependencia ausente
+    CHECK(!ExtensionLoader::IsLoaded("Good"));
+
+    // idempotente: recarregar a mesma pasta nao duplica entradas
+    ExtensionLoader::LoadFromDirectory(root, false, false, {});
+    CHECK(ExtensionLoader::GetExtensions().size() == count);
+
+    // pasta inexistente nao e erro
+    ExtensionLoader::LoadFromDirectory(dir / "naoexiste", false, false, {});
+    CHECK(ExtensionLoader::GetExtensions().size() == count);
+    ExtensionLoader::Shutdown();
+}
+
 int main() {
     const fs::path dir = fs::temp_directory_path() / "prism_scene_tests";
     std::error_code ec;
@@ -537,11 +856,16 @@ int main() {
     TestEveryComponentRoundTrips();
     TestTruncatedBlocksNeverCrash();
     TestBlockStreamFraming();
+    TestUnknownBlocksArePreserved();
     TestOldBlockVersionsStillLoad();
     TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
     TestWorldTransformScope();
+    TestVisibility();
+    TestSystemRegistry();
+    TestExtensionLoader(dir);
+    TestExtensionComponents(); // por ultimo: registra tipos no registro global
 
     fs::remove_all(dir, ec);
     std::printf("%d checagens, %d falhas\n", g_checks, g_failures);

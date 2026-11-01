@@ -95,6 +95,20 @@ void OnUIClick(const char* handler, const char* nodeId) override {
 
 `UISetText`, `UIGetText`, `UISetVisible`, `UISetInteractable`, `UISetColor`, `UISetTextColor`. Módulos compilados com a API v7 ou anterior precisam ser **recompilados**.
 
+## UI no mundo (painéis 3D)
+
+No component **UI Document**, marque **Espaço de mundo**: o documento deixa de ser desenhado na tela e vira um painel que flutua no mundo, na posição/rotação/escala da entidade.
+
+- **Canvas (px)**: o tamanho do espaço de layout (o `.prismui` é calculado como se fosse uma tela desse tamanho; `scale`/`reference` funcionam como na tela). **Pixels por metro** define o tamanho real: 800×600 px a 200 px/m = 4×3 m, multiplicado pela escala da entidade.
+- O canvas fica **centrado na origem** da entidade; a face visível é a **+Z** da entidade (de trás, o painel aparece espelhado e não recebe cliques).
+- **Sempre de frente para a câmera** (billboard) gira o painel para olhar a câmera, mantendo posição e escala.
+- **Esconder atrás de objetos** liga o teste de profundidade: paredes na frente do painel o escondem. Desligado, o painel aparece por cima de tudo.
+- Vários painéis são desenhados do mais distante para o mais próximo (empate: `Layer` menor primeiro). O painel é translúcido (não escreve profundidade) e passa pelo pós-processamento como as partículas.
+- **Entrada (só no Play)**: o raio vai do mouse (ou do **centro da tela** com o cursor travado, como uma mira) até o canvas mais próximo; o ponto vira pixel do canvas e alimenta a mesma lógica de hover/clique da UI de tela, então `onClick`/`OnUIClick` funcionam igual. Um objeto da cena na frente do painel (`Scene::VisualRaycast`, caixas dos meshes) barra o ponteiro, e a UI de tela tem prioridade. `UISystem::IsPointerOverUI()` também fica verdadeiro com o ponteiro sobre um painel de mundo.
+- Texto e cor por script (`UISetText`, ...) funcionam igual: o painel é um `UIDocumentComponent` como os outros.
+
+Limitações: sem recorte (clipping) de conteúdo fora do canvas; o hover de um botão aparece com um quadro de atraso; o painel não recebe sombras nem iluminação (cor "de tela"); a testagem de oclusão usa as caixas dos meshes, não a geometria exata.
+
 ## Limitações
 
 - Imagens não preservam a proporção (use `width`/`height` coerentes).

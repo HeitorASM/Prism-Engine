@@ -365,13 +365,35 @@ namespace Prism {
         static void DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
                                 const Texture2D* texture, uint32_t fontTexture);
 
+        // UI em ESPACO DE MUNDO: os mesmos quads do UISystem (pixels do canvas, origem no canto
+        // superior esquerdo), colocados no mundo por 'model' (canvas centrado na origem, face +Z,
+        // 'pixelsPerMeter' pixels por metro) e vistos por 'viewProjection'. Blend normal sem escrever
+        // profundidade; 'depthTest' decide se paredes/objetos a frente escondem o painel.
+        // Chamado pelo UISystem::RenderWorld (dentro do DrawScene, depois das particulas).
+        static void DrawUIQuadsWorld(const UIQuad* quads, uint32_t count, const float* model, const float* viewProjection,
+                                     float canvasWidth, float canvasHeight, float pixelsPerMeter,
+                                     const Texture2D* texture, uint32_t fontTexture, bool depthTest);
+
+        // Desenho imediato de segmentos com espessura em PIXELS (DrawContext). A.w = espessura (px).
+        // Funciona em qualquer contexto GL (vertex shader sem VAO) e usa o viewport atual para a
+        // espessura. 'viewProjection' pode ser a da camera (mundo) ou uma ortografica em pixels (tela).
+        struct LineSegment {
+            glm::vec4 A;      // xyz + espessura (px)
+            glm::vec4 B;      // xyz
+            glm::vec4 Color;  // rgba
+        };
+        static void DrawLineSegments(const LineSegment* segments, uint32_t count, const float* viewProjection, bool depthTest);
+
         // Varre 'scene' por toda entidade com TransformComponent +
         // LightComponent e traduz cada uma para um GPULight (ver comentario
         // na struct acima) usando a posicao/rotacao de MUNDO da entidade
         // (Scene::GetWorldTransform - respeita parenting, igual DrawScene
-        // ja faz para meshes). Limita a MAX_LIGHTS resultados: luzes alem
-        // desse limite sao ignoradas silenciosamente (nao ha prioridade
-        // por distancia/importancia).
+        // ja faz para meshes).
+        //
+        // Esta sobrecarga (sem camera) limita a MAX_LIGHTS resultados NA ORDEM
+        // DO REGISTRO: luzes alem do limite ficam de fora sem criterio nenhum.
+        // Serve a ferramentas que so querem "a lista". O render usa a sobrecarga
+        // com camera, logo abaixo.
         //
         // Publica (nao so uso interno de DrawMesh/DrawScene) porque
         // ferramentas do editor - ex: um futuro gizmo que desenha o cone
@@ -379,6 +401,14 @@ namespace Prism {
         // podem precisar da mesma lista sem duplicar a logica de
         // traducao/coleta.
         static std::vector<GPULight> CollectGPULights(class Scene& scene);
+
+        // Versao usada por DrawScene: escolhe as MAX_LIGHTS luzes mais RELEVANTES para
+        // esta camera (ver LightSelection.h: alcance x frustum, distancia, intensidade,
+        // histerese) e devolve a lista ORDENADA da mais para a menos relevante. O
+        // ShadowSystem percorre a lista nessa ordem, entao as sombras (limite de 1
+        // directional, 4 spots e 2 points) vao para as luzes mais relevantes tambem.
+        // 'cameraWorldPos' = float[3]; 'frustum' da camera deste quadro.
+        static std::vector<GPULight> CollectGPULights(class Scene& scene, const float* cameraWorldPos, const Culling::Frustum& frustum);
 
         // --- SSAO (Screen-Space Ambient Occlusion) -----------------------
         // Ver comentario grande em SSAO.h para o pipeline completo (3
@@ -429,6 +459,13 @@ namespace Prism {
         static bool IsInstancingEnabled();
 
     private:
+        // --- Estagios do DrawScene (implementados em Renderer.cpp) ---
+        // Casters de sombra da cena (so trabalha se alguma luz projeta sombra).
+        static void CollectShadowCasters(class Scene& scene, const std::vector<GPULight>& lights, std::vector<ShadowCaster>& out);
+        // SSAO completo (geometria + calculo + blur), restaurando framebuffer/viewport a cada sub-passe.
+        static SSAO* RenderSSAOStage(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height,
+                                     const std::vector<VisibleMesh>& visible, uint32_t previousFramebuffer, const int* previousViewport);
+
         // Estado por QUADRO / por MATERIAL / por OBJETO do shader principal (DrawMesh envia os tres;
         // DrawScene envia o primeiro 1x e os outros so quando mudam). O shader precisa estar ligado.
         static void BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao);
@@ -449,6 +486,11 @@ namespace Prism {
         // UI in-game: shader (ui.vert/.frag) + SSBO reescrito a cada lote.
         static Ref<Shader> s_UIShader;
         static uint32_t s_UISSBO;
+        // UI em espaco de mundo (ui_world.vert/.frag) reaproveita s_UISSBO; linhas do DrawContext
+        // (draw_line.vert/.frag) leem segmentos de s_DrawLineSSBO.
+        static Ref<Shader> s_UIWorldShader;
+        static Ref<Shader> s_DrawLineShader;
+        static uint32_t s_DrawLineSSBO;
 
         // Estado POR QUADRO do ambiente e do fundo: reescrito por inteiro no
         // inicio de cada DrawScene (ApplyFrameState) a partir do

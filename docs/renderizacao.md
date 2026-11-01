@@ -165,3 +165,27 @@ Quando o ambiente usa um **panorama** (`Sky = Panorama` com textura válida), el
 4. Sem panorama (cor chapada ou gradiente), vale o gradiente analítico de antes. Shaders `ibl*.frag` inválidos também caem no gradiente.
 
 Texture units 8 e 9 do `basic.frag`: irradiância e pré-filtrado. Valores acima de 256 no panorama são limitados no bake (evita "fireflies"; o sol vem das luzes).
+
+## Organização do código do Renderer
+
+`Renderer` continua sendo UMA classe (`Renderer.h`), mas a implementação foi dividida por assunto para facilitar a leitura e reduzir conflitos:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `Renderer.cpp` | Init/Shutdown/hot reload, caches (texturas, modelos, rigs, level meshes), estado de quadro/material/objeto, `DrawMesh`, céu, culling, SSAO e o `DrawScene` |
+| `Renderer_Lights.cpp` | `LightComponent -> GPULight`, escolha por relevância (`LightSelection.h`) e upload para o shader ativo |
+| `Renderer_Overlay.cpp` | O que desenha por cima/além da cena: `DrawLines` (gizmos), UI de tela e de mundo, segmentos do `DrawContext`, partículas |
+| `RendererInternal.h` | Estado compartilhado entre esses arquivos (hoje só o shader ativo); não é API pública |
+
+Ordem dos estágios do `DrawScene` (cada um é uma função ou bloco nomeado, com zona de profiler/GPU própria):
+
+1. estado de quadro e IBL → frustum/camadas → `CollectLevelMeshGarbage` → `CollectVisibleMeshes`
+2. luzes (`CollectGPULights`) → `CollectShadowCasters` → `ShadowSystem::Render`
+3. `RenderSSAOStage` (pré-passe de geometria → SSAO → blur)
+4. alvo HDR (`PostProcess::Begin`) → limpar → céu
+5. passe principal: opacos agrupados/instanciados → translúcidos de trás para frente
+6. partículas → UI de mundo e `DrawContext` (mundo)
+7. `PostProcess::End` (bloom, exposição, FXAA)
+
+Próximo passo planejado (ainda não feito): transformar o estado estático em um `RenderContext` por instância e quebrar o `DrawScene` em passes com entrada/saída explícitas. É a base para um RHI, mas só compensa quando houver um segundo backend ou mais de um renderizador ao mesmo tempo.
+

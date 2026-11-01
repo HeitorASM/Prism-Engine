@@ -1,6 +1,7 @@
 #include <glad/gl.h>
 #include "RuntimeLayer.h"
 #include <Prism/Core/Paths.h>
+#include <Prism/Extensions/ExtensionLoader.h>
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -81,6 +82,11 @@ namespace PrismRuntime {
         // Titulo da janela com o nome do projeto.
         GLFWwindow* window = (GLFWwindow*)Prism::Application::Get().GetWindow().GetNativeWindow();
         glfwSetWindowTitle(window, project->GetConfig().Name.c_str());
+
+        // Extensoes (components/sistemas): ANTES de abrir o mapa, senao os components delas
+        // seriam lidos como "desconhecidos". Globais (ao lado do exe) e do projeto.
+        Prism::ExtensionLoader::LoadInstalled(false);
+        Prism::ExtensionLoader::LoadProject(*project, false);
 
         // --- Mapa inicial --------------------------------------------------
         const fs::path& startMap = project->GetConfig().StartMap;

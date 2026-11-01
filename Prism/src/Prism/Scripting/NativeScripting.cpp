@@ -5,6 +5,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Animation/AnimationSystem.h"
 #include "../UI/UISystem.h"
+#include "../Renderer/DrawContext.h"
 #include "../UI/UIDocument.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Core/Input.h"
@@ -303,6 +304,19 @@ namespace Prism {
         void ApiCharacterJump(Scene* scene, entt::entity entity, float speed) { if (scene) PhysicsEngine::CharacterJump(*scene, Entity(entity, scene), speed); }
         bool ApiCharacterIsGrounded(Scene* scene, entt::entity entity) { return scene && PhysicsEngine::CharacterIsGrounded(*scene, Entity(entity, scene)); }
         glm::vec3 ApiCharacterGetVelocity(Scene* scene, entt::entity entity) { return scene ? PhysicsEngine::CharacterGetVelocity(*scene, Entity(entity, scene)) : glm::vec3(0.0f); }
+        // v13: desenho imediato
+        void ApiSetEntityVisible(Scene* scene, entt::entity entity, bool visible) { if (scene) scene->SetEntityHidden(entity, !visible); }
+        bool ApiIsEntityVisible(Scene* scene, entt::entity entity) { return scene ? scene->IsEntityVisible(entity) : true; }
+        void ApiDrawLine(glm::vec3 a, glm::vec3 b, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::Line(a, b, color, duration, depthTest, thickness); }
+        void ApiDrawBox(const glm::mat4* model, glm::vec4 color, float duration, bool depthTest, float thickness) { if (model) DrawContext::Box(*model, color, duration, depthTest, thickness); }
+        void ApiDrawBoxAABB(glm::vec3 mn, glm::vec3 mx, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::BoxAABB(mn, mx, color, duration, depthTest, thickness); }
+        void ApiDrawSphere(glm::vec3 c, float r, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::Sphere(c, r, color, duration, depthTest, thickness); }
+        void ApiDrawArrow(glm::vec3 a, glm::vec3 b, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::Arrow(a, b, color, duration, depthTest, thickness); }
+        void ApiDrawAxes(const glm::mat4* model, float size, float duration, bool depthTest) { if (model) DrawContext::Axes(*model, size, duration, depthTest); }
+        void ApiDrawText3D(glm::vec3 p, const char* text, glm::vec4 color, float height, float duration, bool depthTest) { if (text) DrawContext::Text3D(p, text, color, height, duration, depthTest); }
+        void ApiDrawLine2D(glm::vec2 a, glm::vec2 b, glm::vec4 color, float duration, float thickness) { DrawContext::Line2D(a, b, color, duration, thickness); }
+        void ApiDrawRect2D(float x, float y, float w, float h, glm::vec4 color, bool filled, float duration) { DrawContext::Rect2D(x, y, w, h, color, filled, duration); }
+        void ApiDrawText2D(const char* text, float x, float y, glm::vec4 color, float size, float duration) { if (text) DrawContext::Text2D(text, x, y, color, size, duration); }
         bool ApiRaycastMasked(Scene* scene, glm::vec3 origin, glm::vec3 direction, float maxDistance, entt::entity ignore, uint32_t layerMask, NativeRayHit* outHit) {
             if (!scene || !outHit) return false;
             std::vector<entt::entity> ignored;
@@ -431,7 +445,12 @@ namespace Prism {
                 // v8
                 &ApiUISetText, &ApiUIGetText, &ApiUISetVisible, &ApiUISetInteractable, &ApiUISetColor, &ApiUISetTextColor,
                 // v9
-                &ApiCharacterMove, &ApiCharacterJump, &ApiCharacterIsGrounded, &ApiCharacterGetVelocity, &ApiRaycastMasked
+                &ApiCharacterMove, &ApiCharacterJump, &ApiCharacterIsGrounded, &ApiCharacterGetVelocity, &ApiRaycastMasked,
+                // v13
+                &ApiDrawLine, &ApiDrawBox, &ApiDrawBoxAABB, &ApiDrawSphere, &ApiDrawArrow, &ApiDrawAxes,
+                &ApiDrawText3D, &ApiDrawLine2D, &ApiDrawRect2D, &ApiDrawText2D,
+                // v14
+                &ApiSetEntityVisible, &ApiIsEntityVisible
             };
             return api;
         }

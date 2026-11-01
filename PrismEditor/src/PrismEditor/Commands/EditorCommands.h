@@ -1175,6 +1175,26 @@ namespace PrismEditor {
         Prism::Entity m_NewParent;
     };
 
+    // Esconde/mostra uma entidade (HiddenComponent) - o "olho" da Hierarquia. Os filhos herdam.
+    class SetHiddenCommand : public Prism::Command {
+    public:
+        SetHiddenCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity entity, bool hidden)
+            : m_Scene(scene), m_Entity(entity), m_Hidden(hidden) {}
+
+        void Execute() override { Apply(m_Hidden); }
+        void Undo() override { Apply(!m_Hidden); }
+        std::string GetName() const override { return m_Hidden ? "Esconder Entidade" : "Mostrar Entidade"; }
+
+    private:
+        void Apply(bool hidden) {
+            if (m_Scene && m_Entity.IsValid())
+                m_Scene->SetEntityHidden(m_Entity.GetHandle(), hidden);
+        }
+        Prism::Ref<Prism::Scene> m_Scene;
+        Prism::Entity m_Entity;
+        bool m_Hidden;
+    };
+
     // --- Add/Remove Component genericos -------------------------------
     // Um unico par de templates cobre os quatro components "opcionais"
     // novos (Light, Collider, RigidBody, Script) em vez de escrever a
@@ -1237,6 +1257,83 @@ namespace PrismEditor {
         Prism::Entity m_Entity;
         std::string m_DisplayName;
         T m_Backup;
+    };
+
+    // --- Add/Remove/Edit de components pelo REGISTRO (sem conhecer o tipo C++) ---------
+    // Para components de EXTENSAO (e qualquer component registrado que nao tenha um template
+    // proprio acima): tudo passa pelas funcoes type-erased do ComponentRegistry (AddDefault,
+    // Remove, Serialize/Deserialize). O component e achado pelo NOME a cada Execute/Undo (o
+    // vetor do registro pode crescer e invalidar ponteiros).
+
+    class AddRegisteredComponentCommand : public Prism::Command {
+    public:
+        AddRegisteredComponentCommand(Prism::Entity entity, std::string componentName)
+            : m_Entity(entity), m_Name(std::move(componentName)) {}
+
+        void Execute() override {
+            const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name);
+            if (info && m_Entity.IsValid() && !info->Has(m_Entity))
+                info->AddDefault(m_Entity);
+        }
+        void Undo() override {
+            const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name);
+            if (info && m_Entity.IsValid() && info->Has(m_Entity))
+                info->Remove(m_Entity);
+        }
+        std::string GetName() const override { return "Adicionar " + m_Name; }
+
+    private:
+        Prism::Entity m_Entity;
+        std::string m_Name;
+    };
+
+    class RemoveRegisteredComponentCommand : public Prism::Command {
+    public:
+        RemoveRegisteredComponentCommand(Prism::Entity entity, std::string componentName)
+            : m_Entity(entity), m_Name(std::move(componentName)) {
+            if (const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name))
+                m_Backup = Prism::ComponentRegistry::SerializeComponent(*info, entity);
+        }
+
+        void Execute() override {
+            const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name);
+            if (info && m_Entity.IsValid() && info->Has(m_Entity))
+                info->Remove(m_Entity);
+        }
+        void Undo() override {
+            const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name);
+            if (info && m_Entity.IsValid() && !info->Has(m_Entity))
+                Prism::ComponentRegistry::DeserializeComponent(*info, m_Entity, m_Backup);
+        }
+        std::string GetName() const override { return "Remover " + m_Name; }
+
+    private:
+        Prism::Entity m_Entity;
+        std::string m_Name;
+        std::string m_Backup; // bytes do component antes de remover
+    };
+
+    // Um gesto de edicao: restaura os bytes de ANTES no Undo e os de DEPOIS no Execute.
+    class EditRegisteredComponentCommand : public Prism::Command {
+    public:
+        EditRegisteredComponentCommand(Prism::Entity entity, std::string componentName, std::string before, std::string after)
+            : m_Entity(entity), m_Name(std::move(componentName)), m_Before(std::move(before)), m_After(std::move(after)) {}
+
+        void Execute() override { Apply(m_After); }
+        void Undo() override { Apply(m_Before); }
+        std::string GetName() const override { return "Editar " + m_Name; }
+
+    private:
+        void Apply(const std::string& bytes) {
+            const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(m_Name);
+            if (info && m_Entity.IsValid())
+                Prism::ComponentRegistry::DeserializeComponent(*info, m_Entity, bytes);
+        }
+
+        Prism::Entity m_Entity;
+        std::string m_Name;
+        std::string m_Before;
+        std::string m_After;
     };
 
     // --- Editar um component inteiro (Light, Collider, RigidBody, Camera...) ---

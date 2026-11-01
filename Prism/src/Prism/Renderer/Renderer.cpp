@@ -2,15 +2,19 @@
 #include <GLFW/glfw3.h> 
 #include "Renderer.h"
 #include "PrimitiveMeshFactory.h"
+#include "RendererInternal.h"
 #include "../Core/Log.h"
 #include "../Core/Profiler.h"
 #include "GpuTimer.h"
 #include "DrawBatching.h"
+#include "LightSelection.h"
 #include "MaterialState.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include "../Particles/ParticleSystem.h"
+#include "../UI/UISystem.h"
+#include "DrawContext.h"
 #include "../Assets/ModelLoader.h"
 #include "../Animation/AnimationSystem.h"
 #include <glm/gtc/type_ptr.hpp>
@@ -32,7 +36,8 @@ namespace Prism {
 
     // Shader em uso pelo estado de quadro/material/objeto (BindFrameState & cia): o padrao ou o de um
     // material com ShaderPath. Sempre aponta para um shader valido depois de Init().
-    static Shader* s_ActiveShader = nullptr;
+    Shader* RendererDetail::ActiveShader = nullptr;
+    static Shader*& s_ActiveShader = RendererDetail::ActiveShader; // alias: o nome antigo continua valendo neste arquivo
     // Shaders de material do projeto (basic.vert/frag + o .glsl do material no gancho prism_surface),
     // por ShaderPath. Entradas invalidas ficam no mapa: o hot reload as recompila quando o arquivo e salvo.
     struct MaterialShaderEntry {
@@ -73,6 +78,9 @@ namespace Prism {
     uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_UIShader = nullptr;
     uint32_t Renderer::s_UISSBO = 0;
+    Ref<Shader> Renderer::s_UIWorldShader = nullptr;
+    Ref<Shader> Renderer::s_DrawLineShader = nullptr;
+    uint32_t Renderer::s_DrawLineSSBO = 0;
     Ref<Shader> Renderer::s_GeometryPrePassShader = nullptr;
     Ref<Shader> Renderer::s_SSAOShader = nullptr;
     Ref<Shader> Renderer::s_SSAOBlurShader = nullptr;
@@ -189,6 +197,9 @@ namespace Prism {
         glCreateBuffers(1, &s_ParticleSSBO);
         s_UIShader = loadShader("UI", "ui.vert", "ui.frag");
         glCreateBuffers(1, &s_UISSBO);
+        s_UIWorldShader = loadShader("UIWorld", "ui_world.vert", "ui_world.frag");
+        s_DrawLineShader = loadShader("DrawLine", "draw_line.vert", "draw_line.frag");
+        glCreateBuffers(1, &s_DrawLineSSBO);
         if (!ShadowSystem::Init(shaderDir))
             PRISM_CORE_ERROR("Renderer: shaders de sombra invalidos - a cena sera desenhada sem sombras (corrija shadow_depth/shadow_point; o hot reload os recarrega).");
 
@@ -237,7 +248,7 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_SkyShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_UIWorldShader, &s_DrawLineShader, &s_SkyShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
@@ -262,6 +273,9 @@ namespace Prism {
         s_ParticleShader.reset();
         s_UIShader.reset();
         if (s_UISSBO) { glDeleteBuffers(1, &s_UISSBO); s_UISSBO = 0; }
+        s_UIWorldShader.reset();
+        s_DrawLineShader.reset();
+        if (s_DrawLineSSBO) { glDeleteBuffers(1, &s_DrawLineSSBO); s_DrawLineSSBO = 0; }
         s_SkyShader.reset();
         s_SkyTexture.reset();
         s_SkyLoadedPath.clear();
@@ -1002,123 +1016,6 @@ namespace Prism {
         if (blendWasEnabled) glEnable(GL_BLEND);
     }
 
-    void Renderer::DrawLines(const float* points, uint32_t pointCount, const float* viewProjection, const float* color) {
-        if (!s_LineShader || pointCount == 0) return;
-
-        // ATENCAO: s_LineVAO e criado uma unica vez em Init() (contexto do
-        // editor) e, como qualquer VAO, NAO e valido em outro contexto
-        // OpenGL mesmo com share list (ver Mesh.h/
-        // Mesh::BindForCurrentContext). DrawLines() so e chamado pelo
-        // EditorLayer (gizmos), nunca pela PlayWindow - se gizmos de debug
-        // forem desenhados tambem na PlayWindow, esta funcao vai precisar
-        // do mesmo tratamento de "VAO por contexto" que Mesh:: ja tem.
-        glBindVertexArray(s_LineVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, s_LineVBO);
-        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(pointCount * 3 * sizeof(float)), points, GL_DYNAMIC_DRAW);
-
-        s_LineShader->Bind();
-        s_LineShader->SetMat4("u_ViewProjection", viewProjection);
-        s_LineShader->SetFloat3("u_BaseColor", color[0], color[1], color[2]);
-
-        glDrawArrays(GL_LINES, 0, (GLsizei)pointCount);
-
-        glBindVertexArray(0);
-        s_LineShader->Unbind();
-    }
-
-    std::vector<GPULight> Renderer::CollectGPULights(Scene& scene) {
-        std::vector<GPULight> result;
-        result.reserve(MAX_LIGHTS);
-
-        // Toda entidade com TransformComponent + LightComponent conta como
-        // fonte de luz. Usa a transform de MUNDO (mesma logica que
-        // DrawScene ja usa para meshes) - uma luz filha de um objeto pai
-        // (ex: uma lanterna presa na mao de um personagem) acompanha a
-        // posicao/rotacao do pai corretamente.
-        auto view = scene.GetRegistry().view<TransformComponent, LightComponent>();
-        for (auto entityHandle : view) {
-            if (result.size() >= MAX_LIGHTS) {
-                // Limite atingido - ver comentario em CollectGPULights
-                // (Renderer.h) sobre por que isso e silencioso por
-                // enquanto (sem priorizacao por distancia/importancia).
-                break;
-            }
-
-            const auto& light = view.get<LightComponent>(entityHandle);
-            glm::mat4 worldTransform = scene.GetWorldTransform(Entity(entityHandle, &scene));
-
-            GPULight gpuLight;
-            gpuLight.SourceEntityId = (uint32_t)entityHandle;
-            gpuLight.Color = light.Color;
-            gpuLight.Intensity = light.Intensity;
-            gpuLight.Range = light.Range;
-            gpuLight.CastShadows = light.CastShadows;
-
-            // Posicao de mundo = coluna de translacao da matriz de
-            // transform combinada (ultima coluna, xyz).
-            gpuLight.Position = glm::vec3(worldTransform[3]);
-
-            // Direcao "para frente" da entidade em espaco de mundo:
-            // rotaciona o eixo -Z local (convencao da engine para "frente"
-            // de uma entidade, mesma usada pela CameraComponent) pela
-            // parte de rotacao/escala da matriz de mundo. Relevante para
-            // Spot e Directional; Point ignora esse campo no shader.
-            glm::vec3 forwardLocal = { 0.0f, 0.0f, -1.0f };
-            gpuLight.Direction = glm::normalize(glm::mat3(worldTransform) * forwardLocal);
-
-            // Traducao especifica por tipo - este e o UNICO lugar que
-            // precisa de um novo "case" ao adicionar um LightType novo
-            // (ex: Area) - ver comentario grande em Components.h sobre
-            // extensibilidade. Point e o "default" (gpuLight.Type = 0)
-            // ja fica correto sem entrar em nenhum branch abaixo.
-            switch (light.Type) {
-                case LightType::Point:
-                    gpuLight.Type = 0; // LIGHT_TYPE_POINT no shader
-                    break;
-                case LightType::Spot:
-                    gpuLight.Type = 1; // LIGHT_TYPE_SPOT no shader
-                    // Pre-calcula os cossenos aqui (CPU, uma vez por
-                    // frame por luz) em vez de no shader (por-fragmento,
-                    // milhares de vezes por frame) - cos() e caro para
-                    // repetir por pixel quando o angulo so muda quando o
-                    // usuario edita a luz.
-                    gpuLight.CosOuterAngle = glm::cos(glm::radians(light.SpotAngle));
-                    gpuLight.CosInnerAngle = glm::cos(glm::radians(glm::min(light.InnerSpotAngle, light.SpotAngle)));
-                    break;
-                case LightType::Directional:
-                    gpuLight.Type = 2; // LIGHT_TYPE_DIRECTIONAL no shader
-                    break;
-                // TODO(Area/IES): quando LightType ganhar esses valores
-                // (ver Components.h), adicionar os cases aqui.
-            }
-
-            result.push_back(gpuLight);
-        }
-
-        return result;
-    }
-
-    void Renderer::UploadLights(const std::vector<GPULight>& lights) {
-        if (!s_ActiveShader) return;
-
-        int count = (int)std::min<size_t>(lights.size(), MAX_LIGHTS);
-        s_ActiveShader->SetInt("u_LightCount", count);
-
-        for (int i = 0; i < count; i++) {
-            const GPULight& light = lights[i];
-            std::string prefix = "u_Lights[" + std::to_string(i) + "].";
-
-            s_ActiveShader->SetInt(prefix + "Type", light.Type);
-            s_ActiveShader->SetFloat3(prefix + "Position", light.Position.x, light.Position.y, light.Position.z);
-            s_ActiveShader->SetFloat3(prefix + "Direction", light.Direction.x, light.Direction.y, light.Direction.z);
-            s_ActiveShader->SetFloat3(prefix + "Color", light.Color.x, light.Color.y, light.Color.z);
-            s_ActiveShader->SetFloat(prefix + "Intensity", light.Intensity);
-            s_ActiveShader->SetFloat(prefix + "Range", light.Range);
-            s_ActiveShader->SetFloat(prefix + "CosOuterAngle", light.CosOuterAngle);
-            s_ActiveShader->SetFloat(prefix + "CosInnerAngle", light.CosInnerAngle);
-            s_ActiveShader->SetInt(prefix + "ShadowSlot", light.CastShadows ? light.ShadowSlot : -1);
-        }
-    }
 
 
     // ========================================================================
@@ -1153,6 +1050,8 @@ namespace Prism {
         auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
         for (auto entityHandle : meshRendererView) {
             const MeshRendererComponent& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
+            if (!scene.IsEntityVisible(entityHandle))
+                continue; // escondida (ela ou um ancestral) - ver HiddenComponent
             const glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             switch (TestVisibility(meshRenderer, mesh, model, frustum, cullMask)) {
@@ -1180,6 +1079,8 @@ namespace Prism {
         auto levelView = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
         for (auto entityHandle : levelView) {
             const LevelMeshComponent& level = levelView.get<LevelMeshComponent>(entityHandle);
+            if (!scene.IsEntityVisible(entityHandle))
+                continue;
             if (!Culling::LayerVisible(level.Layers, cullMask)) { s_CullStats.LayerHidden++; continue; }
             const LevelMeshGpu& gpu = ResolveLevelMesh(level);
             if (gpu.Parts.empty())
@@ -1439,6 +1340,82 @@ namespace Prism {
         };
     }
 
+    // Casters de sombra: toda entidade com mesh (e as partes de LevelMesh) que projeta sombra. So
+    // trabalha se alguma luz projeta sombra (senao 'out' fica vazio). Estagio do DrawScene.
+    void Renderer::CollectShadowCasters(Scene& scene, const std::vector<GPULight>& lights, std::vector<ShadowCaster>& casters) {
+        bool anyShadowLight = false;
+        for (const GPULight& l : lights)
+            anyShadowLight = anyShadowLight || l.CastShadows;
+        if (!anyShadowLight)
+            return;
+
+        auto casterView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
+        for (auto handle : casterView) {
+            const MeshRendererComponent& casterRenderer = casterView.get<MeshRendererComponent>(handle);
+            if (!casterRenderer.CastShadows || !scene.IsEntityVisible(handle))
+                continue;
+            Mesh* geometry = ResolveMesh(casterRenderer);
+            if (!geometry) continue;
+            // Translucidos nao projetam sombra (cairia solida); recortes projetam como solidos.
+            if (const MaterialComponent* surface = scene.GetRegistry().try_get<MaterialComponent>(handle);
+                surface && surface->BlendMode == MaterialBlendMode::Blend)
+                continue;
+            ShadowCaster caster;
+            caster.Geometry = geometry;
+            caster.Model = scene.GetWorldTransform(Entity(handle, &scene));
+            if (!geometry->IsSkinned()) {
+                caster.LocalMin = geometry->GetLocalBoundsMin();
+                caster.LocalMax = geometry->GetLocalBoundsMax();
+                caster.HasBounds = true;
+            }
+            BonePalette palette = ResolveBonePalette(scene, handle, casterRenderer, geometry);
+            caster.Bones = palette.Data;
+            caster.BoneCount = palette.Count;
+            casters.push_back(caster);
+        }
+        auto levelCasters = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
+        for (auto handle : levelCasters) {
+            const LevelMeshComponent& level = levelCasters.get<LevelMeshComponent>(handle);
+            if (!level.CastShadows || !scene.IsEntityVisible(handle))
+                continue;
+            const LevelMeshGpu& gpu = ResolveLevelMesh(level);
+            if (gpu.Parts.empty())
+                continue;
+            const glm::mat4 model = scene.GetWorldTransform(Entity(handle, &scene));
+            for (const LevelMeshPart& part : gpu.Parts) {
+                if (level.MaterialForSlot(part.MaterialSlot).BlendMode == MaterialBlendMode::Blend)
+                    continue; // translucido nao projeta sombra (igual aos MeshRenderers)
+                ShadowCaster caster;
+                caster.Geometry = part.MeshPtr;
+                caster.Model = model;
+                caster.LocalMin = part.MeshPtr->GetLocalBoundsMin();
+                caster.LocalMax = part.MeshPtr->GetLocalBoundsMax();
+                caster.HasBounds = true;
+                casters.push_back(caster);
+            }
+        }
+    }
+
+    // SSAO completo: pre-passe de geometria + calculo + blur, restaurando framebuffer e viewport
+    // do chamador depois de CADA sub-passe. Devolve o SSAO ja borrado. Estagio do DrawScene.
+    SSAO* Renderer::RenderSSAOStage(Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height,
+                                    const std::vector<VisibleMesh>& visible, uint32_t previousFramebuffer, const int* previousViewport) {
+        auto restore = [&]() {
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        };
+
+        GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, width, height, visible);
+        restore();
+
+        SSAO* ssao = RenderSSAOPass(*gBuffer, projection, width, height);
+        restore();
+
+        RenderSSAOBlurPass(*ssao);
+        restore();
+        return ssao;
+    }
+
     void Renderer::DrawScene(Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera) {
         PRISM_PROFILE_SCOPE("Renderer.DrawScene");
         GpuTimer::Scope gpuScene("GPU.DrawScene");
@@ -1477,7 +1454,7 @@ namespace Prism {
         // lista de luzes ativas nao muda entre um mesh e outro do mesmo
         // frame. Ver CollectGPULights para a logica de traducao
         // LightComponent -> GPULight.
-        std::vector<GPULight> lights = CollectGPULights(scene);
+        std::vector<GPULight> lights = CollectGPULights(scene, cameraWorldPos, cameraFrustum);
 
         // Salva framebuffer + viewport ATUAIS antes de qualquer sub-pass
         // que desenhe em outro lugar (shadow map, G-buffer, SSAO) - todos
@@ -1494,56 +1471,7 @@ namespace Prism {
         // Sombras: casters = toda entidade com mesh; ShadowSystem desenha os mapas
         // (cascatas / spot / cubo) e preenche lights[i].ShadowSlot.
         std::vector<ShadowCaster>& casters = scratch.Casters;
-        {
-            bool anyShadowLight = false;
-            for (const GPULight& l : lights)
-                anyShadowLight = anyShadowLight || l.CastShadows;
-            if (anyShadowLight) {
-                auto casterView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
-                for (auto handle : casterView) {
-                    const MeshRendererComponent& casterRenderer = casterView.get<MeshRendererComponent>(handle);
-                    Mesh* geometry = ResolveMesh(casterRenderer);
-                    if (!geometry) continue;
-                    // Translucidos nao projetam sombra (cairia solida); recortes projetam como solidos.
-                    if (const MaterialComponent* surface = scene.GetRegistry().try_get<MaterialComponent>(handle);
-                        surface && surface->BlendMode == MaterialBlendMode::Blend)
-                        continue;
-                    ShadowCaster caster;
-                    caster.Geometry = geometry;
-                    caster.Model = scene.GetWorldTransform(Entity(handle, &scene));
-                    if (!geometry->IsSkinned()) {
-                        caster.LocalMin = geometry->GetLocalBoundsMin();
-                        caster.LocalMax = geometry->GetLocalBoundsMax();
-                        caster.HasBounds = true;
-                    }
-                    BonePalette palette = ResolveBonePalette(scene, handle, casterRenderer, geometry);
-                    caster.Bones = palette.Data;
-                    caster.BoneCount = palette.Count;
-                    casters.push_back(caster);
-                }
-                auto levelCasters = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
-                for (auto handle : levelCasters) {
-                    const LevelMeshComponent& level = levelCasters.get<LevelMeshComponent>(handle);
-                    if (!level.CastShadows)
-                        continue;
-                    const LevelMeshGpu& gpu = ResolveLevelMesh(level);
-                    if (gpu.Parts.empty())
-                        continue;
-                    const glm::mat4 model = scene.GetWorldTransform(Entity(handle, &scene));
-                    for (const LevelMeshPart& part : gpu.Parts) {
-                        if (level.MaterialForSlot(part.MaterialSlot).BlendMode == MaterialBlendMode::Blend)
-                            continue; // translucido nao projeta sombra (igual aos MeshRenderers)
-                        ShadowCaster caster;
-                        caster.Geometry = part.MeshPtr;
-                        caster.Model = model;
-                        caster.LocalMin = part.MeshPtr->GetLocalBoundsMin();
-                        caster.LocalMax = part.MeshPtr->GetLocalBoundsMax();
-                        caster.HasBounds = true;
-                        casters.push_back(caster);
-                    }
-                }
-            }
-        }
+        CollectShadowCasters(scene, lights, casters);
         Profiler::Scope zShadows("Renderer.Shadows");
         GpuTimer::Scope gShadows("GPU.Shadows");
         const ShadowFrame& shadowFrame = ShadowSystem::Render(casters, lights, view, projection);
@@ -1563,19 +1491,9 @@ namespace Prism {
         Profiler::Scope zSSAO("Renderer.SSAO");
         GpuTimer::Scope gSSAO("GPU.SSAO");
         SSAO* ssao = nullptr;
-        if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0) {
-            GeometryBuffer* gBuffer = RenderGeometryPrePass(scene, view, projection, viewportWidth, viewportHeight, scratch.Visible);
-            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
-            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-
-            ssao = RenderSSAOPass(*gBuffer, projection, viewportWidth, viewportHeight);
-            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
-            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-
-            RenderSSAOBlurPass(*ssao);
-            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)previousFramebuffer);
-            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-        }
+        if (camera.SSAO && viewportWidth > 0 && viewportHeight > 0)
+            ssao = RenderSSAOStage(scene, view, projection, viewportWidth, viewportHeight, scratch.Visible,
+                                   (uint32_t)previousFramebuffer, previousViewport);
 
         gSSAO.Stop();
         zSSAO.Stop();
@@ -1791,6 +1709,14 @@ namespace Prism {
             DrawParticles(scene, view, projection);
         }
 
+        // UI em espaco de mundo e desenho imediato 3D (DrawContext): translucidos, depois das
+        // particulas, testando contra a profundidade ja desenhada (sem escrever nela).
+        {
+            PRISM_PROFILE_SCOPE("Renderer.WorldUI");
+            UISystem::RenderWorld(scene, view, projection, cameraWorldPos);
+            DrawContext::RenderWorld(view, projection);
+        }
+
         if (postProcess) {
             s_OutputHDR = false;
 
@@ -1818,132 +1744,6 @@ namespace Prism {
             postProcess->End(post, (uint32_t)previousFramebuffer, previousViewport);
         }
         s_OutputHDR = false;
-    }
-
-    void Renderer::DrawUIQuads(const UIQuad* quads, uint32_t count, float screenWidth, float screenHeight,
-                               const Texture2D* texture, uint32_t fontTexture) {
-        if (!s_UIShader || s_UISSBO == 0 || count == 0 || screenWidth <= 0.0f || screenHeight <= 0.0f)
-            return;
-
-        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
-        bool depthWasEnabled = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-
-        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
-        s_UIShader->Bind();
-        s_UIShader->SetFloat2("u_ScreenSize", screenWidth, screenHeight);
-        if (texture && texture->IsValid())
-            texture->Bind(0);
-        if (fontTexture != 0)
-            glBindTextureUnit(1, fontTexture);
-
-        glNamedBufferData(s_UISSBO, (GLsizeiptr)(count * sizeof(UIQuad)), quads, GL_STREAM_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_UISSBO);
-        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)count);
-
-        glBindVertexArray(0);
-        s_UIShader->Unbind();
-        glDisable(GL_BLEND);
-        if (depthWasEnabled)
-            glEnable(GL_DEPTH_TEST);
-        if (cullWasEnabled)
-            glEnable(GL_CULL_FACE);
-    }
-
-    void Renderer::DrawParticles(Scene& scene, const float* view, const float* projection) {
-        if (!s_ParticleShader || s_ParticleSSBO == 0)
-            return;
-
-        auto emitters = scene.GetRegistry().view<ParticleEmitterComponent>();
-        if (emitters.begin() == emitters.end())
-            return;
-
-        glm::mat4 viewMatrix = glm::make_mat4(view);
-        glm::mat4 viewProjection = glm::make_mat4(projection) * viewMatrix;
-        // Eixos da camera no mundo = linhas da matriz de view (rotacao ortonormal).
-        glm::vec3 cameraRight(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
-        glm::vec3 cameraUp(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-        glm::vec3 cameraPosition(s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
-
-        struct GPUParticle {
-            glm::vec4 PositionSize;
-            glm::vec4 Color;
-        };
-        std::vector<GPUParticle> gpuParticles;
-        std::vector<std::pair<float, uint32_t>> order; // (distancia^2, indice) para ordenar o blend normal
-
-        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
-        bool shaderBound = false;
-
-        for (auto handle : emitters) {
-            const std::vector<Particle>* particles = ParticleSystem::GetParticles(scene, handle);
-            if (!particles || particles->empty())
-                continue;
-            const auto& emitter = emitters.get<ParticleEmitterComponent>(handle);
-
-            if (!shaderBound) {
-                glEnable(GL_BLEND);
-                glDepthMask(GL_FALSE);
-                glDisable(GL_CULL_FACE);
-                glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
-                s_ParticleShader->Bind();
-                s_ParticleShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
-                s_ParticleShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
-                s_ParticleShader->SetFloat3("u_CameraRight", cameraRight.x, cameraRight.y, cameraRight.z);
-                s_ParticleShader->SetFloat3("u_CameraUp", cameraUp.x, cameraUp.y, cameraUp.z);
-                s_ParticleShader->SetInt("u_Texture", 0);
-                shaderBound = true;
-            }
-
-            // Ordem de desenho: aditivo nao depende dela; alpha normal vai de tras para frente.
-            order.clear();
-            order.reserve(particles->size());
-            for (uint32_t i = 0; i < (uint32_t)particles->size(); i++) {
-                glm::vec3 delta = (*particles)[i].Position - cameraPosition;
-                order.emplace_back(glm::dot(delta, delta), i);
-            }
-            if (!emitter.Additive)
-                std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            gpuParticles.clear();
-            gpuParticles.reserve(order.size());
-            for (const auto& entry : order) {
-                const Particle& particle = (*particles)[entry.second];
-                float t = std::min(std::max(particle.Age / particle.Lifetime, 0.0f), 1.0f);
-                float size = emitter.SizeStart + (emitter.SizeEnd - emitter.SizeStart) * t;
-                glm::vec4 color = glm::mix(emitter.ColorStart, emitter.ColorEnd, t);
-                gpuParticles.push_back({ glm::vec4(particle.Position, size), color });
-            }
-
-            glNamedBufferData(s_ParticleSSBO, (GLsizeiptr)(gpuParticles.size() * sizeof(GPUParticle)), gpuParticles.data(), GL_STREAM_DRAW);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ParticleSSBO);
-
-            if (emitter.Additive)
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            else
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
-            bool useTexture = texture && texture->IsValid();
-            if (useTexture)
-                texture->Bind(0);
-            s_ParticleShader->SetInt("u_UseTexture", useTexture ? 1 : 0);
-
-            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)gpuParticles.size());
-        }
-
-        if (shaderBound) {
-            glBindVertexArray(0);
-            s_ParticleShader->Unbind();
-            glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            if (cullWasEnabled)
-                glEnable(GL_CULL_FACE);
-        }
     }
 
 }

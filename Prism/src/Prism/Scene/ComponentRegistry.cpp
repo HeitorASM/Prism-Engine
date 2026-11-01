@@ -1,4 +1,5 @@
 #include "ComponentRegistry.h"
+#include "Components.h"
 #include "../Core/Log.h"
 
 #include <string>
@@ -8,6 +9,78 @@ namespace Prism {
 
     std::vector<ComponentTypeInfo> ComponentRegistry::s_Registry;
     uint32_t ComponentRegistry::s_CurrentBlockVersion = 1;
+    bool ComponentRegistry::s_BuiltInsRegistered = false;
+
+    const ComponentTypeInfo* ComponentRegistry::FindByName(const std::string& name) {
+        for (const auto& info : s_Registry)
+            if (info.DisplayName == name)
+                return &info;
+        return nullptr;
+    }
+
+    bool ComponentRegistry::ValidateExtension(const ExtensionComponentDesc& desc, uint32_t typeId) {
+        auto reject = [&](const std::string& reason) {
+            PRISM_CORE_ERROR("ComponentRegistry: component de extensao '", desc.Name, "' (", desc.Source, ") recusado: ", reason);
+            return false;
+        };
+        if (desc.Name.empty() || desc.Name.size() > 128)
+            return reject("o nome precisa ter de 1 a 128 caracteres.");
+        if (desc.Source.empty())
+            return reject("informe o nome da extensao em Source.");
+        if (!desc.Serialize || !desc.Deserialize)
+            return reject("Serialize e Deserialize sao obrigatorios.");
+        for (const auto& info : s_Registry) {
+            if (info.DisplayName == desc.Name)
+                return reject("ja existe um component com esse nome.");
+            if (info.TypeId == typeId)
+                return reject("esse tipo C++ ja esta registrado (como '" + info.DisplayName + "').");
+        }
+        return true;
+    }
+
+    std::string ComponentRegistry::SerializeComponent(const ComponentTypeInfo& info, Entity entity) {
+        std::ostringstream out(std::ios::out | std::ios::binary);
+        if (info.Has(entity))
+            info.Serialize(out, entity);
+        return out.str();
+    }
+
+    bool ComponentRegistry::RegisterExtensionRaw(ExtensionComponentDesc desc, ExtensionComponentOps ops) {
+        RegisterAll(); // garante que os da engine entram ANTES (a ordem do registro e a dos formatos legados)
+        if (!ops.Has || !ops.AddDefault || !ops.Remove || !ops.Copy) {
+            PRISM_CORE_ERROR("ComponentRegistry: extensao '", desc.Source, "' registrou '", desc.Name, "' sem as operacoes do tipo.");
+            return false;
+        }
+        if (!ValidateExtension(desc, ops.TypeId))
+            return false;
+        ComponentTypeInfo info;
+        info.TypeId = ops.TypeId;
+        info.DisplayName = std::move(desc.Name);
+        info.Source = std::move(desc.Source);
+        info.Category = std::move(desc.Category);
+        info.Version = desc.Version < 1 ? 1u : desc.Version;
+        info.Has = std::move(ops.Has);
+        info.AddDefault = std::move(ops.AddDefault);
+        info.Remove = std::move(ops.Remove);
+        info.Copy = std::move(ops.Copy);
+        info.Serialize = std::move(desc.Serialize);
+        info.Deserialize = std::move(desc.Deserialize);
+        info.DrawInspector = std::move(desc.DrawInspector);
+        info.OnAfterAddInEditor = std::move(desc.OnAfterAddInEditor);
+        s_Registry.push_back(std::move(info));
+        return true;
+    }
+
+    bool ComponentRegistry::DeserializeComponent(const ComponentTypeInfo& info, Entity entity, const std::string& bytes) {
+        if (info.Has(entity))
+            info.Remove(entity);
+        std::istringstream in(bytes, std::ios::in | std::ios::binary);
+        s_CurrentBlockVersion = info.Version;
+        const bool ok = info.Deserialize(in, entity, 0);
+        if (!ok && info.Has(entity))
+            info.Remove(entity);
+        return ok;
+    }
 
     void ComponentRegistry::WriteString(std::ostream& out, const std::string& str) {
         uint32_t length = (uint32_t)str.size();
@@ -39,7 +112,23 @@ namespace Prism {
     static constexpr uint32_t kMaxComponentBlockBytes = 64u * 1024u * 1024u;
 
     void ComponentRegistry::WriteComponentBlocks(std::ostream& out, Entity entity) {
-        uint32_t count = 0;
+        // Blocos desconhecidos guardados no load (ver ReadComponentBlocks) voltam para o
+        // arquivo. Se um component de mesmo nome ja foi registrado e esta presente na
+        // entidade (ex: a extensao dona dele foi carregada depois), vale o registrado -
+        // gravar os dois produziria um bloco duplicado.
+        std::vector<const UnknownComponentsComponent::Block*> preserved;
+        if (entity.HasComponent<UnknownComponentsComponent>()) {
+            for (const auto& block : entity.GetComponent<UnknownComponentsComponent>().Blocks) {
+                bool shadowed = false;
+                for (auto& info : s_Registry) {
+                    if (info.DisplayName == block.Name && info.Has(entity)) { shadowed = true; break; }
+                }
+                if (!shadowed)
+                    preserved.push_back(&block);
+            }
+        }
+
+        uint32_t count = (uint32_t)preserved.size();
         for (auto& info : s_Registry)
             if (info.Has(entity))
                 count++;
@@ -58,6 +147,14 @@ namespace Prism {
             WriteRaw(out, (uint32_t)bytes.size());
             if (!bytes.empty())
                 out.write(bytes.data(), (std::streamsize)bytes.size());
+        }
+
+        for (const auto* block : preserved) {
+            WriteString(out, block->Name);
+            WriteRaw(out, block->Version);
+            WriteRaw(out, (uint32_t)block->Bytes.size());
+            if (!block->Bytes.empty())
+                out.write(block->Bytes.data(), (std::streamsize)block->Bytes.size());
         }
     }
 
@@ -105,7 +202,11 @@ namespace Prism {
             }
             if (!found) {
                 if (warnedUnknown.insert(name).second)
-                    PRISM_CORE_WARN("ComponentRegistry: component desconhecido '", name, "' ignorado (arquivo de uma versao mais nova da engine?).");
+                    PRISM_CORE_WARN("ComponentRegistry: component desconhecido '", name, "' (versao mais nova da engine, ou extensao nao carregada?). Os dados serao preservados e regravados ao salvar, mas nao tem efeito nesta sessao.");
+                // Preserva os bytes: sem isso, abrir e salvar o mapa apagaria o dado para sempre.
+                if (!entity.HasComponent<UnknownComponentsComponent>())
+                    entity.AddComponent<UnknownComponentsComponent>();
+                entity.GetComponent<UnknownComponentsComponent>().Blocks.push_back({ name, version, std::move(bytes) });
                 continue;
             }
             if (found->Has(entity)) {
@@ -153,6 +254,8 @@ namespace Prism {
 
     bool ComponentRegistry::ReadLegacyComponents(std::istream& in, Entity entity, uint32_t entityIndex, uint32_t sceneFormat) {
         for (auto& info : s_Registry) {
+            if (!info.Source.empty())
+                continue; // component de extensao: nao existia nos formatos legados (sem flag no arquivo)
             // O UIElementComponent (UI antiga, formato v19+) saiu da engine, mas ficava ENTRE o
             // Particle Emitter e a Camera no formato "flag + campos": pula o bloco dele.
             if (info.DisplayName == "Camera" && sceneFormat >= 19 && !SkipRemovedLegacyUIElement(in)) {
