@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 12; // v12: MaterialComponent ganhou ShaderParams; v11: ShaderPath; v10: campos de superficie (layout mudou)
+    constexpr uint32_t kNativeApiVersion = 13; // v13: desenho imediato (DrawContext); v12: MaterialComponent ganhou ShaderParams; v11: ShaderPath; v10: campos de superficie (layout mudou)
 
     struct NativeRayHit {
         bool Hit = false;
@@ -152,6 +152,17 @@ namespace Prism {
         bool (*CharacterIsGrounded)(Scene* scene, entt::entity entity);
         glm::vec3 (*CharacterGetVelocity)(Scene* scene, entt::entity entity);
         bool (*RaycastMasked)(Scene* scene, glm::vec3 origin, glm::vec3 direction, float maxDistance, entt::entity ignore, uint32_t layerMask, NativeRayHit* outHit);
+        // v13: desenho imediato (Renderer/DrawContext.h). 'duration' 0 = 1 quadro; cores "de tela" rgba.
+        void (*DrawLine)(glm::vec3 a, glm::vec3 b, glm::vec4 color, float duration, bool depthTest, float thickness);
+        void (*DrawBox)(const glm::mat4* model, glm::vec4 color, float duration, bool depthTest, float thickness);
+        void (*DrawBoxAABB)(glm::vec3 minimum, glm::vec3 maximum, glm::vec4 color, float duration, bool depthTest, float thickness);
+        void (*DrawSphere)(glm::vec3 center, float radius, glm::vec4 color, float duration, bool depthTest, float thickness);
+        void (*DrawArrow)(glm::vec3 from, glm::vec3 to, glm::vec4 color, float duration, bool depthTest, float thickness);
+        void (*DrawAxes)(const glm::mat4* model, float size, float duration, bool depthTest);
+        void (*DrawText3D)(glm::vec3 position, const char* text, glm::vec4 color, float heightMeters, float duration, bool depthTest);
+        void (*DrawLine2D)(glm::vec2 a, glm::vec2 b, glm::vec4 color, float duration, float thickness);
+        void (*DrawRect2D)(float x, float y, float width, float height, glm::vec4 color, bool filled, float duration);
+        void (*DrawText2D)(const char* text, float x, float y, glm::vec4 color, float fontSize, float duration);
     };
 
     // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
@@ -370,6 +381,20 @@ namespace Prism {
             Api().RaycastMasked(m_Entity.GetScene(), origin, direction, maxDistance, ignoreSelf ? m_Entity.GetHandle() : entt::entity(entt::null), layerMask, &hit);
             return hit;
         }
+
+        // --- Desenho imediato (API v13) --------------------------------------------------
+        // Acumulado e desenhado pela engine neste quadro (ou por 'duration' segundos). Mundo: Draw*;
+        // tela (pixels, origem no canto superior esquerdo): Draw*2D. Cores rgba.
+        void DrawLine(const glm::vec3& a, const glm::vec3& b, const glm::vec4& color, float duration = 0.0f, bool depthTest = true, float thickness = 2.0f) { Api().DrawLine(a, b, color, duration, depthTest, thickness); }
+        void DrawBox(const glm::mat4& model, const glm::vec4& color, float duration = 0.0f, bool depthTest = true, float thickness = 2.0f) { Api().DrawBox(&model, color, duration, depthTest, thickness); }
+        void DrawBoxAABB(const glm::vec3& minimum, const glm::vec3& maximum, const glm::vec4& color, float duration = 0.0f, bool depthTest = true, float thickness = 2.0f) { Api().DrawBoxAABB(minimum, maximum, color, duration, depthTest, thickness); }
+        void DrawSphere(const glm::vec3& center, float radius, const glm::vec4& color, float duration = 0.0f, bool depthTest = true, float thickness = 2.0f) { Api().DrawSphere(center, radius, color, duration, depthTest, thickness); }
+        void DrawArrow(const glm::vec3& from, const glm::vec3& to, const glm::vec4& color, float duration = 0.0f, bool depthTest = true, float thickness = 2.0f) { Api().DrawArrow(from, to, color, duration, depthTest, thickness); }
+        void DrawAxes(const glm::mat4& model, float size = 1.0f, float duration = 0.0f, bool depthTest = true) { Api().DrawAxes(&model, size, duration, depthTest); }
+        void DrawText3D(const glm::vec3& position, const std::string& text, const glm::vec4& color, float heightMeters = 0.25f, float duration = 0.0f, bool depthTest = true) { Api().DrawText3D(position, text.c_str(), color, heightMeters, duration, depthTest); }
+        void DrawLine2D(const glm::vec2& a, const glm::vec2& b, const glm::vec4& color, float duration = 0.0f, float thickness = 2.0f) { Api().DrawLine2D(a, b, color, duration, thickness); }
+        void DrawRect2D(float x, float y, float width, float height, const glm::vec4& color, bool filled = true, float duration = 0.0f) { Api().DrawRect2D(x, y, width, height, color, filled, duration); }
+        void DrawText2D(const std::string& text, float x, float y, const glm::vec4& color, float fontSize = 18.0f, float duration = 0.0f) { Api().DrawText2D(text.c_str(), x, y, color, fontSize, duration); }
 
         // Troca de cena: carrega o mapa (relativo a pasta de mapas) DEPOIS do frame atual.
         // Todos os scripts e entidades da cena atual sao destruidos.

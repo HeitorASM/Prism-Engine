@@ -12,6 +12,8 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include "../Particles/ParticleSystem.h"
+#include "../UI/UISystem.h"
+#include "DrawContext.h"
 #include "../Assets/ModelLoader.h"
 #include "../Animation/AnimationSystem.h"
 #include <glm/gtc/type_ptr.hpp>
@@ -74,6 +76,9 @@ namespace Prism {
     uint32_t Renderer::s_ParticleSSBO = 0;
     Ref<Shader> Renderer::s_UIShader = nullptr;
     uint32_t Renderer::s_UISSBO = 0;
+    Ref<Shader> Renderer::s_UIWorldShader = nullptr;
+    Ref<Shader> Renderer::s_DrawLineShader = nullptr;
+    uint32_t Renderer::s_DrawLineSSBO = 0;
     Ref<Shader> Renderer::s_GeometryPrePassShader = nullptr;
     Ref<Shader> Renderer::s_SSAOShader = nullptr;
     Ref<Shader> Renderer::s_SSAOBlurShader = nullptr;
@@ -190,6 +195,9 @@ namespace Prism {
         glCreateBuffers(1, &s_ParticleSSBO);
         s_UIShader = loadShader("UI", "ui.vert", "ui.frag");
         glCreateBuffers(1, &s_UISSBO);
+        s_UIWorldShader = loadShader("UIWorld", "ui_world.vert", "ui_world.frag");
+        s_DrawLineShader = loadShader("DrawLine", "draw_line.vert", "draw_line.frag");
+        glCreateBuffers(1, &s_DrawLineSSBO);
         if (!ShadowSystem::Init(shaderDir))
             PRISM_CORE_ERROR("Renderer: shaders de sombra invalidos - a cena sera desenhada sem sombras (corrija shadow_depth/shadow_point; o hot reload os recarrega).");
 
@@ -238,7 +246,7 @@ namespace Prism {
 
         // Cada Shader decide se seus arquivos mudaram; recarga que falha
         // mantem o programa antigo (ver Shader::ReloadIfChanged).
-        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_SkyShader,
+        for (Ref<Shader>* shader : { &s_BasicShader, &s_LineShader, &s_ParticleShader, &s_UIShader, &s_UIWorldShader, &s_DrawLineShader, &s_SkyShader,
                                      &s_GeometryPrePassShader, &s_SSAOShader, &s_SSAOBlurShader }) {
             if (*shader)
                 (*shader)->ReloadIfChanged();
@@ -263,6 +271,9 @@ namespace Prism {
         s_ParticleShader.reset();
         s_UIShader.reset();
         if (s_UISSBO) { glDeleteBuffers(1, &s_UISSBO); s_UISSBO = 0; }
+        s_UIWorldShader.reset();
+        s_DrawLineShader.reset();
+        if (s_DrawLineSSBO) { glDeleteBuffers(1, &s_DrawLineSSBO); s_DrawLineSSBO = 0; }
         s_SkyShader.reset();
         s_SkyTexture.reset();
         s_SkyLoadedPath.clear();
@@ -1857,6 +1868,14 @@ namespace Prism {
             DrawParticles(scene, view, projection);
         }
 
+        // UI em espaco de mundo e desenho imediato 3D (DrawContext): translucidos, depois das
+        // particulas, testando contra a profundidade ja desenhada (sem escrever nela).
+        {
+            PRISM_PROFILE_SCOPE("Renderer.WorldUI");
+            UISystem::RenderWorld(scene, view, projection, cameraWorldPos);
+            DrawContext::RenderWorld(view, projection);
+        }
+
         if (postProcess) {
             s_OutputHDR = false;
 
@@ -1917,6 +1936,79 @@ namespace Prism {
             glEnable(GL_DEPTH_TEST);
         if (cullWasEnabled)
             glEnable(GL_CULL_FACE);
+    }
+
+    void Renderer::DrawUIQuadsWorld(const UIQuad* quads, uint32_t count, const float* model, const float* viewProjection,
+                                    float canvasWidth, float canvasHeight, float pixelsPerMeter,
+                                    const Texture2D* texture, uint32_t fontTexture, bool depthTest) {
+        if (!s_UIWorldShader || s_UISSBO == 0 || count == 0 || canvasWidth <= 0.0f || canvasHeight <= 0.0f || pixelsPerMeter <= 0.0f)
+            return;
+
+        const bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        const bool depthWasEnabled = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        if (depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE); // visivel dos dois lados (de tras fica espelhado)
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
+        s_UIWorldShader->Bind();
+        s_UIWorldShader->SetMat4("u_Model", model);
+        s_UIWorldShader->SetMat4("u_ViewProjection", viewProjection);
+        s_UIWorldShader->SetFloat2("u_CanvasSize", canvasWidth, canvasHeight);
+        s_UIWorldShader->SetFloat("u_PixelsPerMeter", pixelsPerMeter);
+        s_UIWorldShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
+        if (texture && texture->IsValid())
+            texture->Bind(0);
+        if (fontTexture != 0)
+            glBindTextureUnit(1, fontTexture);
+
+        glNamedBufferData(s_UISSBO, (GLsizeiptr)(count * sizeof(UIQuad)), quads, GL_STREAM_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_UISSBO);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)count);
+
+        glBindVertexArray(0);
+        s_UIWorldShader->Unbind();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        if (depthWasEnabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        if (cullWasEnabled) glEnable(GL_CULL_FACE);
+    }
+
+    void Renderer::DrawLineSegments(const LineSegment* segments, uint32_t count, const float* viewProjection, bool depthTest) {
+        if (!s_DrawLineShader || s_DrawLineSSBO == 0 || count == 0)
+            return;
+
+        GLint viewport[4] = { 0, 0, 0, 0 };
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        if (viewport[2] <= 0 || viewport[3] <= 0)
+            return;
+
+        const bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        const bool depthWasEnabled = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        if (depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext());
+        s_DrawLineShader->Bind();
+        s_DrawLineShader->SetMat4("u_ViewProjection", viewProjection);
+        s_DrawLineShader->SetFloat2("u_ViewportSize", (float)viewport[2], (float)viewport[3]);
+        s_DrawLineShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
+
+        glNamedBufferData(s_DrawLineSSBO, (GLsizeiptr)(count * sizeof(LineSegment)), segments, GL_STREAM_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_DrawLineSSBO);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)count);
+
+        glBindVertexArray(0);
+        s_DrawLineShader->Unbind();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        if (depthWasEnabled) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        if (cullWasEnabled) glEnable(GL_CULL_FACE);
     }
 
     void Renderer::DrawParticles(Scene& scene, const float* view, const float* projection) {

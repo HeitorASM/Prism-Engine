@@ -12,6 +12,7 @@
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/NativeScripting.h"
 #include "../Extensions/ExtensionLoader.h"
+#include "../Renderer/DrawContext.h"
 #include "../Extensions/SystemRegistry.h"
 #include <GLFW/glfw3.h>
 
@@ -199,6 +200,7 @@ namespace Prism {
             // deste frame usar o ImGui.
             ProcessPendingLayerOps();
 
+            DrawContext::NewFrame(deltaTime); // remove os desenhos de 1 quadro do quadro anterior
             Profiler::BeginFrame();
             GpuTimer::BeginFrame(); // depois do Profiler: publica as zonas de GPU de quadros anteriores
 

@@ -70,6 +70,38 @@ namespace PrismEditor {
                 doc.Layer = layer;
             TrackContinuousEdit(m_Ctx, m_UIDocBeforeEdit, doc, title);
 
+            // --- UI em espaco de mundo ---
+            ImGui::Separator();
+            {
+                auto before = doc;
+                if (ImGui::Checkbox("Espaco de mundo (painel 3D)", &doc.WorldSpace))
+                    CommitComponentEdit(m_Ctx, before, doc, title);
+            }
+            if (doc.WorldSpace) {
+                float canvas[2] = { doc.CanvasSize.x, doc.CanvasSize.y };
+                if (ImGui::DragFloat2("Canvas (px)", canvas, 1.0f, 16.0f, 8192.0f, "%.0f")) {
+                    doc.CanvasSize = glm::vec2(std::max(canvas[0], 16.0f), std::max(canvas[1], 16.0f));
+                }
+                TrackContinuousEdit(m_Ctx, m_UIDocBeforeEdit, doc, title); // um por widget: ele olha o ULTIMO item
+                float pixelsPerMeter = doc.PixelsPerMeter;
+                if (ImGui::DragFloat("Pixels por metro", &pixelsPerMeter, 1.0f, 1.0f, 10000.0f, "%.0f"))
+                    doc.PixelsPerMeter = std::max(pixelsPerMeter, 1.0f);
+                TrackContinuousEdit(m_Ctx, m_UIDocBeforeEdit, doc, title);
+                ImGui::TextDisabled("Tamanho no mundo: %.2f x %.2f m (vezes a escala da entidade)",
+                    doc.CanvasSize.x / doc.PixelsPerMeter, doc.CanvasSize.y / doc.PixelsPerMeter);
+                {
+                    auto before = doc;
+                    if (ImGui::Checkbox("Sempre de frente para a camera", &doc.Billboard))
+                        CommitComponentEdit(m_Ctx, before, doc, title);
+                }
+                {
+                    auto before = doc;
+                    if (ImGui::Checkbox("Esconder atras de objetos (teste de profundidade)", &doc.DepthTest))
+                        CommitComponentEdit(m_Ctx, before, doc, title);
+                }
+                ImGui::TextDisabled("O painel aparece no mundo (face +Z da entidade). Botoes respondem ao mouse no Play.");
+            }
+
             ImGui::TextDisabled("Erros do arquivo aparecem no Console (arquivo:linha:coluna).");
         }
         if (!keepOpen)

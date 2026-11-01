@@ -792,6 +792,12 @@ namespace Prism {
                 WriteString(out, c.Path);
                 WriteRaw(out, c.Visible);
                 WriteRaw(out, c.Layer);
+                // v2: UI em espaco de mundo
+                WriteRaw(out, c.WorldSpace);
+                WriteRaw(out, c.CanvasSize);
+                WriteRaw(out, c.PixelsPerMeter);
+                WriteRaw(out, c.Billboard);
+                WriteRaw(out, c.DepthTest);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<UIDocumentComponent>();
@@ -799,10 +805,23 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (documento de UI da entidade ", entityIndex, ").");
                     return false;
                 }
+                if (ComponentRegistry::CurrentBlockVersion() >= 2) {
+                    if (!(ReadRaw(in, c.WorldSpace) && ReadRaw(in, c.CanvasSize) && ReadRaw(in, c.PixelsPerMeter) &&
+                          ReadRaw(in, c.Billboard) && ReadRaw(in, c.DepthTest))) {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (UI em espaco de mundo da entidade ", entityIndex, ").");
+                        return false;
+                    }
+                    // Nunca confia no dado: tamanho/escala absurdos (ou NaN) voltam ao padrao.
+                    if (!(c.CanvasSize.x >= 1.0f && c.CanvasSize.x <= 16384.0f && c.CanvasSize.y >= 1.0f && c.CanvasSize.y <= 16384.0f))
+                        c.CanvasSize = glm::vec2(800.0f, 600.0f);
+                    if (!(c.PixelsPerMeter >= 1.0f && c.PixelsPerMeter <= 100000.0f))
+                        c.PixelsPerMeter = 200.0f;
+                }
                 return true;
             }
         );
         s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
+        s_Registry.back().Version = 2;
 
         // --- JointComponent --------------------------------------------------------
         Register<JointComponent>(

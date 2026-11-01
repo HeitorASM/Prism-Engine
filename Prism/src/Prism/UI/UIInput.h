@@ -27,12 +27,15 @@ namespace Prism::Ui {
         Result Update(const Document& document, float mouseX, float mouseY, bool mouseDown, bool pointerFree);
 
         // Esquece apertado/hover (ao iniciar ou parar o Play, ou recarregar o documento).
-        void Reset() { m_Pressed = -1; m_PreviousDown = false; }
+        void Reset() { m_Pressed = -1; m_Hovered = -1; m_PreviousDown = false; }
 
         int Pressed() const { return m_Pressed; }
+        // Botao sob o mouse no ultimo Update (-1 = nenhum). Usado para desenhar o hover.
+        int Hovered() const { return m_Hovered; }
 
     private:
         int m_Pressed = -1;
+        int m_Hovered = -1;
         bool m_PreviousDown = false;
     };
 

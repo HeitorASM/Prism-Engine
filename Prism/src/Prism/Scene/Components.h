@@ -802,6 +802,16 @@ namespace Prism {
         bool Visible = true;
         int Layer = 0;         // ordem entre documentos: maior = por cima
 
+        // --- UI em ESPACO DE MUNDO (ver UI/UIWorld.h e docs/ui-prismui.md) ---
+        // Com WorldSpace, o documento deixa de ser desenhado na tela e vira um painel no mundo:
+        // o layout roda em CanvasSize pixels, o canvas fica centrado na origem da entidade (face +Z,
+        // dimensionado por PixelsPerMeter, e pela escala da entidade) e e visto pela camera.
+        bool WorldSpace = false;
+        glm::vec2 CanvasSize{ 800.0f, 600.0f };   // pixels do canvas (espaco do layout)
+        float PixelsPerMeter = 200.0f;            // 200 px = 1 m (800x600 = 4 x 3 m)
+        bool Billboard = false;                   // gira para olhar a camera
+        bool DepthTest = true;                    // objetos a frente escondem o painel
+
         ResetOnCopy<UIDocumentRuntime> Runtime;
 
         UIDocumentComponent() = default;

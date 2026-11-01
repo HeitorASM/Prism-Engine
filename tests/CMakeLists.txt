@@ -142,6 +142,30 @@ if(MSVC)
 endif()
 add_test(NAME ExtensionManifestTests COMMAND PrismExtensionManifestTests)
 
+# PrismDrawCommandTests: buffer de comandos do desenho imediato (Renderer/DrawCommands.h, so glm + std).
+add_executable(PrismDrawCommandTests
+    DrawCommandTests.cpp
+)
+target_include_directories(PrismDrawCommandTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismDrawCommandTests PRIVATE cxx_std_20)
+target_link_libraries(PrismDrawCommandTests PRIVATE glm)
+if(MSVC)
+    target_compile_options(PrismDrawCommandTests PRIVATE /utf-8)
+endif()
+add_test(NAME DrawCommandTests COMMAND PrismDrawCommandTests)
+
+# PrismUIWorldTests: matematica da UI em espaco de mundo (UI/UIWorld.h, so glm).
+add_executable(PrismUIWorldTests
+    UIWorldTests.cpp
+)
+target_include_directories(PrismUIWorldTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismUIWorldTests PRIVATE cxx_std_20)
+target_link_libraries(PrismUIWorldTests PRIVATE glm)
+if(MSVC)
+    target_compile_options(PrismUIWorldTests PRIVATE /utf-8)
+endif()
+add_test(NAME UIWorldTests COMMAND PrismUIWorldTests)
+
 # PrismSceneTests: serializacao de cena, ComponentRegistry e PrefabSyncer. Linka a
 # biblioteca Prism inteira (Scene depende de Fisica/Audio/Scripts), entao so existe
 # num build completo. Sem janela nem GPU.
