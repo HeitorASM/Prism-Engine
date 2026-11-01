@@ -95,8 +95,11 @@ namespace Prism {
     }
 
     void ComponentRegistry::RegisterAll() {
-        if (!s_Registry.empty())
+        // Flag propria (nao "registro vazio"): uma extensao pode registrar ANTES do primeiro
+        // RegisterAll(), e os components da engine precisam entrar mesmo assim.
+        if (s_BuiltInsRegistered)
             return; // idempotente - ver comentario em RegisterAll (ComponentRegistry.h)
+        s_BuiltInsRegistered = true;
 
         // --- MeshRendererComponent ------------------------------------------
         // ModelAsset e gravado POR ULTIMO, depois de Mesh/Color - um arquivo

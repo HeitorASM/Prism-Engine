@@ -36,6 +36,8 @@
 #include "Prism/Scene/MaterialSerializer.h"
 #include "Prism/Scripting/ScriptEngine.h"
 #include "Prism/Scripting/NativeScripting.h"
+#include "Prism/Extensions/SystemRegistry.h"
+#include "Prism/Extensions/ExtensionLoader.h"
 #include "Prism/Particles/ParticleSystem.h"
 #include "Prism/Animation/AnimationSystem.h"
 #include "Prism/UI/UISystem.h"

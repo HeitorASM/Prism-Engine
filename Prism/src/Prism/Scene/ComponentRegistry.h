@@ -48,6 +48,7 @@
 #include <sstream>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace Prism {
 
@@ -134,6 +135,47 @@ namespace Prism {
         // Legado: versao do layout deste component dentro de um arquivo antigo de
         // formato equivalente 'sceneFormat'. nullptr = sempre 1.
         std::function<uint32_t(uint32_t sceneFormat)> LegacyVersion = nullptr;
+
+        // --- Extensoes (ver ExtensionComponentDesc abaixo) ---------------------
+        // Nome da extensao dona; "" = component da propria engine. Components de extensao ficam
+        // FORA dos formatos legados (flag + campos): nao existiam quando esses arquivos foram feitos.
+        std::string Source;
+        // Grupo no menu "Add Component" (so extensoes; "" = "Extensoes").
+        std::string Category;
+        // Desenha o inspetor do component no painel Propriedades (ImGui). nullptr = sem inspetor.
+        // Edicoes feitas por aqui entram no Undo/Redo automaticamente (o painel compara os bytes
+        // serializados antes/depois do gesto).
+        std::function<void(Entity)> DrawInspector = nullptr;
+        // Identidade do tipo C++ (entt::type_hash): impede registrar o mesmo tipo duas vezes.
+        uint32_t TypeId = 0;
+    };
+
+    // Tudo que uma extensao informa para registrar um component proprio.
+    struct ExtensionComponentDesc {
+        // Nome do component: e a CHAVE gravada nos arquivos (mapa/prefab). Nao renomeie depois de
+        // publicar: renomear faz os dados antigos virarem "component desconhecido".
+        std::string Name;
+        std::string Source;              // nome da extensao (obrigatorio)
+        std::string Category;            // grupo no menu Add Component
+        uint32_t Version = 1;            // suba em 1 ao acrescentar campos NO FIM do bloco (ver ComponentTypeInfo::Version)
+
+        // Obrigatorios. Serialize escreve so os campos (sem flag de presenca); Deserialize faz o
+        // AddComponent<T>() dentro e devolve false se os dados forem invalidos. Use as mesmas
+        // WriteRaw/ReadRaw/WriteString/ReadString do ComponentRegistry.
+        std::function<void(std::ostream&, Entity)> Serialize;
+        std::function<bool(std::istream&, Entity, uint32_t)> Deserialize;
+
+        std::function<void(Entity)> DrawInspector;                  // opcional
+        std::function<void(Entity, Scene&)> OnAfterAddInEditor;     // opcional
+    };
+
+    // Operacoes type-erased sobre o tipo C++ do component (montadas por RegisterExtension<T>).
+    struct ExtensionComponentOps {
+        uint32_t TypeId = 0; // entt::type_hash<T>
+        std::function<bool(Entity)> Has;
+        std::function<void(Entity)> AddDefault;
+        std::function<void(Entity)> Remove;
+        std::function<void(Entity, Entity)> Copy;
     };
 
     class ComponentRegistry {
@@ -146,6 +188,38 @@ namespace Prism {
         static void RegisterAll();
 
         static const std::vector<ComponentTypeInfo>& GetAll() { return s_Registry; }
+
+        // Registra um component de EXTENSAO (ver ExtensionComponentDesc). Chame no carregamento da
+        // extensao, ANTES de abrir qualquer cena (um component gravado em arquivo e lido so se ja
+        // estiver registrado). Devolve false, com o motivo no log, se o nome estiver vazio/usado, o
+        // tipo ja estiver registrado, ou faltar Serialize/Deserialize/Source.
+        // T precisa ser copiavel e ter construtor default (o mesmo contrato dos components da engine).
+        template<typename T>
+        static bool RegisterExtension(ExtensionComponentDesc desc) {
+            static_assert(std::is_default_constructible_v<T>, "O component de extensao precisa de construtor default.");
+            static_assert(std::is_copy_constructible_v<T>, "O component de extensao precisa ser copiavel.");
+            ExtensionComponentOps ops;
+            ops.TypeId = (uint32_t)entt::type_hash<T>::value();
+            ops.Has = [](Entity e) { return e.HasComponent<T>(); };
+            ops.AddDefault = [](Entity e) { e.AddComponent<T>(); };
+            ops.Remove = [](Entity e) { e.RemoveComponent<T>(); };
+            ops.Copy = [](Entity source, Entity destination) { destination.AddComponent<T>(source.GetComponent<T>()); };
+            return RegisterExtensionRaw(std::move(desc), std::move(ops));
+        }
+
+        // Versao sem template: as operacoes sobre o tipo vem prontas em 'ops'. E o que o carregador de
+        // extensoes (dll/so) chama, ja que a dll nao enxerga os simbolos da engine (ver ExtensionAPI.h).
+        static bool RegisterExtensionRaw(ExtensionComponentDesc desc, ExtensionComponentOps ops);
+
+        // nullptr se nao existe. Valido ate o proximo registro (o vetor pode crescer).
+        static const ComponentTypeInfo* FindByName(const std::string& name);
+
+        // Os bytes do component no formato de bloco (so os campos). Usados pelo Undo/Redo generico do
+        // editor para guardar/restaurar components de extensao sem conhecer o tipo C++.
+        static std::string SerializeComponent(const ComponentTypeInfo& info, Entity entity);
+        // Substitui o component (remove o atual, se houver, e le 'bytes'). false = bytes invalidos
+        // (a entidade fica SEM o component).
+        static bool DeserializeComponent(const ComponentTypeInfo& info, Entity entity, const std::string& bytes);
 
         // --- helpers de escrita/leitura binaria, expostos aqui para os
         // blocos de registro em ComponentRegistration.cpp poderem usar
@@ -194,6 +268,9 @@ namespace Prism {
 
     private:
         static uint32_t s_CurrentBlockVersion;
+        static bool s_BuiltInsRegistered;
+
+        static bool ValidateExtension(const ExtensionComponentDesc& desc, uint32_t typeId);
 
         // Chamado por RegisterAll() uma vez por tipo de Component - ver
         // ComponentRegistration.cpp para todos os usos.
@@ -205,6 +282,7 @@ namespace Prism {
             std::function<void(Entity, Scene&)> onAfterAddInEditor = nullptr)
         {
             ComponentTypeInfo info;
+            info.TypeId = (uint32_t)entt::type_hash<T>::value();
             info.DisplayName = std::move(displayName);
             info.Has = [](Entity e) { return e.HasComponent<T>(); };
             info.AddDefault = [](Entity e) { e.AddComponent<T>(); };

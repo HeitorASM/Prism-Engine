@@ -74,6 +74,8 @@ namespace PrismEditor {
         void DrawAnimatorUI();
         void DrawAnimatorGraphUI(Prism::AnimatorComponent& animator, const std::vector<std::string>& clips);
         void DrawEnvironmentUI();
+        // Components de extensao (PropertiesPanel_Extensions.cpp).
+        void DrawExtensionComponentsUI();
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e
@@ -172,6 +174,16 @@ namespace PrismEditor {
         Prism::NativeScriptComponent m_NativeScriptBeforeEdit;
         Prism::ParticleEmitterComponent m_ParticleBeforeEdit;
         Prism::UIDocumentComponent m_UIDocBeforeEdit;
+
+        // Captura de Undo para components de extensao (que o painel nao conhece
+        // por tipo): um slot, comparado por bytes serializados a cada frame.
+        struct ExtensionEditSlot {
+            Prism::Entity Entity;
+            std::string Name;
+            std::string Before;
+            bool Dragging = false;
+            bool Valid = false;
+        } m_ExtEdit;
 
         // Cache das variaveis publicas (tabela `Properties`) do script
         // selecionado: relido so quando o arquivo ou o caminho mudam.

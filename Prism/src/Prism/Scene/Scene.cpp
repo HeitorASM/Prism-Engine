@@ -7,6 +7,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Animation/AnimationSystem.h"
 #include "SceneSerializer.h"
+#include "../Extensions/SystemRegistry.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
@@ -592,6 +593,13 @@ namespace Prism {
             AnimationSystem::Update(*this, deltaTime, false);
         }
 
+        // Sistemas registrados (SystemRegistry, ex: de extensoes): depois de tudo que a engine ja
+        // faz no quadro e ANTES do audio, que assim aplica o que eles mudaram.
+        {
+            PRISM_PROFILE_SCOPE("Scene.Extensions");
+            SystemRegistry::Update(*this, deltaTime);
+        }
+
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
         AudioEngine::OnSceneUpdate(*this);
@@ -614,6 +622,8 @@ namespace Prism {
             if (m_Registry.valid(entityHandle))
                 NativeScripting::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
         }
+
+        SystemRegistry::FixedUpdate(*this, fixedDeltaTime);
     }
 
     void Scene::UpdateRaycastComponents() {
@@ -729,12 +739,18 @@ namespace Prism {
             if (m_Registry.valid(entityHandle))
                 NativeScripting::LoadScript(Entity(entityHandle, this));
         }
+
+        // Sistemas registrados (SystemRegistry): por ultimo, com a fisica e os scripts ja prontos.
+        SystemRegistry::SceneStart(*this);
     }
 
     void Scene::OnScriptsStop() {
         if (!m_IsRunning)
             return; // idempotente
         m_IsRunning = false;
+
+        // Sistemas registrados primeiro: ainda enxergam scripts e fisica inteiros ao se despedir.
+        SystemRegistry::SceneStop(*this);
 
         auto view = m_Registry.view<ScriptComponent>();
         for (auto entityHandle : view)

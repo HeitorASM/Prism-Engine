@@ -129,6 +129,19 @@ if(MSVC)
 endif()
 add_test(NAME PhysicsLayersTests COMMAND PrismPhysicsLayersTests)
 
+# PrismExtensionManifestTests: manifesto extension.ini e ordem de carga por dependencia
+# (Extensions/ExtensionManifest.*, so std).
+add_executable(PrismExtensionManifestTests
+    ExtensionManifestTests.cpp
+    ${PRISM_SRC}/Prism/Extensions/ExtensionManifest.cpp
+)
+target_include_directories(PrismExtensionManifestTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismExtensionManifestTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismExtensionManifestTests PRIVATE /utf-8)
+endif()
+add_test(NAME ExtensionManifestTests COMMAND PrismExtensionManifestTests)
+
 # PrismSceneTests: serializacao de cena, ComponentRegistry e PrefabSyncer. Linka a
 # biblioteca Prism inteira (Scene depende de Fisica/Audio/Scripts), entao so existe
 # num build completo. Sem janela nem GPU.

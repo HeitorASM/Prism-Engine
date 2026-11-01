@@ -11,6 +11,8 @@
 #include <PrismVersion.h>
 #include "../Scripting/ScriptEngine.h"
 #include "../Scripting/NativeScripting.h"
+#include "../Extensions/ExtensionLoader.h"
+#include "../Extensions/SystemRegistry.h"
 #include <GLFW/glfw3.h>
 
 namespace Prism {
@@ -62,6 +64,8 @@ namespace Prism {
         // o resto do shutdown, ele nao chame codigo de uma Layer morta.
         m_CloseRequestHandler = nullptr;
 
+        ExtensionLoader::Shutdown(); // extensoes podem usar scripts/Lua/audio no Shutdown
+        SystemRegistry::Shutdown();
         NativeScripting::Shutdown(); // antes da VM Lua: instancias C++ podem usar a API
         ScriptEngine::Shutdown();
         AudioEngine::Shutdown();

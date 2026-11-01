@@ -12,6 +12,7 @@
 #include <ImGuizmo.h>
 #include <GLFW/glfw3.h>
 #include <Prism/Core/Paths.h>
+#include <Prism/Extensions/ExtensionLoader.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -30,6 +31,12 @@ namespace PrismEditor {
     void EditorLayer::OnAttach() {
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
             Prism::Project::GetActive()->GetConfig().Name);
+
+        // Extensoes (components/sistemas, ver docs/extensoes.md): ANTES de qualquer mapa abrir.
+        // Trocar de projeto na mesma sessao nao descarrega as ja carregadas; as novas do outro
+        // projeto so entram ao reiniciar o editor.
+        Prism::ExtensionLoader::LoadInstalled(true);
+        Prism::ExtensionLoader::LoadProject(*Prism::Project::GetActive(), true);
 
         // Liga os ponteiros do contexto compartilhado aos paineis que outros
         // paineis precisam chamar (ver EditorContext.h).
