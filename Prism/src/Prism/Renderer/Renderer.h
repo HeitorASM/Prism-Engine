@@ -459,6 +459,13 @@ namespace Prism {
         static bool IsInstancingEnabled();
 
     private:
+        // --- Estagios do DrawScene (implementados em Renderer.cpp) ---
+        // Casters de sombra da cena (so trabalha se alguma luz projeta sombra).
+        static void CollectShadowCasters(class Scene& scene, const std::vector<GPULight>& lights, std::vector<ShadowCaster>& out);
+        // SSAO completo (geometria + calculo + blur), restaurando framebuffer/viewport a cada sub-passe.
+        static SSAO* RenderSSAOStage(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height,
+                                     const std::vector<VisibleMesh>& visible, uint32_t previousFramebuffer, const int* previousViewport);
+
         // Estado por QUADRO / por MATERIAL / por OBJETO do shader principal (DrawMesh envia os tres;
         // DrawScene envia o primeiro 1x e os outros so quando mudam). O shader precisa estar ligado.
         static void BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao);
