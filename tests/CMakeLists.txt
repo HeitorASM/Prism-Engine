@@ -107,6 +107,17 @@ if(MSVC)
 endif()
 add_test(NAME LightSelectionTests COMMAND PrismLightSelectionTests)
 
+# PrismShadowCacheTests: assinatura e cache das camadas de sombra (Renderer/ShadowCache.h, so std).
+add_executable(PrismShadowCacheTests
+    ShadowCacheTests.cpp
+)
+target_include_directories(PrismShadowCacheTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismShadowCacheTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismShadowCacheTests PRIVATE /utf-8)
+endif()
+add_test(NAME ShadowCacheTests COMMAND PrismShadowCacheTests)
+
 # PrismPhysicsLayersTests: camadas de fisica e matriz de colisao (Physics/PhysicsLayers.h, so std).
 add_executable(PrismPhysicsLayersTests
     PhysicsLayersTests.cpp

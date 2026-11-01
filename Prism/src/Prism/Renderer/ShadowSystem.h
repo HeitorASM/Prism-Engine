@@ -76,6 +76,13 @@ namespace Prism {
         bool Any() const { return CascadeCount > 0 || SpotCount > 0 || PointCount > 0; }
     };
 
+    // Camadas de sombra spot/point do ULTIMO Render(): reaproveitadas do quadro anterior
+    // (ver ShadowCache.h) x redesenhadas. Uma point = 6 camadas (faces).
+    struct ShadowCacheStats {
+        uint32_t Reused = 0;
+        uint32_t Redrawn = 0;
+    };
+
     class ShadowSystem {
     public:
         static bool Init(const std::filesystem::path& shaderDir);
@@ -93,6 +100,12 @@ namespace Prism {
 
         // Estado "sem sombras" (CascadeCount/SpotCount/PointCount = 0).
         static void UploadNone(const Shader& shader);
+
+        // Cache das sombras spot/point (ver ShadowCache.h). Ligado por padrao; desligue para
+        // comparar o custo (GPU.Shadows) ou se suspeitar de uma sombra desatualizada.
+        static void SetCacheEnabled(bool enabled);
+        static bool IsCacheEnabled();
+        static ShadowCacheStats GetCacheStats();
     };
 
 }
