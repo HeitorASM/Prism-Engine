@@ -196,7 +196,7 @@ namespace Prism {
 
         for (auto handle : emitters) {
             const std::vector<Particle>* particles = ParticleSystem::GetParticles(scene, handle);
-            if (!particles || particles->empty())
+            if (!particles || particles->empty() || !scene.IsEntityVisible(handle))
                 continue;
             const auto& emitter = emitters.get<ParticleEmitterComponent>(handle);
 

@@ -1050,6 +1050,8 @@ namespace Prism {
         auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
         for (auto entityHandle : meshRendererView) {
             const MeshRendererComponent& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
+            if (!scene.IsEntityVisible(entityHandle))
+                continue; // escondida (ela ou um ancestral) - ver HiddenComponent
             const glm::mat4 model = scene.GetWorldTransform(Entity(entityHandle, &scene));
             Mesh* mesh = ResolveMesh(meshRenderer); // primitiva OU modelo importado, ver comentario em ResolveMesh
             switch (TestVisibility(meshRenderer, mesh, model, frustum, cullMask)) {
@@ -1077,6 +1079,8 @@ namespace Prism {
         auto levelView = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
         for (auto entityHandle : levelView) {
             const LevelMeshComponent& level = levelView.get<LevelMeshComponent>(entityHandle);
+            if (!scene.IsEntityVisible(entityHandle))
+                continue;
             if (!Culling::LayerVisible(level.Layers, cullMask)) { s_CullStats.LayerHidden++; continue; }
             const LevelMeshGpu& gpu = ResolveLevelMesh(level);
             if (gpu.Parts.empty())
@@ -1348,6 +1352,8 @@ namespace Prism {
         auto casterView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
         for (auto handle : casterView) {
             const MeshRendererComponent& casterRenderer = casterView.get<MeshRendererComponent>(handle);
+            if (!casterRenderer.CastShadows || !scene.IsEntityVisible(handle))
+                continue;
             Mesh* geometry = ResolveMesh(casterRenderer);
             if (!geometry) continue;
             // Translucidos nao projetam sombra (cairia solida); recortes projetam como solidos.
@@ -1370,7 +1376,7 @@ namespace Prism {
         auto levelCasters = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
         for (auto handle : levelCasters) {
             const LevelMeshComponent& level = levelCasters.get<LevelMeshComponent>(handle);
-            if (!level.CastShadows)
+            if (!level.CastShadows || !scene.IsEntityVisible(handle))
                 continue;
             const LevelMeshGpu& gpu = ResolveLevelMesh(level);
             if (gpu.Parts.empty())

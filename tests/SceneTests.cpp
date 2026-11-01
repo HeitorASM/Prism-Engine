@@ -545,6 +545,63 @@ static bool NearlyEqual(const glm::mat4& a, const glm::mat4& b) {
     return true;
 }
 
+// Visibilidade (HiddenComponent): herdada pelos filhos, caminho rapido sem escondidos,
+// sobrevive a Duplicar/serializacao, e a flag CastShadows do MeshRenderer le blocos antigos.
+static void TestVisibility() {
+    Scene scene("Visibility");
+    Entity root = scene.CreateEntity("Raiz");
+    Entity mid = scene.CreateEntity("Meio");
+    Entity leaf = scene.CreateEntity("Folha");
+    Entity other = scene.CreateEntity("Outro");
+    scene.SetParent(mid, root);
+    scene.SetParent(leaf, mid);
+
+    CHECK(scene.IsEntityVisible(leaf.GetHandle())); // nada escondido: caminho rapido
+
+    scene.SetEntityHidden(mid.GetHandle(), true);
+    CHECK(scene.IsEntityHiddenSelf(mid.GetHandle()));
+    CHECK(!scene.IsEntityVisible(mid.GetHandle()));
+    CHECK(!scene.IsEntityVisible(leaf.GetHandle()));     // herda do ancestral
+    CHECK(!scene.IsEntityHiddenSelf(leaf.GetHandle()));  // mas nao esta marcada
+    CHECK(scene.IsEntityVisible(root.GetHandle()));      // o pai continua visivel
+    CHECK(scene.IsEntityVisible(other.GetHandle()));
+
+    scene.SetEntityHidden(mid.GetHandle(), false);
+    CHECK(scene.IsEntityVisible(leaf.GetHandle()));
+
+    // Copy (Duplicar/Prefab) preserva o estado
+    scene.SetEntityHidden(other.GetHandle(), true);
+    const ComponentTypeInfo* info = FindInfo("Hidden");
+    CHECK(info != nullptr);
+    if (info) {
+        Entity copy = scene.CreateEntity("Copia");
+        info->Copy(other, copy);
+        CHECK(!scene.IsEntityVisible(copy.GetHandle()));
+    }
+
+    // MeshRenderer: bloco v2 (sem CastShadows) continua projetando sombra
+    const ComponentTypeInfo* mesh = FindInfo("Mesh Renderer");
+    CHECK(mesh && mesh->Version >= 3);
+    if (mesh) {
+        Entity src = scene.CreateEntity("m");
+        src.AddComponent<MeshRendererComponent>().CastShadows = false;
+        std::ostringstream out(std::ios::out | std::ios::binary);
+        mesh->Serialize(out, src);
+
+        Entity dst = scene.CreateEntity("d");
+        std::istringstream in(MakeBlockStream("Mesh Renderer", mesh->Version, out.str()), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+        CHECK(dst.HasComponent<MeshRendererComponent>() && !dst.GetComponent<MeshRendererComponent>().CastShadows);
+
+        std::string bytes = out.str();
+        bytes.resize(bytes.size() - 1); // v2: sem o byte final de CastShadows
+        Entity old = scene.CreateEntity("o");
+        std::istringstream inOld(MakeBlockStream("Mesh Renderer", 2, bytes), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(inOld, old, 0));
+        CHECK(old.HasComponent<MeshRendererComponent>() && old.GetComponent<MeshRendererComponent>().CastShadows);
+    }
+}
+
 static void TestWorldTransformScope() {
     Scene scene("WorldCache");
     std::vector<Entity> chain;
@@ -805,6 +862,7 @@ int main() {
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
     TestWorldTransformScope();
+    TestVisibility();
     TestSystemRegistry();
     TestExtensionLoader(dir);
     TestExtensionComponents(); // por ultimo: registra tipos no registro global

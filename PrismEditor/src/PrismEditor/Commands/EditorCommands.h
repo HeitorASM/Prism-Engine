@@ -1175,6 +1175,26 @@ namespace PrismEditor {
         Prism::Entity m_NewParent;
     };
 
+    // Esconde/mostra uma entidade (HiddenComponent) - o "olho" da Hierarquia. Os filhos herdam.
+    class SetHiddenCommand : public Prism::Command {
+    public:
+        SetHiddenCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity entity, bool hidden)
+            : m_Scene(scene), m_Entity(entity), m_Hidden(hidden) {}
+
+        void Execute() override { Apply(m_Hidden); }
+        void Undo() override { Apply(!m_Hidden); }
+        std::string GetName() const override { return m_Hidden ? "Esconder Entidade" : "Mostrar Entidade"; }
+
+    private:
+        void Apply(bool hidden) {
+            if (m_Scene && m_Entity.IsValid())
+                m_Scene->SetEntityHidden(m_Entity.GetHandle(), hidden);
+        }
+        Prism::Ref<Prism::Scene> m_Scene;
+        Prism::Entity m_Entity;
+        bool m_Hidden;
+    };
+
     // --- Add/Remove Component genericos -------------------------------
     // Um unico par de templates cobre os quatro components "opcionais"
     // novos (Light, Collider, RigidBody, Script) em vez de escrever a

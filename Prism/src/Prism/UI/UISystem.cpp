@@ -461,7 +461,7 @@ namespace Prism {
                 if (component.WorldSpace)
                     continue; // painel de mundo: desenhado por RenderWorld / UpdateWorldInteraction
                 EnsureDocument(component);
-                if (!component.Visible || !component.Runtime.Ptr || !component.Runtime.Ptr->HasDocument)
+                if (!component.Visible || !scene.IsEntityVisible(handle) || !component.Runtime.Ptr || !component.Runtime.Ptr->HasDocument)
                     continue;
                 Ui::LayoutDocument(component.Runtime.Ptr->Doc, layoutWidth, layoutHeight, measure);
                 docs.push_back({ handle, &component, component.Runtime.Ptr.get() });
@@ -530,7 +530,7 @@ namespace Prism {
             const EngineMeasure measure;
             for (entt::entity handle : docView) {
                 auto& c = registry.get<UIDocumentComponent>(handle);
-                if (!c.WorldSpace || !c.Visible)
+                if (!c.WorldSpace || !c.Visible || !scene.IsEntityVisible(handle))
                     continue;
                 EnsureDocument(c);
                 if (!c.Runtime.Ptr || !c.Runtime.Ptr->HasDocument)

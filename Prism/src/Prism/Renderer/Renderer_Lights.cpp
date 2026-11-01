@@ -54,6 +54,8 @@ namespace Prism {
         auto view = scene.GetRegistry().view<TransformComponent, LightComponent>();
         for (auto entityHandle : view) {
             const auto& light = view.get<LightComponent>(entityHandle);
+            if (!scene.IsEntityVisible(entityHandle))
+                continue; // luz escondida nao ilumina
             glm::mat4 worldTransform = scene.GetWorldTransform(Entity(entityHandle, &scene));
 
             GPULight gpuLight;

@@ -312,6 +312,36 @@ namespace Prism {
         return IsAncestorOf(possibleAncestor, rel->Parent);
     }
 
+    bool Scene::IsEntityVisible(entt::entity entity) const {
+        // No registry const, storage<T>() devolve ponteiro (nullptr se o tipo nunca foi usado).
+        const auto* hiddenStorage = m_Registry.storage<HiddenComponent>();
+        if (!hiddenStorage || hiddenStorage->empty())
+            return true;
+        // Limite de profundidade defensivo contra uma hierarquia corrompida com ciclo.
+        for (int guard = 0; entity != entt::null && guard < 4096; ++guard) {
+            if (!m_Registry.valid(entity))
+                return true;
+            if (m_Registry.all_of<HiddenComponent>(entity))
+                return false;
+            const auto* rel = m_Registry.try_get<RelationshipComponent>(entity);
+            entity = rel ? rel->Parent : entt::null;
+        }
+        return true;
+    }
+
+    bool Scene::IsEntityHiddenSelf(entt::entity entity) const {
+        return m_Registry.valid(entity) && m_Registry.all_of<HiddenComponent>(entity);
+    }
+
+    void Scene::SetEntityHidden(entt::entity entity, bool hidden) {
+        if (!m_Registry.valid(entity))
+            return;
+        if (hidden)
+            m_Registry.emplace_or_replace<HiddenComponent>(entity);
+        else
+            m_Registry.remove<HiddenComponent>(entity);
+    }
+
     bool Scene::SetParent(Entity child, Entity newParent) {
         entt::entity childHandle = child.GetHandle();
         entt::entity newParentHandle = newParent ? newParent.GetHandle() : entt::null;
@@ -441,6 +471,8 @@ namespace Prism {
 
         auto view = m_Registry.view<MeshRendererComponent>();
         for (auto handle : view) {
+            if (!IsEntityVisible(handle))
+                continue; // escondida nao e clicavel nem ocluir UI de mundo
             Entity entity(handle, this);
             glm::mat4 world = GetWorldTransform(entity);
             glm::mat4 inverseWorld = glm::inverse(world);
@@ -496,6 +528,8 @@ namespace Prism {
         // dentro de salas/escadas).
         auto levelView = m_Registry.view<LevelMeshComponent>();
         for (auto handle : levelView) {
+            if (!IsEntityVisible(handle))
+                continue;
             const glm::mat4 world = GetWorldTransform(Entity(handle, this));
             const glm::mat4 inverseWorld = glm::inverse(world);
             const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(ray.Origin, 1.0f));

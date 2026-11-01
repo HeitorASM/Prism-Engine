@@ -30,6 +30,14 @@
 
 namespace Prism {
 
+    // Marca uma entidade como ESCONDIDA (estilo Godot: o "olho" da Hierarquia). So existe
+    // quando escondida - visivel e a ausencia do component, entao nao custa nada no caso comum.
+    // Esconde a entidade E todos os descendentes (ver Scene::IsEntityVisible): malhas, luzes,
+    // particulas, documentos de UI e sombras. Colisao, fisica e scripts continuam funcionando.
+    struct HiddenComponent {
+        uint8_t Reserved = 0; // evita tipo vazio; sem uso
+    };
+
     // Todo Entity criada por Scene::CreateEntity ja recebe este component -
     // e o que da um nome legivel a entidade na Hierarchy panel do editor.
     struct TagComponent {
@@ -104,6 +112,10 @@ namespace Prism {
     // continuar simples (so zerar ModelAsset), sem perder/recriar o
     // component inteiro.
     struct MeshRendererComponent {
+        // Este objeto projeta sombra? (desligar economiza o desenho no mapa de sombras.)
+        // Independente de Layers: o objeto escondido de uma camera ainda pode projetar sombra.
+        bool CastShadows = true;
+
         PrimitiveMesh Mesh = PrimitiveMesh::Cube;
         glm::vec3 Color = { 0.85f, 0.55f, 0.2f };
         AssetID ModelAsset; // ver comentario acima - invalido = usa 'Mesh' (primitiva)

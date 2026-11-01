@@ -116,6 +116,7 @@ namespace Prism {
                 WriteRaw(out, c.ModelAsset); // AssetID e so um uint64_t (trivialmente copiavel) - mesmo padrao de MaterialComponent::LinkedAsset
                 WriteRaw(out, c.SubmeshIndex); // v14
                 WriteRaw(out, c.Layers);       // v2 do bloco
+                WriteRaw(out, (uint8_t)(c.CastShadows ? 1 : 0)); // v3 do bloco
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<MeshRendererComponent>();
@@ -157,10 +158,16 @@ namespace Prism {
                 // Bloco v2: camadas de visibilidade (blocos v1 e arquivos antigos: camada 1).
                 if (ComponentRegistry::CurrentBlockVersion() >= 2 && !ReadRaw(in, c.Layers))
                     c.Layers = Culling::kDefaultLayer;
+                // Bloco v3: CastShadows (blocos antigos: projeta sombra, como sempre foi).
+                if (ComponentRegistry::CurrentBlockVersion() >= 3) {
+                    uint8_t cast = 1;
+                    if (ReadRaw(in, cast))
+                        c.CastShadows = cast != 0;
+                }
                 return true;
             }
         );
-        s_Registry.back().Version = 2;
+        s_Registry.back().Version = 3;
 
         // --- MaterialComponent -------------------------------------------------
         // Campos (ver WriteMaterialBody): v1 base, v2 superficie, v3 shader, v4 parametros do shader.
@@ -216,6 +223,23 @@ namespace Prism {
             }
         );
         s_Registry.back().Version = 1;
+
+        // --- HiddenComponent (so existe em entidades escondidas) --------------
+        Register<HiddenComponent>(
+            "Hidden",
+            [](std::ostream& out, Entity e) {
+                WriteRaw(out, e.GetComponent<HiddenComponent>().Reserved);
+            },
+            [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
+                auto& c = e.AddComponent<HiddenComponent>();
+                if (!ReadRaw(in, c.Reserved)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (hidden da entidade ", entityIndex, ").");
+                    return false;
+                }
+                return true;
+            }
+        );
+        s_Registry.back().AddedInSceneFormat = 22; // so existe no formato em blocos (v21+)
 
         // --- LightComponent --------------------------------------------------
         Register<LightComponent>(

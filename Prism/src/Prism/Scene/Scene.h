@@ -164,6 +164,12 @@ namespace Prism {
         // mesmo de chamar SetParent.
         bool IsAncestorOf(entt::entity possibleAncestor, entt::entity entity);
 
+        bool IsEntityVisible(entt::entity entity) const;
+
+        void SetEntityHidden(entt::entity entity, bool hidden);
+
+        bool IsEntityHiddenSelf(entt::entity entity) const;
+
         // Testa 'ray' contra a bounding box (AABB) VISUAL de toda entidade
         // da cena que tenha MeshRendererComponent, transformada pela world
         // transform de cada uma (ver GetWorldTransform acima - cobre

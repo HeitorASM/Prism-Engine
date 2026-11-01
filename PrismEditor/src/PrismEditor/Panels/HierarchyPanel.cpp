@@ -118,9 +118,49 @@ namespace PrismEditor {
         if (isPrefabInstance)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 0.95f, 1.0f)); // azul claro - vinculo vivo de PREFAB (distinto do dourado usado para material, ver RenderPropertiesPanel)
 
+
+        const bool selfHidden = m_Ctx.ActiveScene->IsEntityHiddenSelf(handle);
+        const bool effectiveVisible = m_Ctx.ActiveScene->IsEntityVisible(handle);
+        const ImVec2 rowPos = ImGui::GetCursorPos();
+        const float eyeSize = ImGui::GetTextLineHeight();
+        const float eyeX = rowPos.x + ImGui::GetContentRegionAvail().x - eyeSize - 4.0f;
+        ImGui::SetCursorPos(ImVec2(eyeX, rowPos.y));
+        ImGui::PushID((int)(uint32_t)handle);
+        const bool eyeClicked = ImGui::InvisibleButton("##eye", ImVec2(eyeSize, eyeSize));
+        const bool eyeHovered = ImGui::IsItemHovered();
+        const ImVec2 eyeMin = ImGui::GetItemRectMin();
+        const ImVec2 eyeMax = ImGui::GetItemRectMax();
+        ImGui::PopID();
+        if (eyeClicked)
+            m_Ctx.History.Execute(Prism::CreateScope<SetHiddenCommand>(m_Ctx.ActiveScene, entity, !selfHidden));
+        ImGui::SetCursorPos(rowPos);
+
+        if (!effectiveVisible)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         bool open = isPrefabInstance
             ? ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "[P] %s", tag.Tag.c_str())
             : ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", tag.Tag.c_str());
+        if (!effectiveVisible)
+            ImGui::PopStyleColor();
+
+        const bool nodeClicked = ImGui::IsItemClicked() && !eyeHovered;
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 c((eyeMin.x + eyeMax.x) * 0.5f, (eyeMin.y + eyeMax.y) * 0.5f);
+            const float w = eyeSize * 0.5f;
+            ImU32 col = ImGui::GetColorU32(effectiveVisible ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+            if (eyeHovered)
+                col = ImGui::GetColorU32(ImGuiCol_ButtonHovered);
+
+            dl->AddBezierQuadratic(ImVec2(c.x - w, c.y), ImVec2(c.x, c.y - w * 1.1f), ImVec2(c.x + w, c.y), col, 1.5f);
+            dl->AddBezierQuadratic(ImVec2(c.x - w, c.y), ImVec2(c.x, c.y + w * 1.1f), ImVec2(c.x + w, c.y), col, 1.5f);
+            if (effectiveVisible)
+                dl->AddCircleFilled(c, w * 0.32f, col);
+            else // cortado: escondido por si mesmo ou por um ancestral
+                dl->AddLine(ImVec2(c.x - w, c.y + w * 0.7f), ImVec2(c.x + w, c.y - w * 0.7f), col, 1.5f);
+            if (eyeHovered)
+                ImGui::SetTooltip(selfHidden ? "Mostrar" : (effectiveVisible ? "Esconder (filhos tambem)" : "Escondido por um ancestral"));
+        }
 
         if (isPrefabInstance) {
             ImGui::PopStyleColor();
@@ -128,7 +168,7 @@ namespace PrismEditor {
                 ImGui::SetTooltip("Instancia de prefab - ver o painel Prefab nas Propriedades para sincronizar, aplicar ou reverter mudancas.");
         }
 
-        if (ImGui::IsItemClicked())
+        if (nodeClicked)
             m_Ctx.SelectedEntity = entity;
 
         // Menu de contexto (botao direito) - BeginPopupContextItem reage ao

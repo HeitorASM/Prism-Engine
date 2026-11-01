@@ -305,6 +305,8 @@ namespace Prism {
         bool ApiCharacterIsGrounded(Scene* scene, entt::entity entity) { return scene && PhysicsEngine::CharacterIsGrounded(*scene, Entity(entity, scene)); }
         glm::vec3 ApiCharacterGetVelocity(Scene* scene, entt::entity entity) { return scene ? PhysicsEngine::CharacterGetVelocity(*scene, Entity(entity, scene)) : glm::vec3(0.0f); }
         // v13: desenho imediato
+        void ApiSetEntityVisible(Scene* scene, entt::entity entity, bool visible) { if (scene) scene->SetEntityHidden(entity, !visible); }
+        bool ApiIsEntityVisible(Scene* scene, entt::entity entity) { return scene ? scene->IsEntityVisible(entity) : true; }
         void ApiDrawLine(glm::vec3 a, glm::vec3 b, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::Line(a, b, color, duration, depthTest, thickness); }
         void ApiDrawBox(const glm::mat4* model, glm::vec4 color, float duration, bool depthTest, float thickness) { if (model) DrawContext::Box(*model, color, duration, depthTest, thickness); }
         void ApiDrawBoxAABB(glm::vec3 mn, glm::vec3 mx, glm::vec4 color, float duration, bool depthTest, float thickness) { DrawContext::BoxAABB(mn, mx, color, duration, depthTest, thickness); }
@@ -446,7 +448,9 @@ namespace Prism {
                 &ApiCharacterMove, &ApiCharacterJump, &ApiCharacterIsGrounded, &ApiCharacterGetVelocity, &ApiRaycastMasked,
                 // v13
                 &ApiDrawLine, &ApiDrawBox, &ApiDrawBoxAABB, &ApiDrawSphere, &ApiDrawArrow, &ApiDrawAxes,
-                &ApiDrawText3D, &ApiDrawLine2D, &ApiDrawRect2D, &ApiDrawText2D
+                &ApiDrawText3D, &ApiDrawLine2D, &ApiDrawRect2D, &ApiDrawText2D,
+                // v14
+                &ApiSetEntityVisible, &ApiIsEntityVisible
             };
             return api;
         }

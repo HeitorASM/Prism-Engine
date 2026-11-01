@@ -51,7 +51,7 @@ namespace Prism {
 
     // Sobe sempre que a struct NativeEngineAPI ou o contrato do modulo mudar;
     // um modulo compilado com outra versao e recusado ao carregar.
-    constexpr uint32_t kNativeApiVersion = 13; // v13: desenho imediato (DrawContext); v12: MaterialComponent ganhou ShaderParams; v11: ShaderPath; v10: campos de superficie (layout mudou)
+    constexpr uint32_t kNativeApiVersion = 14; // v14: visibilidade da entidade (SetVisible/IsVisible); v13: desenho imediato (DrawContext); v12: MaterialComponent ganhou ShaderParams; v11: ShaderPath; v10: campos de superficie (layout mudou)
 
     struct NativeRayHit {
         bool Hit = false;
@@ -163,6 +163,9 @@ namespace Prism {
         void (*DrawLine2D)(glm::vec2 a, glm::vec2 b, glm::vec4 color, float duration, float thickness);
         void (*DrawRect2D)(float x, float y, float width, float height, glm::vec4 color, bool filled, float duration);
         void (*DrawText2D)(const char* text, float x, float y, glm::vec4 color, float fontSize, float duration);
+        // v14: visibilidade (estilo Godot). Esconder uma entidade esconde os filhos tambem.
+        void (*SetEntityVisible)(Scene* scene, entt::entity entity, bool visible);
+        bool (*IsEntityVisible)(Scene* scene, entt::entity entity);
     };
 
     // --- Variaveis publicas (editaveis no painel Propriedades) ---------------
@@ -381,6 +384,12 @@ namespace Prism {
             Api().RaycastMasked(m_Entity.GetScene(), origin, direction, maxDistance, ignoreSelf ? m_Entity.GetHandle() : entt::entity(entt::null), layerMask, &hit);
             return hit;
         }
+
+        // --- Visibilidade (API v14) -------------------------------------------------------
+        // Esconde/mostra ESTA entidade e seus filhos (malhas, luzes, particulas, UI, sombras).
+        // Fisica e scripts continuam rodando. IsVisible considera os ancestrais.
+        void SetVisible(bool visible) { Api().SetEntityVisible(m_Entity.GetScene(), m_Entity.GetHandle(), visible); }
+        bool IsVisible() const { return Api().IsEntityVisible(m_Entity.GetScene(), m_Entity.GetHandle()); }
 
         // --- Desenho imediato (API v13) --------------------------------------------------
         // Acumulado e desenhado pela engine neste quadro (ou por 'duration' segundos). Mundo: Draw*;
