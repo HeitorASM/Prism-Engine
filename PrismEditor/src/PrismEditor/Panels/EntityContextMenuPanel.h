@@ -66,6 +66,18 @@ namespace PrismEditor {
         DuplicateFn m_OnDuplicate;
         DeleteFn m_OnDelete;
         CreatePrefabRequestedFn m_OnCreatePrefabRequested;
+
+        // NO FIM da classe de proposito (layout dos membros antigos intacto em build incremental).
+        using ClipboardFn = std::function<void(Prism::Entity)>;
+        ClipboardFn m_OnCopy;
+        ClipboardFn m_OnCut;
+        ClipboardFn m_OnPaste;
+
+    public:
+        void SetOnCopy(ClipboardFn fn) { m_OnCopy = std::move(fn); }
+        void SetOnCut(ClipboardFn fn) { m_OnCut = std::move(fn); }
+        // Colar recebe a entidade clicada (o editor cola como irma da selecionada).
+        void SetOnPaste(ClipboardFn fn) { m_OnPaste = std::move(fn); }
     };
 
 }

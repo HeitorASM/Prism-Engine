@@ -50,6 +50,14 @@ namespace PrismEditor::EntityOps {
     // menu "Excluir selecionada" (ver RenderMenuBar).
     void DeleteEntity(EditorContext& ctx, Prism::Entity entity);
 
+        // Copiar / Recortar / Colar (ver Core/EntityClipboard.h). Copiar guarda uma copia fiel da
+    // subarvore; Recortar = Copiar + Excluir (um Desfazer volta tudo); Colar cria a copia como
+    // IRMA da entidade selecionada (mesmo pai; sem selecao, na raiz), seleciona a copia e entra
+    // no historico (Desfazer/Refazer). Colar sem nada copiado nao faz nada.
+    void CopyEntity(EditorContext& ctx, Prism::Entity entity);
+    void CutEntity(EditorContext& ctx, Prism::Entity entity);
+    void PasteEntity(EditorContext& ctx);
+
         // Garante que no maximo UMA entidade da cena tenha
     // CameraComponent::Primary = true: ao marcar 'newPrimary' como
     // Primary, desmarca qualquer outra que estivesse marcada.

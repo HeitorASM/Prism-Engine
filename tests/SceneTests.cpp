@@ -547,6 +547,71 @@ static bool NearlyEqual(const glm::mat4& a, const glm::mat4& b) {
 
 // Visibilidade (HiddenComponent): herdada pelos filhos, caminho rapido sem escondidos,
 // sobrevive a Duplicar/serializacao, e a flag CastShadows do MeshRenderer le blocos antigos.
+// Scene::CopyEntityTreeFrom: base de copiar/colar e do desfazer de "Excluir" (snapshot da
+// subarvore numa Scene auxiliar e restauracao em outra).
+static void TestCopyEntityTree() {
+    ComponentRegistry::RegisterAll();
+
+    Scene source("Origem");
+    Entity root = source.CreateEntity("Pai");
+    Entity childA = source.CreateEntity("FilhoA");
+    Entity childB = source.CreateEntity("FilhoB");
+    Entity grand = source.CreateEntity("Neto");
+    source.SetParent(childA, root);
+    source.SetParent(childB, root);
+    source.SetParent(grand, childA);
+
+    root.GetComponent<TransformComponent>().Translation = { 1.0f, 2.0f, 3.0f };
+    childA.AddComponent<LightComponent>().Intensity = 7.5f;
+    childB.AddComponent<MaterialComponent>().RoughnessFactor = 0.25f;
+    grand.AddComponent<PrefabInstanceMemberComponent>().IndexInPrefab = 4;
+    root.AddComponent<PrefabInstanceRootComponent>();
+
+    // Copia entre cenas: a raiz nasce sem pai, com a subarvore, os components e a ordem dos filhos.
+    Scene dest("Destino");
+    Entity copy = dest.CopyEntityTreeFrom(root, /*exact*/ true);
+    CHECK(copy.IsValid());
+    CHECK(copy.GetComponent<TagComponent>().Tag == "Pai");
+    CHECK(copy.GetComponent<TransformComponent>().Translation == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(!copy.GetParent().IsValid());
+    CHECK(copy.GetChildCount() == 2);
+
+    auto& kids = copy.GetComponent<RelationshipComponent>().Children;
+    Entity copyA(kids[0], &dest);
+    Entity copyB(kids[1], &dest);
+    CHECK(copyA.GetComponent<TagComponent>().Tag == "FilhoA");
+    CHECK(copyB.GetComponent<TagComponent>().Tag == "FilhoB");
+    CHECK(copyA.HasComponent<LightComponent>() && copyA.GetComponent<LightComponent>().Intensity == 7.5f);
+    CHECK(copyB.HasComponent<MaterialComponent>() && copyB.GetComponent<MaterialComponent>().RoughnessFactor == 0.25f);
+    CHECK(copyA.GetChildCount() == 1);
+
+    Entity copyGrand(copyA.GetComponent<RelationshipComponent>().Children[0], &dest);
+    CHECK(copyGrand.GetComponent<TagComponent>().Tag == "Neto");
+    // exact = true leva o vinculo de prefab (fora do ComponentRegistry) junto.
+    CHECK(copy.HasComponent<PrefabInstanceRootComponent>());
+    CHECK(copyGrand.HasComponent<PrefabInstanceMemberComponent>() && copyGrand.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab == 4);
+
+    // A copia e independente da origem.
+    copyA.GetComponent<LightComponent>().Intensity = 1.0f;
+    CHECK(childA.GetComponent<LightComponent>().Intensity == 7.5f);
+    dest.DestroyEntity(copy);
+    CHECK(root.IsValid() && root.GetChildCount() == 2);
+
+    // exact = false (como Duplicar): sem o vinculo de prefab, mas com o resto.
+    Scene loose("Solta");
+    Entity plain = loose.CopyEntityTreeFrom(root, /*exact*/ false);
+    CHECK(plain.IsValid() && !plain.HasComponent<PrefabInstanceRootComponent>());
+    Entity plainA(plain.GetComponent<RelationshipComponent>().Children[0], &loose);
+    CHECK(plainA.HasComponent<LightComponent>());
+
+    // Copiar dentro da MESMA cena nao mexe na original.
+    Entity same = source.CopyEntityTreeFrom(root, true);
+    CHECK(same.IsValid() && same != root && same.GetChildCount() == 2 && root.GetChildCount() == 2);
+
+    // Origem invalida: nada acontece.
+    CHECK(!dest.CopyEntityTreeFrom(Entity(), true).IsValid());
+}
+
 static void TestVisibility() {
     Scene scene("Visibility");
     Entity root = scene.CreateEntity("Raiz");
@@ -863,6 +928,7 @@ int main() {
     TestPrefabSyncer(dir);
     TestWorldTransformScope();
     TestVisibility();
+    TestCopyEntityTree();
     TestSystemRegistry();
     TestExtensionLoader(dir);
     TestExtensionComponents(); // por ultimo: registra tipos no registro global

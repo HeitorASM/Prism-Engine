@@ -248,6 +248,46 @@ namespace Prism {
         return copy;
     }
 
+    // Copia UMA entidade (e recursivamente os filhos) de 'source' - que pode ser de OUTRA Scene -
+    // para 'destination'. Ver Scene::CopyEntityTreeFrom.
+    static Entity CopyEntityTreeRecursive(Scene& destination, Entity source, bool exact) {
+        Entity copy = destination.CreateEntity(source.GetComponent<TagComponent>().Tag);
+        copy.GetComponent<TransformComponent>() = source.GetComponent<TransformComponent>();
+
+        for (auto& info : ComponentRegistry::GetAll()) {
+            if (info.Has(source))
+                info.Copy(source, copy);
+        }
+
+        if (exact) {
+            if (source.HasComponent<PrefabInstanceRootComponent>())
+                copy.AddComponent<PrefabInstanceRootComponent>(source.GetComponent<PrefabInstanceRootComponent>());
+            if (source.HasComponent<PrefabInstanceMemberComponent>())
+                copy.AddComponent<PrefabInstanceMemberComponent>(source.GetComponent<PrefabInstanceMemberComponent>());
+            if (source.HasComponent<UnknownComponentsComponent>())
+                copy.AddComponent<UnknownComponentsComponent>(source.GetComponent<UnknownComponentsComponent>());
+        }
+
+        if (auto* rel = source.GetScene()->GetRegistry().try_get<RelationshipComponent>(source.GetHandle())) {
+            // Copia a lista antes de iterar: criar entidades na recursao pode realocar o
+            // armazenamento do EnTT (e, se origem e destino forem a mesma Scene, o do 'rel').
+            std::vector<entt::entity> childrenCopy = rel->Children;
+            for (entt::entity childHandle : childrenCopy) {
+                Entity child(childHandle, source.GetScene());
+                Entity childCopy = CopyEntityTreeRecursive(destination, child, exact);
+                destination.SetParent(childCopy, copy);
+            }
+        }
+
+        return copy;
+    }
+
+    Entity Scene::CopyEntityTreeFrom(Entity source, bool exact) {
+        if (!source)
+            return Entity();
+        return CopyEntityTreeRecursive(*this, source, exact);
+    }
+
     void Scene::DestroyEntity(Entity entity) {
         entt::entity handle = entity.GetHandle();
 

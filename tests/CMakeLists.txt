@@ -298,3 +298,14 @@ if(MSVC)
     target_compile_options(PrismCrashReportTests PRIVATE /utf-8)
 endif()
 add_test(NAME CrashReportTests COMMAND PrismCrashReportTests)
+
+# PrismFileBackupTests: backups com data/hora e rotacao (Core/FileBackup.h), so std.
+add_executable(PrismFileBackupTests
+    FileBackupTests.cpp
+)
+target_include_directories(PrismFileBackupTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismFileBackupTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismFileBackupTests PRIVATE /utf-8)
+endif()
+add_test(NAME FileBackupTests COMMAND PrismFileBackupTests)

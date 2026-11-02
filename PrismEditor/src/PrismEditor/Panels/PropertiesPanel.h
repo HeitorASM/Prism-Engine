@@ -239,6 +239,12 @@ namespace PrismEditor {
         // NO FIM da classe de proposito (layout de membros antigos intacto
         // em builds incrementais) - ver comentario equivalente em EditorLayer.h.
         Prism::EnvironmentComponent m_EnvironmentBeforeEdit;
+
+        // Undo do painel Material (ver DrawMaterialUI): um gesto de edicao (arrastar um slider,
+        // trocar um combo...) vira UM EditMaterialCommand. 'Before' e o material de ANTES do gesto.
+        Prism::MaterialComponent m_MaterialBeforeEdit;
+        bool m_MaterialGestureOpen = false;
+        Prism::Entity m_MaterialGestureEntity;
     };
 
 }

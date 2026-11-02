@@ -14,7 +14,8 @@
 //   - CreatePresetEntityCommand: versao generica para os outros presets do
 //     menu Entidade (Criar Luz, Criar Character, Criar Entidade Vazia) -
 //     recebe uma funcao de setup em vez de ter uma classe por preset
-//   - DeleteEntityCommand: excluir uma entidade existente
+//   - DeleteEntityCommand: excluir uma entidade existente (snapshot fiel da subarvore)
+//   - PasteEntityCommand: colar uma subarvore copiada (ver Core/EntityClipboard.h)
 //   - AddComponentCommand<T>/RemoveComponentCommand<T>: adicionar/remover
 //     qualquer component "opcional" (Light, Collider, RigidBody, Script) -
 //     ver PropertiesPanel::OnImGuiRender para o botao "Add Component".
@@ -25,6 +26,7 @@
 
 #include <Prism.h>
 #include "../Core/ModelImport.h"
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <functional>
@@ -168,105 +170,118 @@ namespace PrismEditor {
         Prism::Entity m_CreatedEntity;
     };
 
-    // Exclui uma entidade existente. Guarda uma copia de TODOS os
-    // components relevantes ANTES de destruir, para que Undo() recrie a
-    // entidade identica. Se novos tipos de component forem adicionados a
-    // Entity (fisica, scripts), este e o lugar a atualizar junto.
+    // Exclui uma entidade E a sua subarvore. Antes de destruir guarda um SNAPSHOT FIEL da
+    // subarvore inteira numa Scene auxiliar (Scene::CopyEntityTreeFrom com exact = true): tag,
+    // transform, TODO component do ComponentRegistry (inclusive Material, Audio Source, Animator,
+    // extensoes e qualquer um que vier), o vinculo de prefab e os blocos desconhecidos. Undo()
+    // recria tudo, inclusive os FILHOS, no mesmo pai e na mesma posicao entre os irmaos.
+    // (A versao antiga copiava so uma lista fixa de components e perdia os filhos.)
+    //
+    // Limite conhecido: o Undo cria entidades NOVAS (handles novos). Comandos mais antigos do
+    // historico que guardam o handle da entidade excluida deixam de achar essa entidade.
     class DeleteEntityCommand : public Prism::Command {
     public:
         DeleteEntityCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity entity)
-            : m_Scene(scene) {
-            m_Tag = entity.GetComponent<Prism::TagComponent>().Tag;
-            m_Transform = entity.GetComponent<Prism::TransformComponent>();
+            : m_Scene(scene), m_EntityToDelete(entity) {
+            m_Snapshot = Prism::Scene::Create("__delete_entity_undo__");
+            m_SnapshotRoot = m_Snapshot->CopyEntityTreeFrom(entity, /*exact*/ true);
 
-            m_HadMesh = entity.HasComponent<Prism::MeshRendererComponent>();
-            if (m_HadMesh)
-                m_Mesh = entity.GetComponent<Prism::MeshRendererComponent>();
-
-            m_HadLight = entity.HasComponent<Prism::LightComponent>();
-            if (m_HadLight)
-                m_Light = entity.GetComponent<Prism::LightComponent>();
-
-            m_HadCollider = entity.HasComponent<Prism::ColliderComponent>();
-            if (m_HadCollider)
-                m_Collider = entity.GetComponent<Prism::ColliderComponent>();
-
-            m_HadRigidBody = entity.HasComponent<Prism::RigidBodyComponent>();
-            if (m_HadRigidBody)
-                m_RigidBody = entity.GetComponent<Prism::RigidBodyComponent>();
-
-            m_HadScript = entity.HasComponent<Prism::ScriptComponent>();
-            if (m_HadScript)
-                m_Script = entity.GetComponent<Prism::ScriptComponent>();
-
-            m_HadCamera = entity.HasComponent<Prism::CameraComponent>();
-            if (m_HadCamera)
-                m_Camera = entity.GetComponent<Prism::CameraComponent>();
-
-            m_HadNativeScript = entity.HasComponent<Prism::NativeScriptComponent>();
-            if (m_HadNativeScript)
-                m_NativeScript = entity.GetComponent<Prism::NativeScriptComponent>();
-
-            m_HadLevelMesh = entity.HasComponent<Prism::LevelMeshComponent>();
-            if (m_HadLevelMesh)
-                m_LevelMesh = entity.GetComponent<Prism::LevelMeshComponent>();
-
-            m_EntityToDelete = entity;
+            if (auto* rel = m_Scene->GetRegistry().try_get<Prism::RelationshipComponent>(entity.GetHandle())) {
+                m_ParentHandle = rel->Parent;
+                if (m_ParentHandle != entt::null) {
+                    if (auto* parentRel = m_Scene->GetRegistry().try_get<Prism::RelationshipComponent>(m_ParentHandle)) {
+                        auto it = std::find(parentRel->Children.begin(), parentRel->Children.end(), entity.GetHandle());
+                        if (it != parentRel->Children.end())
+                            m_SiblingIndex = (size_t)(it - parentRel->Children.begin());
+                    }
+                }
+            }
         }
 
         void Execute() override {
-            if (m_EntityToDelete)
+            if (m_EntityToDelete.IsValid())
                 m_Scene->DestroyEntity(m_EntityToDelete);
             m_EntityToDelete = {};
         }
 
         void Undo() override {
-            Prism::Entity entity = m_Scene->CreateEntity(m_Tag);
-            entity.GetComponent<Prism::TransformComponent>() = m_Transform;
-            if (m_HadMesh)
-                entity.AddComponent<Prism::MeshRendererComponent>() = m_Mesh;
-            if (m_HadLight)
-                entity.AddComponent<Prism::LightComponent>() = m_Light;
-            if (m_HadCollider)
-                entity.AddComponent<Prism::ColliderComponent>() = m_Collider;
-            if (m_HadRigidBody)
-                entity.AddComponent<Prism::RigidBodyComponent>() = m_RigidBody;
-            if (m_HadScript)
-                entity.AddComponent<Prism::ScriptComponent>() = m_Script;
-            if (m_HadCamera)
-                entity.AddComponent<Prism::CameraComponent>() = m_Camera;
-            if (m_HadNativeScript)
-                entity.AddComponent<Prism::NativeScriptComponent>() = m_NativeScript;
-            if (m_HadLevelMesh)
-                entity.AddComponent<Prism::LevelMeshComponent>() = m_LevelMesh;
-            m_EntityToDelete = entity;
+            if (!m_SnapshotRoot.IsValid())
+                return;
+
+            Prism::Entity restored = m_Scene->CopyEntityTreeFrom(m_SnapshotRoot, /*exact*/ true);
+            if (!restored.IsValid())
+                return;
+
+            auto& registry = m_Scene->GetRegistry();
+            if (m_ParentHandle != entt::null && registry.valid(m_ParentHandle)) {
+                if (m_Scene->SetParent(restored, Prism::Entity(m_ParentHandle, m_Scene.get()))) {
+                    // SetParent poe no FIM da lista; devolve para a posicao original.
+                    if (auto* parentRel = registry.try_get<Prism::RelationshipComponent>(m_ParentHandle)) {
+                        auto& children = parentRel->Children;
+                        auto it = std::find(children.begin(), children.end(), restored.GetHandle());
+                        if (it != children.end()) {
+                            children.erase(it);
+                            const size_t index = std::min(m_SiblingIndex, children.size());
+                            children.insert(children.begin() + (std::ptrdiff_t)index, restored.GetHandle());
+                        }
+                    }
+                }
+            }
+            m_EntityToDelete = restored;
         }
 
         std::string GetName() const override { return "Excluir Entidade"; }
 
+        // Valido depois de Undo() (a entidade recriada) - nulo enquanto estiver excluida.
+        Prism::Entity GetRestoredEntity() const { return m_EntityToDelete; }
+
     private:
         Prism::Ref<Prism::Scene> m_Scene;
-        bool m_HadLevelMesh = false;
-        Prism::LevelMeshComponent m_LevelMesh;
-        Prism::Entity m_EntityToDelete;
+        Prism::Entity m_EntityToDelete;           // a entidade viva (antes do Execute / depois do Undo)
+        Prism::Ref<Prism::Scene> m_Snapshot;      // mantem a copia viva enquanto o comando existir
+        Prism::Entity m_SnapshotRoot;
+        entt::entity m_ParentHandle = entt::null;
+        size_t m_SiblingIndex = 0;
+    };
 
-        std::string m_Tag;
-        Prism::TransformComponent m_Transform;
+    // Cola uma subarvore (vinda da area de transferencia do editor, ver Core/EntityClipboard.h).
+    // O comando guarda a PROPRIA copia ('source' pode ser trocado/liberado depois: copiar outra
+    // coisa nao muda o que um Refazer antigo cola). A copia colada e um snapshot fiel (exact), entao
+    // uma instancia de prefab continua sendo instancia. 'parent' = onde colar (nulo = raiz).
+    class PasteEntityCommand : public Prism::Command {
+    public:
+        PasteEntityCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity source, Prism::Entity parent)
+            : m_Scene(scene), m_ParentHandle(parent.IsValid() ? parent.GetHandle() : entt::null) {
+            m_Snapshot = Prism::Scene::Create("__paste_entity__");
+            m_SnapshotRoot = m_Snapshot->CopyEntityTreeFrom(source, /*exact*/ true);
+        }
 
-        bool m_HadMesh = false;
-        Prism::MeshRendererComponent m_Mesh;
-        bool m_HadLight = false;
-        Prism::LightComponent m_Light;
-        bool m_HadCollider = false;
-        Prism::ColliderComponent m_Collider;
-        bool m_HadRigidBody = false;
-        Prism::RigidBodyComponent m_RigidBody;
-        bool m_HadScript = false;
-        Prism::ScriptComponent m_Script;
-        bool m_HadCamera = false;
-        Prism::CameraComponent m_Camera;
-        bool m_HadNativeScript = false;
-        Prism::NativeScriptComponent m_NativeScript;
+        void Execute() override {
+            if (!m_SnapshotRoot.IsValid())
+                return;
+            m_Pasted = m_Scene->CopyEntityTreeFrom(m_SnapshotRoot, /*exact*/ true);
+            if (m_Pasted.IsValid() && m_ParentHandle != entt::null && m_Scene->GetRegistry().valid(m_ParentHandle))
+                m_Scene->SetParent(m_Pasted, Prism::Entity(m_ParentHandle, m_Scene.get()));
+        }
+
+        void Undo() override {
+            if (m_Pasted.IsValid())
+                m_Scene->DestroyEntity(m_Pasted);
+            m_Pasted = {};
+        }
+
+        std::string GetName() const override { return "Colar Entidade"; }
+
+        // Valido apos Execute(), ate o proximo Undo() - o chamador seleciona a copia.
+        Prism::Entity GetPastedEntity() const { return m_Pasted; }
+        bool HasContent() const { return m_SnapshotRoot.IsValid(); }
+
+    private:
+        Prism::Ref<Prism::Scene> m_Scene;
+        entt::entity m_ParentHandle = entt::null;
+        Prism::Ref<Prism::Scene> m_Snapshot;
+        Prism::Entity m_SnapshotRoot;
+        Prism::Entity m_Pasted;
     };
 
     // Duplica uma entidade (e toda a sua subarvore de filhos) via
@@ -1367,6 +1382,36 @@ namespace PrismEditor {
         T m_Before;
         T m_After;
         std::string m_DisplayName;
+    };
+
+    // Edicao de um MaterialComponent: igual a EditComponentCommand<MaterialComponent>, mas avisa
+    // 'onChanged' depois de aplicar - o painel liga isso ao MaterialLinkSync::MarkDirty, para um
+    // material VINCULADO a um .prismmat regravar o arquivo no Desfazer/Refazer (senao o arquivo
+    // ficaria com o valor novo e o desfazer seria "desfeito" na proxima sincronizacao).
+    class EditMaterialCommand : public Prism::Command {
+    public:
+        using ChangedFn = std::function<void(Prism::Entity)>;
+
+        EditMaterialCommand(Prism::Entity entity, const Prism::MaterialComponent& before, const Prism::MaterialComponent& after, ChangedFn onChanged)
+            : m_Entity(entity), m_Before(before), m_After(after), m_OnChanged(std::move(onChanged)) {}
+
+        void Execute() override { Apply(m_After); }
+        void Undo() override { Apply(m_Before); }
+        std::string GetName() const override { return "Editar Material"; }
+
+    private:
+        void Apply(const Prism::MaterialComponent& value) {
+            if (!m_Entity.IsValid() || !m_Entity.HasComponent<Prism::MaterialComponent>())
+                return;
+            m_Entity.GetComponent<Prism::MaterialComponent>() = value;
+            if (m_OnChanged)
+                m_OnChanged(m_Entity);
+        }
+
+        Prism::Entity m_Entity;
+        Prism::MaterialComponent m_Before;
+        Prism::MaterialComponent m_After;
+        ChangedFn m_OnChanged;
     };
 
     // Marcar uma camera como Primary desmarca TODAS as outras (ver

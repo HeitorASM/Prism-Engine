@@ -3,6 +3,8 @@
 #include <PrismVersion.h>
 #include "../Core/LevelEditing.h"
 #include "../Core/EntityOps.h"
+#include "../Core/EntityClipboard.h"
+#include "../Core/Autosave.h"
 #include "../Core/FileDialog.h"
 #include "../Core/EditorIcons.h"
 #include "../Core/EditorTheme.h"
@@ -111,6 +113,10 @@ namespace PrismEditor {
             PRISM_WARN("Este projeto foi criado com a Prism ", projectVersion, " e a engine atual e a ", Prism::Version::Number,
                 ". Mapas e prefabs de outra versao podem nao abrir (ver docs/formatos-de-arquivo.md).");
 
+        // Sobrou um autosave de uma sessao que nao fechou direito? So registra a pergunta
+        // (ver Core/Autosave.h); o popup "Recuperar mapa" aparece no primeiro frame.
+        Autosave::PeekRecovery();
+
         m_Document.LoadOrCreateScene();
 
         if (m_BuildNativeOnOpen)
@@ -157,12 +163,17 @@ namespace PrismEditor {
         // usa Application::Get() - ver o comentario grande no topo desta
         // funcao e MaterialLinkSync::WritePendingOnShutdown.
         m_Ctx.MaterialLinks.WritePendingOnShutdown();
+
+        // Saida normal do editor: o autosave so existe para o caso de NAO chegarmos aqui (crash).
+        // Se o usuario escolheu "Nao salvar" no aviso de alteracoes, descartar tambem e o desejado.
+        Autosave::Discard();
     }
 
     void EditorLayer::OnUpdate(float deltaTime) {
         m_Viewport.ResizeIfNeeded();
         PollNativeBuild();
         PollGameExport();
+        Autosave::Tick(m_Ctx, m_Document, deltaTime);
 
         // EditorContext::ActiveScene->OnUpdate() aqui NAO roda scripts/fisica na pratica
         // (Scene::OnUpdate so simula quando IsRunning() e true - ver
@@ -273,7 +284,7 @@ namespace PrismEditor {
         // panel, ou o proprio campo de nome do popup Salvar Como) para nao
         // brigar com o undo nativo de InputText - Ctrl+Z ali deve desfazer
         // a digitacao, nao uma acao do CommandHistory.
-        if (!io.WantTextInput && !m_Game.IsCapturingInput() && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId)) {
+        if (!io.WantTextInput && !m_Game.IsCapturingInput() && !m_ScriptEditor.IsFocused() && !ImGui::IsPopupOpen(SceneDocument::kSaveAsPopupId) && !ImGui::IsPopupOpen(HierarchyPanel::kCreatePrefabPopupId) && !ImGui::IsPopupOpen(PropertiesPanel::kSaveMaterialPopupId) && !ImGui::IsPopupOpen(SceneDocument::kUnsavedChangesPopupId) && !Autosave::IsRecoveryPending()) {
             bool ctrl = io.KeyCtrl;
             if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
                 m_Ctx.History.Undo();
@@ -292,12 +303,19 @@ namespace PrismEditor {
                 m_Docs.Open();
             else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && m_Ctx.SelectedEntity)
                 EntityOps::DuplicateEntity(m_Ctx, m_Ctx.SelectedEntity);
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && m_Ctx.SelectedEntity)
+                EntityOps::CopyEntity(m_Ctx, m_Ctx.SelectedEntity);
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_X, false) && m_Ctx.SelectedEntity)
+                EntityOps::CutEntity(m_Ctx, m_Ctx.SelectedEntity);
+            else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false))
+                EntityOps::PasteEntity(m_Ctx);
             else if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && m_Ctx.SelectedEntity)
                 EntityOps::DeleteEntity(m_Ctx, m_Ctx.SelectedEntity);
         }
 
         RenderMenuBar();
         m_Document.RenderSaveAsPopup(); // popup modal - precisa ser chamado todo frame, mesmo fechado (ver comentario no metodo)
+        Autosave::RenderRecoveryPopup(m_Ctx, m_Document); // idem - "Recuperar mapa" (autosave de uma sessao que nao fechou direito)
         m_Document.RenderUnsavedChangesPopup(); // idem - "Salvar alteracoes?" ao fechar/trocar de mapa com alteracoes nao salvas
         m_Properties.RenderNewScriptPopup(); // idem - popup modal do botao "Novo..." do ScriptComponent
         m_Hierarchy.RenderCreatePrefabPopup(); // idem - popup modal do item "Criar Prefab..." do menu de contexto
@@ -633,6 +651,13 @@ namespace PrismEditor {
                     EntityOps::DuplicateEntity(m_Ctx, m_Ctx.SelectedEntity);
                 if (ImGui::MenuItem("Excluir selecionada", "Delete", false, (bool)m_Ctx.SelectedEntity))
                     EntityOps::DeleteEntity(m_Ctx, m_Ctx.SelectedEntity);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Copiar selecionada", "Ctrl+C", false, (bool)m_Ctx.SelectedEntity))
+                    EntityOps::CopyEntity(m_Ctx, m_Ctx.SelectedEntity);
+                if (ImGui::MenuItem("Recortar selecionada", "Ctrl+X", false, (bool)m_Ctx.SelectedEntity))
+                    EntityOps::CutEntity(m_Ctx, m_Ctx.SelectedEntity);
+                if (ImGui::MenuItem("Colar", "Ctrl+V", false, EntityClipboard::HasContent()))
+                    EntityOps::PasteEntity(m_Ctx);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Janela")) {
@@ -905,6 +930,7 @@ namespace PrismEditor {
 
     void EditorLayer::CloseProject() {
         StopPlaying();
+        Autosave::Discard(); // Fechar Projeto ja passou pelo aviso de alteracoes nao salvas
 
         // O modulo C++ e as instancias de script pertencem a este projeto.
         Prism::NativeScripting::UnloadModule();

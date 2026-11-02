@@ -34,6 +34,12 @@ namespace PrismEditor {
         // de volta neste mesmo arquivo.
         bool LoadScene(const std::filesystem::path& mapPath);
 
+        // Igual a LoadScene, mas le a cena de 'file' e associa o documento a 'associatedMap'
+        // (o destino do proximo Salvar; vazio = cena sem arquivo, o Salvar pede um nome). Com
+        // 'markUnsaved' o documento fica "com alteracoes nao salvas" desde o inicio - usado ao
+        // recuperar um autosave (ver Core/Autosave.h). LoadScene(p) == LoadSceneFrom(p, p, false).
+        bool LoadSceneFrom(const std::filesystem::path& file, const std::filesystem::path& associatedMap, bool markUnsaved);
+
         // Cria uma Scene nova vazia (so o nome, sem entidades) e a torna a
         // Scene ativa. EditorContext::CurrentMapPath e limpo - a proxima vez que "Salvar
         // Mapa" for usado, se comporta como "Salvar Como" (ainda nao ha

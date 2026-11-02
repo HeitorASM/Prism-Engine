@@ -1,15 +1,22 @@
 #include "SceneDocument.h"
 #include "EntityOps.h"
 #include "../Play/PlayWindow.h"
+#include "Autosave.h"
+#include <Prism/Core/FileBackup.h>
 #include <imgui.h>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <string>
 
 namespace PrismEditor {
 
     bool SceneDocument::LoadScene(const std::filesystem::path& mapPath) {
+        return LoadSceneFrom(mapPath, mapPath, /*markUnsaved*/ false);
+    }
+
+    bool SceneDocument::LoadSceneFrom(const std::filesystem::path& mapPath, const std::filesystem::path& associatedMap, bool markUnsaved) {
         // Se a PlayWindow estiver aberta, fecha ela ANTES de trocar de
         // mapa - ela roda uma COPIA clonada de EditorContext::ActiveScene (ver
         // Play/PlayWindow.h); nao faz sentido continuar simulando essa
@@ -36,12 +43,16 @@ namespace PrismEditor {
         m_Ctx.MaterialLinks.FlushSave();
 
         m_Ctx.ActiveScene = serializer.GetScene();
-        m_Ctx.CurrentMapPath = mapPath;
+        m_Ctx.CurrentMapPath = associatedMap;
         m_Ctx.SelectedEntity = {};
         m_Ctx.MaterialLinks.ForgetPending(); // ver comentario acima - nunca aponta para a Scene recem-substituida
         m_Ctx.History.Clear();
         EntityOps::SyncAllPrefabInstances(m_Ctx);
         MarkSceneClean();
+        // Fingerprint 0 = "desconhecido": HasUnsavedChanges() passa a responder sempre "sim"
+        // ate o proximo Salvar (que chama MarkSceneClean de novo).
+        if (markUnsaved)
+            m_SavedSceneFingerprint = 0;
         return true;
     }
 
@@ -123,6 +134,33 @@ namespace PrismEditor {
         MarkSceneClean();
     }
 
+    // Copia o mapa que esta no disco para <Projeto>/Cache/Backups/Maps/ ANTES de ele ser sobrescrito
+    // (ver Core/FileBackup.h). O save atomico evita arquivo pela metade, mas nao um arquivo
+    // inteiro porem errado: um component descartado na leitura por dado invalido some do disco no
+    // proximo save, e um mapa de formato antigo e regravado no atual. O backup e a rede de seguranca.
+    //
+    // O PRIMEIRO save de cada mapa na sessao sempre guarda o arquivo como ele estava ao abrir o
+    // editor; os seguintes so a cada kBackupIntervalSeconds, para nao gerar um backup por Ctrl+S.
+    // Fica aqui (e nao como membro de SceneDocument) para nao mexer no layout da classe - ver o
+    // aviso de ABI no fim de SceneDocument.h. Falha de backup nunca impede o save.
+    static void BackupBeforeOverwrite(const std::filesystem::path& mapPath) {
+        constexpr int kBackupsKept = 20;
+        constexpr int kBackupIntervalSeconds = 300;
+
+        auto project = Prism::Project::GetActive();
+        std::error_code ec;
+        if (!project || !std::filesystem::exists(mapPath, ec))
+            return;
+
+        static std::set<std::filesystem::path> s_BackedUpThisSession;
+        const bool firstThisSession = s_BackedUpThisSession.insert(mapPath).second;
+
+        const std::filesystem::path backupDir = project->GetProjectDirectory() / "Cache" / "Backups" / "Maps";
+        const std::filesystem::path made = Prism::FileBackup::Create(mapPath, backupDir, kBackupsKept, firstThisSession ? 0 : kBackupIntervalSeconds);
+        if (!made.empty() && firstThisSession)
+            PRISM_INFO("Backup do mapa anterior: Cache/Backups/Maps/", made.filename().string());
+    }
+
     // Helper interno (nao declarado no .h) - escreve EditorContext::ActiveScene em
     // 'mapPath' de fato, sem se importar com "e primeiro save?" ou popups.
     // SaveActiveScene()/SaveActiveSceneAs() decidem QUAL caminho usar;
@@ -130,6 +168,8 @@ namespace PrismEditor {
     static bool WriteSceneFile(Prism::Ref<Prism::Scene> scene, const std::filesystem::path& mapPath) {
         std::error_code ec;
         std::filesystem::create_directories(mapPath.parent_path(), ec);
+
+        BackupBeforeOverwrite(mapPath);
 
         Prism::SceneSerializer serializer(scene);
         if (!serializer.Serialize(mapPath)) {
@@ -160,6 +200,7 @@ namespace PrismEditor {
             return false;
 
         MarkSceneClean();
+        Autosave::Discard(); // o mapa em disco esta em dia: o autosave nao tem mais o que proteger
         return true;
     }
 
@@ -384,6 +425,7 @@ namespace PrismEditor {
                     // calculado DEPOIS dele, senao a cena recem-salva
                     // pareceria ter alteracoes.
                     MarkSceneClean();
+                    Autosave::Discard();
 
                     // Veio de "Salvar" no popup de alteracoes nao salvas:
                     // agora que o arquivo existe de fato, segue com a acao

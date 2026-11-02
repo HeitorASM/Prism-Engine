@@ -145,7 +145,7 @@ namespace Prism {
         project->m_Config.EngineVersion = options.EngineVersion;
         SaveActive(); // New() ja gravou o arquivo, mas ainda sem a versao da engine
 
-        // Cache/ (importados e copias do modulo) e Binaries/ (saida da
+        // Cache/ (importados, copias do modulo, autosave e backups dos mapas) e Binaries/ (saida da
         // compilacao dos scripts) sao derivados: nunca devem ir para o Git.
         // Os .meta DEVEM ir (ver docs/formatos-de-arquivo.md).
         std::filesystem::path gitignore = project->m_ProjectDirectory / ".gitignore";

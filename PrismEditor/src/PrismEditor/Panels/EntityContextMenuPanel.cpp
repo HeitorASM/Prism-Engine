@@ -1,4 +1,5 @@
 #include "EntityContextMenuPanel.h"
+#include "../Core/EntityClipboard.h"
 #include <imgui.h>
 #include <cstdint>
 
@@ -25,6 +26,24 @@ namespace PrismEditor {
                     m_OnDuplicate(entity);
                 ImGui::CloseCurrentPopup();
             }
+
+            if (ImGui::MenuItem("Copiar", "Ctrl+C")) {
+                if (m_OnCopy)
+                    m_OnCopy(entity);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Recortar", "Ctrl+X")) {
+                if (m_OnCut)
+                    m_OnCut(entity);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Colar", "Ctrl+V", false, EntityClipboard::HasContent())) {
+                if (m_OnPaste)
+                    m_OnPaste(entity);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::Separator();
 
             if (ImGui::MenuItem("Criar Prefab...")) {
                 if (m_OnCreatePrefabRequested)

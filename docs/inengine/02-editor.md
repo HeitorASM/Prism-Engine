@@ -36,6 +36,7 @@ Abre `.lua`, `.cpp`/`.h` (com realce de sintaxe) e qualquer outro arquivo de tex
 | Ctrl+S | Salvar o mapa (ou o arquivo, se o foco está no Editor de Código) |
 | Ctrl+Shift+S | Salvar como |
 | Ctrl+D | Duplicar a entidade selecionada |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copiar / recortar / colar a entidade selecionada (com os filhos) |
 | Delete / Backspace | Excluir a entidade selecionada |
 | W / E / R | Gizmo: mover / rotacionar / escalar |
 | Ctrl (arrastando) | Snapping (1 unidade; 15° na rotação) |

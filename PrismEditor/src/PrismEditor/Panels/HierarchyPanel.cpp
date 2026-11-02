@@ -20,6 +20,17 @@ namespace PrismEditor {
         m_EntityContextMenu.SetOnDelete([this](Prism::Entity entity) {
             EntityOps::DeleteEntity(m_Ctx, entity);
             });
+        m_EntityContextMenu.SetOnCopy([this](Prism::Entity entity) {
+            EntityOps::CopyEntity(m_Ctx, entity);
+            });
+        m_EntityContextMenu.SetOnCut([this](Prism::Entity entity) {
+            EntityOps::CutEntity(m_Ctx, entity);
+            });
+        m_EntityContextMenu.SetOnPaste([this](Prism::Entity entity) {
+            // Cola como irma da entidade clicada (e nao da que estava selecionada antes do clique).
+            m_Ctx.SelectedEntity = entity;
+            EntityOps::PasteEntity(m_Ctx);
+            });
         m_EntityContextMenu.SetOnCreatePrefabRequested([this](Prism::Entity entity) {
             m_PrefabToCreateFrom = entity;
             m_ShowCreatePrefabPopup = true;

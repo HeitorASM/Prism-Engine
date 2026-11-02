@@ -1,11 +1,13 @@
 # Caches
 
-Dados derivados que a engine pode refazer a qualquer hora ficam em `Cache/` na pasta do projeto (fora do Git, ver `.gitignore` gerado). **Apagar `Cache/` nunca perde nada**, só tempo na próxima abertura.
+Dados derivados que a engine pode refazer a qualquer hora ficam em `Cache/` na pasta do projeto (fora do Git, ver `.gitignore` gerado). Quase tudo aqui é refeito sozinho, então apagar `Cache/` só custa tempo na próxima abertura, **com uma exceção**: `Cache/Backups` e `Cache/Autosave` guardam cópias do SEU trabalho (ver [editor.md](editor.md#backups-automáticos-dos-mapas)). Para limpar o cache sem perdê-las, apague as subpastas que não sejam essas duas.
 
 | Pasta | O que guarda | Chave | Limite |
 |---|---|---|---|
 | `Cache/LuaBytecode` | scripts Lua compilados (com informação de depuração: erros continuam com arquivo e linha) | texto do script + nome do chunk + versão do Lua | 64 MB |
 | `Cache/Thumbnails` | miniaturas (até 128 px) das imagens do navegador de conteúdo | caminho + tamanho + data de modificação | 256 MB |
+| `Cache/Backups/Maps` | **não é derivado**: as 20 últimas versões de cada mapa, copiadas antes de cada salvamento | — | 20 por mapa |
+| `Cache/Autosave` | **não é derivado**: autosave do mapa aberto para recuperar depois de um crash | — | 1 mapa |
 | `Cache/NativeModule`, `Cache/NativeBuild` | cópia do módulo C++ carregado e arquivos da compilação (ver [scripting-cpp.md](scripting-cpp.md)) | — | — |
 
 ## Como funciona (`Core/DiskCache.h`)

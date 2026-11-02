@@ -94,6 +94,18 @@ namespace Prism {
         // 'source' for invalida).
         Entity DuplicateEntity(Entity source);
 
+        // Copia 'source' E toda a sua subarvore para ESTA cena, vinda de QUALQUER Scene (inclusive
+        // desta mesma). A copia nasce como RAIZ (sem pai): quem chama decide o pai com SetParent.
+        // Base de copiar/colar, do desfazer de "Excluir" e de qualquer snapshot de subarvore: a
+        // origem pode ser uma Scene auxiliar que guarda a copia, independente da cena de edicao.
+        //
+        // Cobre todo Component do ComponentRegistry (inclusive de extensoes). Com 'exact' = true
+        // copia tambem o que o registro NAO conhece: o vinculo vivo de prefab
+        // (PrefabInstanceRoot/Member) e os blocos de components desconhecidos preservados do
+        // arquivo (UnknownComponents) - e o que um snapshot FIEL precisa (desfazer exclusao, colar
+        // uma instancia de prefab mantendo o vinculo). Com 'exact' = false so o que Duplicar copia.
+        Entity CopyEntityTreeFrom(Entity source, bool exact = false);
+
         // Matriz de mundo de uma entidade, ja combinando o TransformComponent
         // local dela com o de todos os ancestrais (via RelationshipComponent).
         // Entidades sem RelationshipComponent (ou sem Parent valido) usam so

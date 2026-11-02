@@ -1,5 +1,6 @@
 #include "EntityOps.h"
 #include "../Commands/EditorCommands.h"
+#include "EntityClipboard.h"
 #include <algorithm>
 
 namespace PrismEditor::EntityOps {
@@ -85,6 +86,37 @@ namespace PrismEditor::EntityOps {
         ctx.History.Execute(Prism::CreateScope<DeleteEntityCommand>(ctx.ActiveScene, entity));
         if (ctx.SelectedEntity == entity)
             ctx.SelectedEntity = {};
+    }
+
+    void CopyEntity(EditorContext& ctx, Prism::Entity entity) {
+        (void)ctx;
+        if (!entity.IsValid())
+            return;
+        EntityClipboard::Copy(entity);
+    }
+
+    void CutEntity(EditorContext& ctx, Prism::Entity entity) {
+        if (!entity.IsValid())
+            return;
+        EntityClipboard::Copy(entity);
+        DeleteEntity(ctx, entity); // um Ctrl+Z restaura a subarvore; o clipboard continua com a copia
+    }
+
+    void PasteEntity(EditorContext& ctx) {
+        if (!EntityClipboard::HasContent() || !ctx.ActiveScene)
+            return;
+
+        // Cola como irma da selecionada (mesmo pai). Sem selecao, vira raiz.
+        Prism::Entity parent;
+        if (ctx.SelectedEntity.IsValid())
+            parent = ctx.SelectedEntity.GetParent();
+
+        auto command = Prism::CreateScope<PasteEntityCommand>(ctx.ActiveScene, EntityClipboard::Root(), parent);
+        if (!command->HasContent())
+            return;
+        PasteEntityCommand* raw = command.get();
+        ctx.History.Execute(std::move(command));
+        ctx.SelectedEntity = raw->GetPastedEntity();
     }
 
     void SetPrimaryCamera(EditorContext& ctx, Prism::Entity newPrimary) {

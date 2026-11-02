@@ -71,6 +71,7 @@ A viewport livre do editor usa o ambiente da cena e as opções padrão de câme
 | Ctrl+S | Salvar mapa |
 | Ctrl+Shift+S | Salvar como |
 | Ctrl+D | Duplicar entidade selecionada |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copiar / recortar / colar a entidade selecionada (com os filhos) |
 | Delete / Backspace | Excluir entidade selecionada |
 | W / E / R | Gizmo: mover / rotacionar / escalar |
 | Ctrl (durante o arraste) | Snapping (1 unidade; 15° na rotação) |
@@ -118,6 +119,21 @@ A detecção não depende do undo/redo: compara o estado atual da cena com o de 
 
 Limite conhecido: duas entidades com conteúdo 100% idêntico (mesmo nome, transform e components) são indistinguíveis, então trocar o pai de um filho entre elas não é detectado. As duas árvores ficam idênticas, então o resultado visível é o mesmo.
 
+### Backups automáticos dos mapas
+
+Antes de **sobrescrever** um mapa, o editor copia o arquivo que está no disco para `<Projeto>/Cache/Backups/Maps/<Nome>_AAAAMMDD-HHMMSS.prismmap` (`Core/FileBackup.h`). O primeiro salvamento de cada mapa na sessão sempre gera um backup, com o arquivo exatamente como estava ao abrir o editor; os seguintes só geram um novo a cada 5 minutos. São mantidos os **20 mais recentes** de cada mapa.
+
+Para recuperar uma versão antiga, feche o mapa e copie o backup desejado de volta para `Maps/` (sem o sufixo de data). Isso protege contra o que o save atômico não cobre: um arquivo inteiro porém errado (um component descartado na leitura por dado inválido e regravado sem ele, uma migração de formato, um "Salvar" por engano). Como fica em `Cache/`, não vai para o Git nem para o jogo exportado. **Atenção:** apagar a pasta `Cache/` apaga também os backups e o autosave (ver [caches.md](caches.md)).
+
+### Autosave e recuperação de crash
+
+A cada 2 minutos, se o mapa tem alterações não salvas, o editor grava uma cópia em `<Projeto>/Cache/Autosave/autosave.prismmap` (mais um `autosave.info` com o mapa de origem e a hora). Ela é apagada quando você salva o mapa e quando o editor fecha normalmente (inclusive ao escolher "Não salvar"). Se ainda existir na próxima abertura, o editor não foi fechado direito, e aparece o popup **Recuperar mapa**:
+
+- **Recuperar**: abre a versão do autosave já marcada como "alterações não salvas", associada ao mapa original. Nada é gravado em `Maps/` até você salvar (Ctrl+S), e esse salvamento ainda gera o backup do arquivo que estava no disco.
+- **Descartar**: apaga o autosave e abre o mapa inicial normalmente.
+
+O autosave não roda durante o Play nem enquanto a pergunta de recuperação está aberta, e nunca sobrescreve o mapa.
+
 ## Prefabs e materiais
 
 - **Criar Prefab...** salva a entidade e toda a sua subárvore em `Assets/Prefabs/`.
@@ -154,6 +170,7 @@ O alvo **PrismRuntime** é um executável só do jogo: `PrismRuntime <pasta-do-p
 
 ## Limitações conhecidas
 
-- Os campos de Light, Collider, RigidBody, Camera e a troca de mesh não geram comandos de undo individuais. Geram undo: Transform, cor, criar/duplicar/excluir entidade, reparentar, instanciar prefab, carregar material e adicionar/remover component.
-- Não há copiar/colar de subárvores.
+- O Desfazer cobre Transform, cor, os campos de Light, Collider, RigidBody, Camera, Joint, Character Controller, Audio Source e **Material** (um gesto de edição = um passo), criar/duplicar/excluir/colar entidade, reparentar, instanciar prefab, carregar material e adicionar/remover component. Desfazer uma exclusão restaura a subárvore inteira (filhos, todos os components, vínculo de prefab) no mesmo pai e na mesma posição.
+- Desfazer uma exclusão recria as entidades com identidades novas: um passo **mais antigo** do histórico que mexia na entidade excluída (por exemplo, uma movimentação anterior) deixa de ter efeito depois de desfazer a exclusão.
+- Copiar/colar vale só dentro do editor (a área de transferência do sistema não é usada), mas funciona entre mapas.
 - Não há resolução configurável para a janela de Play.

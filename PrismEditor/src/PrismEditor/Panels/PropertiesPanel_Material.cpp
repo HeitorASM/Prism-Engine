@@ -27,6 +27,18 @@ namespace PrismEditor {
     void PropertiesPanel::DrawMaterialUI() {
         auto& material = m_Ctx.SelectedEntity.GetComponent<Prism::MaterialComponent>();
         bool keepOpen = true;
+
+        // --- Undo/Redo ----------------------------------------------------------------------
+        // Todo widget que edita o material chama markEdited() (que tambem avisa o vinculo vivo
+        // com o .prismmat). A copia abaixo e o estado do INICIO do frame: quando um gesto comeca
+        // (primeiro frame com markEdited), ela vira o "antes". O gesto termina quando nenhum item
+        // do ImGui esta ativo (soltou o slider / o combo ja fechou) e vira UM comando.
+        const Prism::MaterialComponent materialAtFrameStart = material;
+        bool editedThisFrame = false;
+        auto markEdited = [&]() {
+            editedThisFrame = true;
+            m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
+        };
         if (ImGui::CollapsingHeader("Material", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
             // --- Material Asset (.prismmat) - reutilizar entre entidades ---
             // "Salvar como Asset" grava os campos ATUAIS deste
@@ -240,7 +252,7 @@ namespace PrismEditor {
                 }
 
                 if (path != pathBefore)
-                    m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
+                    markEdited();
 
                 ImGui::EndGroup();
 
@@ -249,7 +261,7 @@ namespace PrismEditor {
 
             renderTextureSlot("Albedo", "Cor base (RGB)", material.AlbedoPath, /*isSRGB*/ true);
             if (ImGui::ColorEdit3("Tint de Albedo", glm::value_ptr(material.AlbedoTint)))
-                m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
+                markEdited();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Multiplica a textura de Albedo (ou serve como cor solida, se nenhuma textura estiver configurada acima).");
 
@@ -259,15 +271,15 @@ namespace PrismEditor {
             ImGui::Separator();
             renderTextureSlot("Roughness/Metallic", "G=roughness, B=metallic (glTF)", material.RoughnessMetallicPath, /*isSRGB*/ false);
             if (ImGui::SliderFloat("Roughness Factor", &material.RoughnessFactor, 0.0f, 1.0f))
-                m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
+                markEdited();
             if (ImGui::SliderFloat("Metallic Factor", &material.MetallicFactor, 0.0f, 1.0f))
-                m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity);
+                markEdited();
             ImGui::TextDisabled("(?) Roughness: 0 = espelhado, 1 = fosco. Metallic: 0 = plastico/madeira/pedra, 1 = metal. Com um mapa carregado, o fator multiplica o mapa (G = roughness, B = metallic).");
 
             // --- Superficie: transparencia, UV, emissao, dupla face ---------------------------------
             ImGui::Separator();
             ImGui::TextUnformatted("Superficie");
-            auto dirty = [&] { m_Ctx.MaterialLinks.MarkDirty(m_Ctx.SelectedEntity); };
+            auto dirty = [&] { markEdited(); };
             const char* blendNames[] = { "Opaco", "Recorte (Mask)", "Translucido (Blend)" };
             int blend = (int)material.BlendMode;
             if (ImGui::Combo("Modo de mistura", &blend, blendNames, IM_ARRAYSIZE(blendNames))) {
@@ -399,6 +411,20 @@ namespace PrismEditor {
                 }
             }
         }
+        if (editedThisFrame && !m_MaterialGestureOpen) {
+            m_MaterialBeforeEdit = materialAtFrameStart;
+            m_MaterialGestureEntity = m_Ctx.SelectedEntity;
+            m_MaterialGestureOpen = true;
+        }
+        if (m_MaterialGestureOpen && !ImGui::IsAnyItemActive()) {
+            m_MaterialGestureOpen = false;
+            if (m_MaterialGestureEntity == m_Ctx.SelectedEntity && keepOpen) {
+                EditorContext* ctx = &m_Ctx;
+                m_Ctx.History.Execute(Prism::CreateScope<EditMaterialCommand>(m_Ctx.SelectedEntity, m_MaterialBeforeEdit, material,
+                    [ctx](Prism::Entity entity) { ctx->MaterialLinks.MarkDirty(entity); }));
+            }
+        }
+
         if (!keepOpen)
             m_Ctx.History.Execute(Prism::CreateScope<RemoveComponentCommand<Prism::MaterialComponent>>(m_Ctx.SelectedEntity, "Material"));
     }
