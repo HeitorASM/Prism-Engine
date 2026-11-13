@@ -73,6 +73,8 @@ namespace Prism {
     public:
         const ProjectConfig& GetConfig() const { return m_Config; }
         const std::filesystem::path& GetProjectDirectory() const { return m_ProjectDirectory; }
+        // Caminho do .prismproj deste projeto.
+        const std::filesystem::path& GetProjectFilePath() const { return m_ProjectFilePath; }
 
         std::filesystem::path GetAssetDirectory() const { return m_ProjectDirectory / m_Config.AssetDirectory; }
         std::filesystem::path GetScriptDirectory() const { return m_ProjectDirectory / m_Config.ScriptDirectory; }

@@ -41,6 +41,7 @@
 #include "../Panels/ProfilerPanel.h"
 #include "../Panels/BuildOutputPanel.h"
 #include "../Panels/ExtensionsPanel.h"
+#include "../Panels/ExtensionPanelHost.h"
 #include "../Panels/GamePanel.h"
 #include "../Play/PlayWindow.h"
 
@@ -77,6 +78,13 @@ namespace PrismEditor {
         void StartNativeBuild();
         void StartExtensionBuild(const std::filesystem::path& extensionDirectory);
         void PollNativeBuild();
+
+        // Visual Studio (so Windows): gera a solucao do projeto de scripts C++ (ou de uma extensao) com o
+        // CMake e a abre. Reaproveita o NativeBuilder e a aba Saida de Build. Ver Core/VisualStudioSolution.h.
+        void RenderNativeScriptsMenu(); // Arquivo > Scripts C++
+        void StartSolutionGeneration();
+        void StartExtensionSolutionGeneration(const std::filesystem::path& extensionDirectory);
+        void OpenSolutionInVisualStudio(); // abre a .sln ja gerada (ou gera se ainda nao existe)
 
         // Arquivo > Exportar Jogo...: empacota o projeto + PrismRuntime numa pasta (ver
         // Prism/Project/GameExporter.h). A copia roda numa thread de fundo; a saida vai
@@ -176,7 +184,12 @@ namespace PrismEditor {
         // m_NativeBuilder e a aba Saida de Build; m_ExtensionBuildDirectory != vazio = o build em
         // andamento e de uma extensao (nao dos scripts C++: nao recarrega o modulo ao terminar).
         ExtensionsPanel m_Extensions;
+        ExtensionPanelHost m_ExtensionPanels; // paineis/menus de extensoes
         std::filesystem::path m_ExtensionBuildDirectory;
+
+        // Geracao da solucao do Visual Studio em andamento (ver StartSolutionGeneration, serve tambem
+        // para extensoes): quando termina com sucesso, a .sln e aberta.
+        bool m_SolutionGenerationActive = false;
     };
 
 }

@@ -13,7 +13,7 @@
 
 namespace Prism {
 
-    std::filesystem::path GetExecutableDirectory() {
+    std::filesystem::path GetExecutablePath() {
 #if defined(_WIN32)
         // O buffer cresce ate o limite de caminho longo; MAX_PATH truncaria.
         std::wstring buffer(512, L'\0');
@@ -23,7 +23,7 @@ namespace Prism {
                 return {};
             if (length < buffer.size()) {
                 buffer.resize(length);
-                return std::filesystem::path(buffer).parent_path();
+                return std::filesystem::path(buffer);
             }
             if (buffer.size() >= 32768)
                 return {};
@@ -32,12 +32,14 @@ namespace Prism {
 #elif defined(__linux__)
         std::error_code ec;
         std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
-        if (ec)
-            return {};
-        return exe.parent_path();
+        return ec ? std::filesystem::path() : exe;
 #else
         return {};
 #endif
+    }
+
+    std::filesystem::path GetExecutableDirectory() {
+        return GetExecutablePath().parent_path();
     }
 
 }

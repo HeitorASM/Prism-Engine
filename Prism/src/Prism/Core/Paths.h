@@ -14,4 +14,7 @@ namespace Prism {
     // suportada ou a consulta falhar.
     std::filesystem::path GetExecutableDirectory();
 
+    // Caminho completo do executavel em execucao (ex: .../PrismEditor.exe). Vazio se a consulta falhar.
+    std::filesystem::path GetExecutablePath();
+
 }

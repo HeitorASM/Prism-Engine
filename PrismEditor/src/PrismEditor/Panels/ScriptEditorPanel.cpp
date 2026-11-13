@@ -1,8 +1,12 @@
 #include "ScriptEditorPanel.h"
 #include <Prism.h>
 #include <imgui.h>
+#include <imgui_internal.h> // ImGuiSettingsHandler (zoom salvo no imgui.ini)
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
@@ -10,6 +14,55 @@ namespace PrismEditor {
 
     namespace {
         const std::filesystem::path kNoPath;
+
+        // Zoom do texto. Vive no escopo do arquivo (e nao num membro) de proposito: o handler do
+        // imgui.ini abaixo fica registrado no contexto do ImGui ate o fim do programa e nao pode
+        // guardar um ponteiro para um painel que morre ao fechar o projeto.
+        float s_CodeZoom = 1.0f;
+        bool s_ZoomHandlerRegistered = false;
+
+        // Persistencia: [PrismCodeEditor][Main] / Zoom=1.25 no imgui.ini.
+        void* ZoomReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name) {
+            return std::strcmp(name, "Main") == 0 ? (void*)&s_CodeZoom : nullptr;
+        }
+        void ZoomReadLine(ImGuiContext*, ImGuiSettingsHandler*, void*, const char* line) {
+            float value = 0.0f;
+            if (std::sscanf(line, "Zoom=%f", &value) == 1 && std::isfinite(value))
+                s_CodeZoom = std::clamp(value, ScriptEditorPanel::kMinZoom, ScriptEditorPanel::kMaxZoom);
+        }
+        void ZoomWriteAll(ImGuiContext*, ImGuiSettingsHandler* handler, ImGuiTextBuffer* out) {
+            out->appendf("[%s][Main]\nZoom=%.2f\n\n", handler->TypeName, s_CodeZoom);
+        }
+    }
+
+    // O ImGui le o imgui.ini UMA vez, no primeiro NewFrame, e descarta o que nenhum handler
+    // reconhece: por isso o registro precisa vir antes disso (ver EditorApp.cpp). Chamado de
+    // novo por OnImGuiRender como rede de seguranca (nesse caso o zoom salvo so vale na proxima sessao).
+    void ScriptEditorPanel::RegisterSettings() {
+        if (s_ZoomHandlerRegistered || !ImGui::GetCurrentContext())
+            return;
+        s_ZoomHandlerRegistered = true;
+        ImGuiSettingsHandler handler;
+        handler.TypeName = "PrismCodeEditor";
+        handler.TypeHash = ImHashStr(handler.TypeName);
+        handler.ReadOpenFn = ZoomReadOpen;
+        handler.ReadLineFn = ZoomReadLine;
+        handler.WriteAllFn = ZoomWriteAll;
+        ImGui::AddSettingsHandler(&handler);
+    }
+
+    float ScriptEditorPanel::GetZoom() { return s_CodeZoom; }
+
+    void ScriptEditorPanel::SetZoom(float zoom) {
+        if (!std::isfinite(zoom))
+            return;
+        // Arredonda a 5%: passos repetidos da roda nao acumulam erro de float (0.1 + 0.1 + ...).
+        zoom = std::round(std::clamp(zoom, kMinZoom, kMaxZoom) * 20.0f) / 20.0f;
+        if (zoom == s_CodeZoom)
+            return;
+        s_CodeZoom = zoom;
+        if (ImGui::GetCurrentContext())
+            ImGui::MarkIniSettingsDirty();
     }
 
     bool ScriptEditorPanel::LooksLikeTextFile(const std::filesystem::path& path) {
@@ -70,11 +123,11 @@ namespace PrismEditor {
         std::string extension = path.extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
         if (extension == ".lua")
-            document.Editor.SetLanguage(TextEditor::Language::Lua());
+            document.Editor.SetLanguage(TextEditor::LookupLanguage("Lua"));
         else if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" || extension == ".hpp" || extension == ".hxx" || extension == ".h" || extension == ".inl")
-            document.Editor.SetLanguage(TextEditor::Language::Cpp());
+            document.Editor.SetLanguage(TextEditor::LookupLanguage("C++"));
         else if (extension == ".c")
-            document.Editor.SetLanguage(TextEditor::Language::C());
+            document.Editor.SetLanguage(TextEditor::LookupLanguage("C"));
         else
             document.Editor.SetLanguage(nullptr);
 
@@ -162,6 +215,8 @@ namespace PrismEditor {
         if (m_Active >= 0 && m_Active < (int)m_Documents.size())
             title += " - " + m_Documents[m_Active]->Path.filename().string() + (AnyDirty() ? " *" : "");
         title += "###ScriptEditorPanel";
+
+        RegisterSettings(); // rede de seguranca (normalmente ja registrado em EditorApp.cpp)
 
         ImGui::Begin(title.c_str());
         m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -256,18 +311,79 @@ namespace PrismEditor {
             SaveDocument(active);
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", active.Path.string().c_str());
+
+        // Zoom: [-] 100% [+] no canto direito da barra; o caminho do arquivo ocupa o que sobra.
+        {
+            const ImGuiStyle& style = ImGui::GetStyle();
+            char percent[16];
+            std::snprintf(percent, sizeof(percent), "%d%%", (int)std::lround(GetZoom() * 100.0f));
+            const float minusWidth = ImGui::CalcTextSize("-").x + style.FramePadding.x * 2.0f;
+            const float plusWidth = ImGui::CalcTextSize("+").x + style.FramePadding.x * 2.0f;
+            const float percentWidth = ImGui::CalcTextSize("400%").x + style.FramePadding.x * 2.0f;
+            const float zoomWidth = minusWidth + percentWidth + plusWidth + style.ItemSpacing.x * 2.0f;
+            const float zoomStart = ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - zoomWidth);
+
+            // Caminho truncado pela largura disponivel (o tooltip mostra o completo).
+            ImGui::BeginChild("##CodePath", ImVec2(std::max(0.0f, zoomStart - ImGui::GetCursorPosX() - style.ItemSpacing.x), ImGui::GetFrameHeight()), false,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", active.Path.string().c_str());
+            ImGui::EndChild();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", active.Path.string().c_str());
+
+            ImGui::SameLine(zoomStart);
+            if (ImGui::Button("-##CodeZoomOut", ImVec2(minusWidth, 0.0f)))
+                ZoomBy(-0.1f);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Diminuir o texto (Ctrl + roda do mouse / Ctrl + -)");
+            ImGui::SameLine();
+            // Clicar na porcentagem volta para 100%.
+            if (ImGui::Button((std::string(percent) + "##CodeZoomReset").c_str(), ImVec2(percentWidth, 0.0f)))
+                ResetZoom();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Zoom do texto. Clique para voltar a 100%% (Ctrl + 0)");
+            ImGui::SameLine();
+            if (ImGui::Button("+##CodeZoomIn", ImVec2(plusWidth, 0.0f)))
+                ZoomBy(0.1f);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Aumentar o texto (Ctrl + roda do mouse / Ctrl + +)");
+        }
 
         // Ctrl+S salva o arquivo ativo quando o foco esta neste painel (inclusive dentro do TextEditor).
         ImGuiIO& io = ImGui::GetIO();
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        const bool panelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && panelFocused)
             SaveDocument(active);
+
+        // Atalhos de zoom: Ctrl + '+' (a tecla '=' no teclado ABNT2/US tambem, sem precisar de Shift),
+        // Ctrl + '-' e Ctrl + '0', com repeticao ao segurar. Teclado numerico incluido.
+        if (io.KeyCtrl && !io.KeyAlt && panelFocused) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
+                ZoomBy(0.1f);
+            else if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
+                ZoomBy(-0.1f);
+            else if (ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false))
+                ResetZoom();
+        }
 
         ImGui::Separator();
 
+        // Ctrl + roda do mouse sobre o codigo. Com Ctrl pressionado o ImGui nao rola a janela, entao
+        // nao ha rolagem junto com o zoom. O fator vale a partir do proximo desenho do texto.
+        if (io.KeyCtrl && io.MouseWheel != 0.0f && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
+            ZoomBy(io.MouseWheel > 0.0f ? 0.1f : -0.1f);
+
         // O ID inclui o caminho: cada arquivo tem seu proprio estado de foco/rolagem no ImGui.
+        // O TextEditor le o tamanho da fonte ao desenhar (GetFontSize/CalcTextSize), entao empilhar
+        // uma fonte maior em volta de Render() escala texto, numeros de linha, cursor e selecao juntos.
         ImVec2 avail = ImGui::GetContentRegionAvail();
+        const bool zoomed = GetZoom() != 1.0f;
+        if (zoomed)
+            ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * GetZoom());
         active.Editor.Render(("##ScriptEditorBuffer_" + active.Path.string()).c_str(), ImVec2(avail.x, avail.y));
+        if (zoomed)
+            ImGui::PopFont();
         ImGui::EndChild();
 
         ImGui::End();

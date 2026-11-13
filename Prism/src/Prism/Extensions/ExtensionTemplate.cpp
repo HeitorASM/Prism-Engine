@@ -18,7 +18,7 @@ namespace Prism {
 
         const char* kManifest =
             "name        = @NAME@\n"
-            "api         = 1\n"
+            "api         = 2\n"
             "version     = 0.1.0\n"
             "description = Extensao @NAME@\n"
             "author      = \n"
@@ -56,6 +56,18 @@ namespace Prism {
             "endforeach()\n"
             "if(MSVC)\n"
             "    target_compile_options(@NAME@ PRIVATE /utf-8)\n"
+            "endif()\n"
+            "\n"
+            "# Visual Studio (botao \"Abrir no Visual Studio\" da aba Extensoes): F5 abre o editor com o projeto\n"
+            "# e o depurador anexado, entao breakpoints desta extensao funcionam. Outros geradores ignoram isto.\n"
+            "set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT @NAME@)\n"
+            "if(PRISM_EDITOR_EXE)\n"
+            "    set_target_properties(@NAME@ PROPERTIES\n"
+            "        VS_DEBUGGER_COMMAND \"${PRISM_EDITOR_EXE}\"\n"
+            "        VS_DEBUGGER_WORKING_DIRECTORY \"${PRISM_EDITOR_DIR}\")\n"
+            "    if(PRISM_PROJECT_FILE)\n"
+            "        set_target_properties(@NAME@ PROPERTIES VS_DEBUGGER_COMMAND_ARGUMENTS \"\\\"${PRISM_PROJECT_FILE}\\\"\")\n"
+            "    endif()\n"
             "endif()\n";
 
         const char* kSource =

@@ -4,6 +4,7 @@
 #include "../Core/FileDialog.h"
 
 #include <PrismVersion.h>
+#include <Prism/Core/CommandLine.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -77,6 +78,39 @@ namespace PrismEditor {
 
     void ProjectManagerLayer::OnUpdate(float deltaTime) {
         (void)deltaTime;
+
+        // Projeto passado na linha de comando: tentado uma vez, no primeiro quadro (nao no OnAttach: a
+        // troca de Layer so pode ser enfileirada com a Layer ja ativa). Se falhar, o erro aparece na
+        // lista de recentes e o usuario escolhe um projeto normalmente.
+        if (m_LaunchArgumentChecked)
+            return;
+        m_LaunchArgumentChecked = true;
+        for (const std::string& argument : Prism::GetLaunchArguments()) {
+            if (argument.empty() || argument[0] == '-')
+                continue; // opcoes (ainda nao ha nenhuma): so o primeiro caminho interessa
+            std::filesystem::path given = FileDialog::FromUtf8(argument);
+            std::error_code ec;
+            std::filesystem::path projectFile;
+            if (std::filesystem::is_regular_file(given, ec) && given.extension() == ".prismproj") {
+                projectFile = given;
+            }
+            else if (std::filesystem::is_directory(given, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(given, ec)) {
+                    if (entry.is_regular_file(ec) && entry.path().extension() == ".prismproj") {
+                        projectFile = entry.path();
+                        break;
+                    }
+                }
+            }
+            if (projectFile.empty()) {
+                m_OpenError = "Nenhum projeto (.prismproj) em '" + argument + "' (argumento da linha de comando).";
+                PRISM_ERROR(m_OpenError);
+            }
+            else {
+                OpenProject(projectFile);
+            }
+            break;
+        }
     }
 
     void ProjectManagerLayer::OnAttach() {

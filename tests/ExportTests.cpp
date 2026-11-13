@@ -62,6 +62,7 @@ static Fixture MakeFixture(const char* name, bool withModule = true) {
     Touch(f.Project / "Scripts" / "player.lua");
     Touch(f.Project / "Source" / "Spinner.cpp");                    // codigo C++: nao vai
     Touch(f.Project / "Cache" / "NativeBuild" / "lixo.o");          // cache: nao vai
+    Touch(f.Project / "Intermediate" / "VisualStudio" / "Scripts.sln"); // solucao do Visual Studio: nao vai
     Touch(f.Project / ".git" / "HEAD");
     Touch(f.Project / ".gitignore");
     Touch(f.Project / "Maps" / "Fase1.prismmap.bak");               // backup: nao vai
@@ -142,6 +143,7 @@ static void TestHappyPath() {
     // O que nao deve ir.
     CHECK(!Exists(f.Output / "Game" / "Source"));
     CHECK(!Exists(f.Output / "Game" / "Cache"));
+    CHECK(!Exists(f.Output / "Game" / "Intermediate"));
     CHECK(!Exists(f.Output / "Game" / ".git"));
     CHECK(!Exists(f.Output / "Game" / ".gitignore"));
     CHECK(!Exists(f.Output / "Game" / "Maps" / "Fase1.prismmap.bak"));

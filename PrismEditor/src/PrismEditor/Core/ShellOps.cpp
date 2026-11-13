@@ -32,6 +32,23 @@ namespace PrismEditor::ShellOps {
         std::system(command.c_str());
     }
 
+    bool OpenWithDefaultApp(const std::filesystem::path& path) {
+        const std::string p = path.string();
+        if (!SafeForShell(p)) {
+            PRISM_CORE_WARN("Nao foi possivel abrir o arquivo: o caminho tem caracteres especiais.");
+            return false;
+        }
+#if defined(_WIN32)
+        std::string command = "start \"\" \"" + p + "\"";
+#elif defined(__APPLE__)
+        std::string command = "open \"" + p + "\"";
+#else
+        std::string command = "xdg-open \"" + p + "\" >/dev/null 2>&1 &";
+#endif
+        std::system(command.c_str());
+        return true;
+    }
+
     void OpenTerminalAt(const std::filesystem::path& directory) {
         const std::string p = directory.string();
         if (!SafeForShell(p)) {

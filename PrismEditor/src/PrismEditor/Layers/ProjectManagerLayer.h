@@ -80,6 +80,10 @@ namespace PrismEditor {
         std::filesystem::path m_LastProjectsDirectory;
 
         std::vector<RecentProject> m_RecentProjects;
+
+        // Argumento de linha de comando (PrismEditor.exe <pasta | arquivo.prismproj>): abre esse projeto
+        // direto, sem passar pela lista. E o que o F5 do Visual Studio usa (ver PrismGenerated.cmake).
+        bool m_LaunchArgumentChecked = false;
     };
 
 }

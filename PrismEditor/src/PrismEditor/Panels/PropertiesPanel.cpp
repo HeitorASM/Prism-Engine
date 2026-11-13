@@ -1,10 +1,12 @@
 #include "PropertiesPanel.h"
 #include <imgui.h>
+#include <functional>
 #include <GLFW/glfw3.h>
 #include "ContentBrowserPanel.h"
 #include "ScriptEditorPanel.h"
 #include "../Play/PlayWindow.h"
 #include "../Commands/EditorCommands.h"
+#include "Prism/Extensions/ExtensionHooks.h"
 #include "../Core/EntityOps.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -40,61 +42,61 @@ namespace PrismEditor {
         RenderPrefabInstanceSection();
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::TransformComponent>())
-            DrawTransformUI();
+            DrawWithExtensionHooks("Transform", [&] { DrawTransformUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MeshRendererComponent>())
-            DrawMeshRendererUI();
+            DrawWithExtensionHooks("Mesh Renderer", [&] { DrawMeshRendererUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::LevelMeshComponent>())
-            DrawLevelMeshUI();
+            DrawWithExtensionHooks("Level Mesh", [&] { DrawLevelMeshUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::MaterialComponent>())
-            DrawMaterialUI();
+            DrawWithExtensionHooks("Material", [&] { DrawMaterialUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::LightComponent>())
-            DrawLightUI();
+            DrawWithExtensionHooks("Light", [&] { DrawLightUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ColliderComponent>())
-            DrawColliderUI();
+            DrawWithExtensionHooks("Collider", [&] { DrawColliderUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::RigidBodyComponent>())
-            DrawRigidBodyUI();
+            DrawWithExtensionHooks("Rigid Body", [&] { DrawRigidBodyUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::RaycastComponent>())
-            DrawRaycastUI();
+            DrawWithExtensionHooks("Raycast", [&] { DrawRaycastUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::JointComponent>())
-            DrawJointUI();
+            DrawWithExtensionHooks("Joint", [&] { DrawJointUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::CharacterControllerComponent>())
-            DrawCharacterControllerUI();
+            DrawWithExtensionHooks("Character Controller", [&] { DrawCharacterControllerUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::CameraComponent>())
-            DrawCameraUI();
+            DrawWithExtensionHooks("Camera", [&] { DrawCameraUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ScriptComponent>())
-            DrawScriptUI();
+            DrawWithExtensionHooks("Script", [&] { DrawScriptUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::NativeScriptComponent>())
-            DrawNativeScriptUI();
+            DrawWithExtensionHooks("Native Script", [&] { DrawNativeScriptUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::ParticleEmitterComponent>())
-            DrawParticleEmitterUI();
+            DrawWithExtensionHooks("Particle Emitter", [&] { DrawParticleEmitterUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::UIDocumentComponent>())
-            DrawUIDocumentUI();
+            DrawWithExtensionHooks("UI Document", [&] { DrawUIDocumentUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioSourceComponent>())
-            DrawAudioSourceUI();
+            DrawWithExtensionHooks("Audio Source", [&] { DrawAudioSourceUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AudioListenerComponent>())
-            DrawAudioListenerUI();
+            DrawWithExtensionHooks("Audio Listener", [&] { DrawAudioListenerUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::AnimatorComponent>())
-            DrawAnimatorUI();
+            DrawWithExtensionHooks("Animator", [&] { DrawAnimatorUI(); });
 
         if (m_Ctx.SelectedEntity.HasComponent<Prism::EnvironmentComponent>())
-            DrawEnvironmentUI();
+            DrawWithExtensionHooks("Environment", [&] { DrawEnvironmentUI(); });
 
         // Components registrados por EXTENSOES (ComponentRegistry::RegisterExtension):
         // o inspetor vem do proprio registro (DrawInspector) e o Undo e generico.
@@ -209,6 +211,29 @@ namespace PrismEditor {
     // Component novo que nao seja adicionado aqui simplesmente nao tera
     // Undo ao ser adicionado - ainda funciona (AddDefault do registro e
     // usado como fallback abaixo), so sem desfazer.
+    // Secao de component da engine + hooks de extensoes (campos extras ou substituicao do inspetor).
+    // Undo dos hooks: compara o component serializado antes/depois do desenho.
+    void PropertiesPanel::DrawWithExtensionHooks(const char* registryName, const std::function<void()>& builtin) {
+        Prism::Entity entity = m_Ctx.SelectedEntity;
+        const std::string name = registryName;
+        const Prism::ComponentTypeInfo* info = Prism::ComponentRegistry::FindByName(name);
+        const bool replaced = Prism::ExtensionHooks::HasInspectorReplacement(name);
+        std::string before;
+        if (info && info->Has(entity)) before = Prism::ComponentRegistry::SerializeComponent(*info, entity);
+
+        bool changed = false;
+        if (replaced) changed = Prism::ExtensionHooks::DrawInspectors(name, entity, true);
+        else {
+            builtin();
+            changed = Prism::ExtensionHooks::DrawInspectors(name, entity, false);
+        }
+        if (changed && info && info->Has(entity)) {
+            const std::string after = Prism::ComponentRegistry::SerializeComponent(*info, entity);
+            if (after != before)
+                m_Ctx.History.Execute(Prism::CreateScope<EditRegisteredComponentCommand>(entity, name, before, after));
+        }
+    }
+
     void PropertiesPanel::AddComponentByRegistryName(const std::string& displayName) {
         Prism::Entity entity = m_Ctx.SelectedEntity;
 
@@ -263,6 +288,8 @@ namespace PrismEditor {
                 break;
             }
         }
+
+        Prism::ExtensionHooks::ComponentAdded(displayName, entity);
     }
 
     uint32_t PropertiesPanel::RenderCameraPreview(Prism::Entity cameraEntity, float width, float height) {

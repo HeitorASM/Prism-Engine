@@ -226,6 +226,29 @@ if(MSVC)
 endif()
 add_test(NAME BuildAnalysisTests COMMAND PrismBuildAnalysisTests)
 
+# PrismVisualStudioSolutionTests: escolha do gerador do CMake e .sln gerada (Core/VisualStudioSolution.h, so std).
+add_executable(PrismVisualStudioSolutionTests
+    VisualStudioSolutionTests.cpp
+)
+target_include_directories(PrismVisualStudioSolutionTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../PrismEditor/src)
+target_compile_features(PrismVisualStudioSolutionTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismVisualStudioSolutionTests PRIVATE /utf-8)
+endif()
+add_test(NAME VisualStudioSolutionTests COMMAND PrismVisualStudioSolutionTests)
+
+# PrismExtensionUiTests: registro de paineis/menus de extensoes (Extensions/ExtensionUi.*, so std).
+add_executable(PrismExtensionUiTests
+    ExtensionUiTests.cpp
+    ../Prism/src/Prism/Extensions/ExtensionUi.cpp
+)
+target_include_directories(PrismExtensionUiTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Prism/src)
+target_compile_features(PrismExtensionUiTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismExtensionUiTests PRIVATE /utf-8)
+endif()
+add_test(NAME ExtensionUiTests COMMAND PrismExtensionUiTests)
+
 # PrismShaderParamsTests: leitor dos parametros (uniforms) dos shaders de material (Renderer/ShaderParams.h, so std).
 add_executable(PrismShaderParamsTests
     ShaderParamsTests.cpp

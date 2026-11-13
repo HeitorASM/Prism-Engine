@@ -54,6 +54,21 @@ namespace PrismEditor {
         // tratar Ctrl+Z/Ctrl+S/Delete como atalhos da CENA enquanto se digita codigo.
         bool IsFocused() const { return m_Focused; }
 
+        // --- Zoom do texto -------------------------------------------------------
+        // Fator de escala da fonte do editor (1.0 = 100%), compartilhado por todos os arquivos
+        // abertos e salvo no imgui.ini (lembrado entre sessoes). Ctrl + roda do mouse sobre o
+        // codigo, Ctrl + '+' / Ctrl + '-' / Ctrl + '0' (reset) com o painel focado, ou os botoes
+        // da barra do painel. Limitado a [kMinZoom, kMaxZoom].
+        static constexpr float kMinZoom = 0.5f;
+        static constexpr float kMaxZoom = 4.0f;
+        // Registra a persistencia do zoom no imgui.ini. Chame uma vez ao criar a aplicacao, DEPOIS de o
+        // contexto do ImGui existir e ANTES do primeiro frame (ver EditorApp.cpp).
+        static void RegisterSettings();
+        static float GetZoom();
+        static void SetZoom(float zoom);
+        static void ZoomBy(float delta) { SetZoom(GetZoom() + delta); }
+        static void ResetZoom() { SetZoom(1.0f); }
+
     private:
         bool m_Focused = false;
 

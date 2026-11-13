@@ -85,6 +85,14 @@ PRISM_REGISTER_SCRIPT(Inimigo)
 - Exceções C++ lançadas em callbacks são capturadas: o erro vai para o Console e o script daquela entidade para de ser chamado. Falhas graves (acesso inválido, crash) derrubam o editor, como qualquer código nativo.
 - O módulo é copiado para `Cache/NativeModule/` antes de carregar, para o compilador poder sobrescrever `Binaries/NativeScripts.*` sem o sistema operacional travar o arquivo.
 
+## Visual Studio (Windows)
+
+No menu de scripts C++ do editor (e na aba Extensoes, para extensoes) use **Gerar solucao do Visual Studio**
+e depois **Abrir no Visual Studio**. A `.sln` e gerada pelo CMake em `<Projeto>/Intermediate/VisualStudio/`
+(descartavel; fica fora do `Source/` e do jogo exportado). F5 no VS abre o editor ja com o projeto
+(o editor aceita o caminho do projeto como argumento de linha de comando).
+Limite: recompilar a dll com o editor rodando sob o depurador pode travar o `.pdb`; pare a depuracao antes.
+
 ## Usando bibliotecas de terceiros
 
 O módulo é um projeto CMake comum. O `Source/CMakeLists.txt` é **seu**: a engine só o cria quando falta e nunca o sobrescreve. O que é da engine (includes do SDK, C++20, pasta de saída `Binaries/`) fica em `Source/PrismGenerated.cmake`, que é regravado a cada abertura/compilação e não deve ser editado. O `CMakeLists.txt` chama `prism_configure_module(NativeScripts)`, definida lá.

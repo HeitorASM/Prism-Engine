@@ -140,6 +140,47 @@ Prism::RegisterSystem<MeuSistema>(host);   // dentro da dll
   o resto continua.
 - `Unregister(nome)`, `UnregisterSource(extensao)` e `Shutdown()` chamam `OnShutdown`.
 
+## API v2: painel, janela, menu e hooks
+
+Extensoes com `api = 2` no `extension.ini` (o editor aceita v1 e v2; extensao com API maior que a da engine e recusada).
+Exemplo completo: `examples/Extensions/Painel/`.
+
+### Paineis, janelas e menus
+
+```cpp
+ExtensionPanelDesc p;
+p.Id = "inventario"; p.Title = "Inventario";
+p.Mode = ExtensionPanelMode::Docked;   // Docked | Floating | OsWindow
+p.Dock = ExtensionDockHint::Right;     // posicao inicial (depois vale o layout do usuario)
+p.Draw = [ui, ex]() { ex.Button("Ok"); };
+Prism::RegisterPanel(host, p);
+
+ExtensionMenuItemDesc m; m.Path = "Minha Ext/Fazer algo"; m.Action = []{ /*...*/ };
+Prism::RegisterMenuItem(host, m);      // primeiro trecho = menu da barra (existente ou novo)
+```
+
+- Paineis aparecem no menu **Janela**; o estado aberto/fechado e a posicao ficam no `imgui.ini`.
+- `OsWindow` usa multi-viewports do ImGui (melhor esforco): a janela sai do editor para o sistema.
+- `host.UiEx` traz mais widgets (Button, Slider, Combo, ColorEdit4, TreeNode...) sem linkar o ImGui.
+  Quem linka o ImGui na dll deve chamar `BindImGui(host)` antes de usa-lo.
+- Excecao em `Draw()` desliga so aquele painel.
+
+### Hooks de component
+
+`RegisterComponentHook` modifica um component existente (da engine ou de outra extensao) pelo nome:
+`OnAdded`, `OnSceneStart/Stop`, `OnUpdate/OnFixedUpdate` por entidade e `DrawInspector`
+(campos extras abaixo da secao, ou `ReplaceInspector = true` para substituir a secao). Se o
+`DrawInspector` devolver `true`, o editor registra o Undo da edicao.
+
+### Hooks de estagio
+
+`RegisterStageHook` roda `Before`/`After` em volta de um estagio do frame (Physics, ScriptsLua,
+ScriptsNative, Raycast, Particles, Animation, Audio); `Replace` pula a implementacao da engine (so
+Raycast, Particles, Animation e Audio, e uma unica extensao por estagio).
+Excecao em um hook desliga esse hook; a engine segue.
+
+Lembrete: a dll so enxerga codigo inline/template (`entity.GetComponent<T>()`, `scene.GetRegistry()`).
+
 ## Limitacoes atuais
 
 - Duplicar entidade e sincronizar prefab nao levam blocos desconhecidos (so salvar e o

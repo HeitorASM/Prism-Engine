@@ -1,6 +1,8 @@
 #include "ExtensionLoader.h"
 #include "ExtensionAPI.h"
 #include "SystemRegistry.h"
+#include "ExtensionHooks.h"
+#include "ExtensionUi.h"
 #include "../Core/Log.h"
 #include "../Core/Paths.h"
 #include "../Project/Project.h"
@@ -9,6 +11,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <chrono>
 #include <exception>
 #include <fstream>
@@ -142,6 +145,65 @@ namespace Prism {
         bool UiInputText(const char* l, char* b, size_t n) { return ImGui::InputText(l, b, n); }
         void UiText(const char* t) { ImGui::TextUnformatted(t ? t : ""); }
 
+        // --- v2: widgets extras (host.UiEx) e registros de interface/hooks ---------------------
+        const char* Safe(const char* t) { return t ? t : ""; }
+        bool UxButton(const char* l) { return ImGui::Button(Safe(l)); }
+        void UxSameLine() { ImGui::SameLine(); }
+        void UxSeparator() { ImGui::Separator(); }
+        void UxSpacing() { ImGui::Spacing(); }
+        void UxTextWrapped(const char* t) { ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(Safe(t)); ImGui::PopTextWrapPos(); }
+        void UxTextDisabled(const char* t) { ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)); ImGui::TextUnformatted(Safe(t)); ImGui::PopStyleColor(); }
+        void UxTextColored(float r, float g, float b, float a, const char* t) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(r, g, b, a)); ImGui::TextUnformatted(Safe(t)); ImGui::PopStyleColor(); }
+        bool UxSliderFloat(const char* l, float* v, float mn, float mx) { return ImGui::SliderFloat(Safe(l), v, mn, mx); }
+        bool UxSliderInt(const char* l, int* v, int mn, int mx) { return ImGui::SliderInt(Safe(l), v, mn, mx); }
+        bool UxInputFloat(const char* l, float* v) { return ImGui::InputFloat(Safe(l), v); }
+        bool UxInputInt(const char* l, int* v) { return ImGui::InputInt(Safe(l), v); }
+        bool UxInputTextMultiline(const char* l, char* b, size_t n, float w, float h) { return ImGui::InputTextMultiline(Safe(l), b, n, ImVec2(w, h)); }
+        bool UxCombo(const char* l, int* c, const char* items) { return ImGui::Combo(Safe(l), c, items ? items : "\0"); }
+        bool UxColorEdit4(const char* l, float* rgba) { return ImGui::ColorEdit4(Safe(l), rgba); }
+        bool UxSelectable(const char* l, bool selected) { return ImGui::Selectable(Safe(l), selected); }
+        bool UxCollapsingHeader(const char* l) { return ImGui::CollapsingHeader(Safe(l)); }
+        bool UxTreeNode(const char* l) { return ImGui::TreeNode(Safe(l)); }
+        void UxTreePop() { ImGui::TreePop(); }
+        void UxBeginDisabled(bool d) { ImGui::BeginDisabled(d); }
+        void UxEndDisabled() { ImGui::EndDisabled(); }
+        void UxPushId(const char* id) { ImGui::PushID(Safe(id)); }
+        void UxPopId() { ImGui::PopID(); }
+        void UxSetTooltipOnHover(const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Safe(t)); }
+        void UxProgressBar(float f, const char* overlay) { ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 0.0f), overlay); }
+        void UxGetContentRegionAvail(float* w, float* h) { const ImVec2 a = ImGui::GetContentRegionAvail(); if (w) *w = a.x; if (h) *h = a.y; }
+
+        bool HostRegisterPanel(ExtensionPanelDesc* desc, const char* source) {
+            if (!desc) return false;
+            const std::string src = Safe(source);
+            const bool ok = ExtensionUiRegistry::RegisterPanel(std::move(*desc), src);
+            if (!ok) PRISM_CORE_WARN("Extensao '", src, "': painel recusado (Id/Title/Draw faltando ou Id repetido).");
+            return ok;
+        }
+        bool HostRegisterMenuItem(ExtensionMenuItemDesc* desc, const char* source) {
+            if (!desc) return false;
+            const std::string src = Safe(source);
+            const bool ok = ExtensionUiRegistry::RegisterMenuItem(std::move(*desc), src);
+            if (!ok) PRISM_CORE_WARN("Extensao '", src, "': item de menu recusado (Path invalido ou sem Action).");
+            return ok;
+        }
+        bool HostSetPanelOpen(const char* source, const char* id, bool open) {
+            return ExtensionUiRegistry::SetPanelOpen(Safe(source), Safe(id), open);
+        }
+        bool HostRegisterComponentHook(ExtensionComponentHookDesc* desc, const char* source) {
+            return desc && ExtensionHooks::RegisterComponentHook(std::move(*desc), Safe(source));
+        }
+        bool HostRegisterStageHook(ExtensionStageHookDesc* desc, const char* source) {
+            return desc && ExtensionHooks::RegisterStageHook(std::move(*desc), Safe(source));
+        }
+
+        // Tira tudo que a extensao registrou nos registros da engine.
+        void UnregisterEverything(const std::string& name) {
+            SystemRegistry::UnregisterSource(name);
+            ExtensionUiRegistry::UnregisterSource(name);
+            ExtensionHooks::UnregisterSource(name);
+        }
+
         void Record(ExtensionInfo info, ExtensionState state, const std::string& message) {
             info.State = state;
             info.Message = message;
@@ -260,9 +322,10 @@ namespace Prism {
                 Record(info, ExtensionState::Skipped, std::string("alvo '") + ExtensionTargetName(m.Target) + "' nao se aplica a este executavel.");
                 continue;
             }
-            if (m.ApiVersion != kExtensionApiVersion) {
+            if (m.ApiVersion < kExtensionApiMinVersion || m.ApiVersion > kExtensionApiVersion) {
                 Record(info, ExtensionState::Failed, "compilada para a API " + std::to_string(m.ApiVersion) +
-                    " (a engine usa " + std::to_string(kExtensionApiVersion) + "). Recompile a extensao.");
+                    " (a engine aceita da " + std::to_string(kExtensionApiMinVersion) + " a " + std::to_string(kExtensionApiVersion) +
+                    "). " + (m.ApiVersion > kExtensionApiVersion ? "Atualize a engine." : "Recompile a extensao."));
                 continue;
             }
             // dependencia que ficou Skipped/Failed nesta ou em outra rodada nao conta como carregada
@@ -304,11 +367,14 @@ namespace Prism {
                 Record(info, ExtensionState::Failed, "a biblioteca nao exporta os pontos de entrada (falta PRISM_EXTENSION(...)).");
                 continue; // fica aberta de proposito (ver Shutdown)
             }
-            if (versionFn() != kExtensionApiVersion) {
-                Record(info, ExtensionState::Failed, "biblioteca compilada para a API " + std::to_string(versionFn()) +
-                    " (a engine usa " + std::to_string(kExtensionApiVersion) + "). Recompile.");
+            const uint32_t libraryApi = versionFn();
+            if (libraryApi < kExtensionApiMinVersion || libraryApi > kExtensionApiVersion) {
+                Record(info, ExtensionState::Failed, "biblioteca compilada para a API " + std::to_string(libraryApi) +
+                    " (a engine aceita da " + std::to_string(kExtensionApiMinVersion) + " a " + std::to_string(kExtensionApiVersion) + "). Recompile.");
                 continue;
             }
+            if (libraryApi != m.ApiVersion)
+                PRISM_CORE_WARN("Extensao '", m.Name, "': o manifesto diz api = ", m.ApiVersion, " mas a biblioteca foi compilada para a ", libraryApi, ".");
 
             const std::string nameStr = m.Name;
             const std::string dirStr = info.Directory.string();
@@ -331,6 +397,26 @@ namespace Prism {
             host.RegisterSystemRaw = &HostRegisterSystem;
             host.LogRaw = &HostLog;
 
+            // v2
+            host.UiEx = { &UxButton, &UxSameLine, &UxSeparator, &UxSpacing, &UxTextWrapped, &UxTextDisabled, &UxTextColored,
+                          &UxSliderFloat, &UxSliderInt, &UxInputFloat, &UxInputInt, &UxInputTextMultiline, &UxCombo, &UxColorEdit4,
+                          &UxSelectable, &UxCollapsingHeader, &UxTreeNode, &UxTreePop, &UxBeginDisabled, &UxEndDisabled,
+                          &UxPushId, &UxPopId, &UxSetTooltipOnHover, &UxProgressBar, &UxGetContentRegionAvail };
+            host.RegisterPanelRaw = &HostRegisterPanel;
+            host.RegisterMenuItemRaw = &HostRegisterMenuItem;
+            host.SetPanelOpenRaw = &HostSetPanelOpen;
+            host.RegisterComponentHookRaw = &HostRegisterComponentHook;
+            host.RegisterStageHookRaw = &HostRegisterStageHook;
+            {
+                ImGuiMemAllocFunc allocFn = nullptr;
+                ImGuiMemFreeFunc freeFn = nullptr;
+                void* allocUserData = nullptr;
+                ImGui::GetAllocatorFunctions(&allocFn, &freeFn, &allocUserData);
+                host.ImGuiAllocFn = (void*)allocFn;
+                host.ImGuiFreeFn = (void*)freeFn;
+                host.ImGuiAllocUserData = allocUserData;
+            }
+
             bool initOk = false;
             std::string error;
             try {
@@ -342,7 +428,7 @@ namespace Prism {
                 error = "Init lancou uma excecao desconhecida.";
             }
             if (!initOk) {
-                SystemRegistry::UnregisterSource(nameStr); // desfaz o que ja tinha entrado
+                UnregisterEverything(nameStr); // desfaz o que ja tinha entrado (sistemas, paineis, menus, hooks)
                 Record(info, ExtensionState::Failed, error + " (components ja registrados por ela continuam no registro ate fechar o programa)");
                 continue;
             }
@@ -366,7 +452,7 @@ namespace Prism {
                 catch (const std::exception& e) { PRISM_CORE_ERROR("Extensao '", it->Name, "': Shutdown lancou excecao: ", e.what()); }
                 catch (...) { PRISM_CORE_ERROR("Extensao '", it->Name, "': Shutdown lancou uma excecao desconhecida."); }
             }
-            SystemRegistry::UnregisterSource(it->Name);
+            UnregisterEverything(it->Name);
         }
         // As bibliotecas NAO sao descarregadas (dlclose/FreeLibrary): objetos criados por elas
         // (pools de components no registro das cenas, sistemas, std::function) guardam ponteiros

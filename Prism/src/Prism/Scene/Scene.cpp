@@ -8,6 +8,7 @@
 #include "../Animation/AnimationSystem.h"
 #include "SceneSerializer.h"
 #include "../Extensions/SystemRegistry.h"
+#include "../Extensions/ExtensionHooks.h"
 #include "../Particles/ParticleSystem.h"
 #include "../Project/Project.h"
 #include "../Renderer/PrimitiveMeshFactory.h"
@@ -615,16 +616,23 @@ namespace Prism {
         NativeScripting::PollHotReload(*this); // modulo C++ recompilado durante o Play
 
         // OnFixedUpdate dos scripts roda dentro de Simulate, antes de cada passo fixo.
+        // Estagios com hooks de extensao (ExtensionHooks.h): Before -> engine (ou Replace) -> After.
+        // A fisica so aceita Before/After (os FixedUpdate dos scripts rodam dentro dela).
+        ExtensionHooks::StageBefore(EngineStage::Physics, *this, deltaTime);
         {
             PRISM_PROFILE_SCOPE("Scene.Physics");
             PhysicsEngine::Simulate(*this, deltaTime, [this](float fixedDeltaTime) { RunFixedUpdate(fixedDeltaTime); });
         }
+        ExtensionHooks::StageAfter(EngineStage::Physics, *this, deltaTime);
 
         // RaycastComponent tambem ANTES dos scripts, mesmo motivo: um
         // script que leia o resultado de um sensor de raycast da propria
         // entidade (ou de outra) em OnUpdate() deve ver o hit deste MESMO
         // frame, nao o do frame anterior.
-        UpdateRaycastComponents();
+        ExtensionHooks::StageBefore(EngineStage::Raycast, *this, deltaTime);
+        if (!ExtensionHooks::StageReplace(EngineStage::Raycast, *this, deltaTime))
+            UpdateRaycastComponents();
+        ExtensionHooks::StageAfter(EngineStage::Raycast, *this, deltaTime);
 
         // Snapshot dos handles: scripts podem criar entidades (Scene.Create/
         // Instantiate) durante a iteracao, o que invalidaria a view do EnTT.
@@ -633,11 +641,13 @@ namespace Prism {
         for (auto entityHandle : m_Registry.view<ScriptComponent>())
             scriptEntities.push_back(entityHandle);
         Profiler::Scope zLua("Scene.ScriptsLua");
+        ExtensionHooks::StageBefore(EngineStage::ScriptsLua, *this, deltaTime);
         for (auto entityHandle : scriptEntities) {
             if (!m_Registry.valid(entityHandle))
                 continue; // destruida por um OnCollision/OnUpdate anterior
             ScriptEngine::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+        ExtensionHooks::StageAfter(EngineStage::ScriptsLua, *this, deltaTime);
         zLua.Stop();
 
         // Scripts em C++ (NativeScriptComponent), mesma regra de snapshot.
@@ -645,27 +655,36 @@ namespace Prism {
         for (auto entityHandle : m_Registry.view<NativeScriptComponent>())
             nativeEntities.push_back(entityHandle);
         Profiler::Scope zNative("Scene.ScriptsCpp");
+        ExtensionHooks::StageBefore(EngineStage::ScriptsNative, *this, deltaTime);
         for (auto entityHandle : nativeEntities) {
             if (!m_Registry.valid(entityHandle))
                 continue;
             NativeScripting::UpdateScript(Entity(entityHandle, this), deltaTime);
         }
+        ExtensionHooks::StageAfter(EngineStage::ScriptsNative, *this, deltaTime);
         zNative.Stop();
 
         // Destruicoes pedidas por scripts (entity:Destroy()) - so agora, com a iteracao encerrada.
         ScriptEngine::FlushDestroyQueue(*this);
 
         // Particulas depois dos scripts: ja enxergam posicao/campos alterados neste frame.
-        {
+        ExtensionHooks::StageBefore(EngineStage::Particles, *this, deltaTime);
+        if (!ExtensionHooks::StageReplace(EngineStage::Particles, *this, deltaTime)) {
             PRISM_PROFILE_SCOPE("Scene.Particles");
             ParticleSystem::Update(*this, deltaTime);
         }
+        ExtensionHooks::StageAfter(EngineStage::Particles, *this, deltaTime);
 
         // Animacao depois dos scripts: PlayAnimation() chamado neste frame ja vale nele.
-        {
+        ExtensionHooks::StageBefore(EngineStage::Animation, *this, deltaTime);
+        if (!ExtensionHooks::StageReplace(EngineStage::Animation, *this, deltaTime)) {
             PRISM_PROFILE_SCOPE("Scene.Animation");
             AnimationSystem::Update(*this, deltaTime, false);
         }
+        ExtensionHooks::StageAfter(EngineStage::Animation, *this, deltaTime);
+
+        // Hooks de component das extensoes (ExtensionHooks.h), antes dos sistemas registrados.
+        ExtensionHooks::ComponentUpdate(*this, deltaTime);
 
         // Sistemas registrados (SystemRegistry, ex: de extensoes): depois de tudo que a engine ja
         // faz no quadro e ANTES do audio, que assim aplica o que eles mudaram.
@@ -676,7 +695,10 @@ namespace Prism {
 
         // Audio por ULTIMO: aplica volume/pitch/posicao ja alterados pelos
         // scripts neste frame e move o listener junto da camera/entidade.
-        AudioEngine::OnSceneUpdate(*this);
+        ExtensionHooks::StageBefore(EngineStage::Audio, *this, deltaTime);
+        if (!ExtensionHooks::StageReplace(EngineStage::Audio, *this, deltaTime))
+            AudioEngine::OnSceneUpdate(*this);
+        ExtensionHooks::StageAfter(EngineStage::Audio, *this, deltaTime);
     }
 
     void Scene::RunFixedUpdate(float fixedDeltaTime) {
@@ -697,6 +719,7 @@ namespace Prism {
                 NativeScripting::FixedUpdateScript(Entity(entityHandle, this), fixedDeltaTime);
         }
 
+        ExtensionHooks::ComponentFixedUpdate(*this, fixedDeltaTime);
         SystemRegistry::FixedUpdate(*this, fixedDeltaTime);
     }
 
@@ -815,6 +838,7 @@ namespace Prism {
         }
 
         // Sistemas registrados (SystemRegistry): por ultimo, com a fisica e os scripts ja prontos.
+        ExtensionHooks::ComponentSceneStart(*this);
         SystemRegistry::SceneStart(*this);
     }
 
@@ -824,6 +848,7 @@ namespace Prism {
         m_IsRunning = false;
 
         // Sistemas registrados primeiro: ainda enxergam scripts e fisica inteiros ao se despedir.
+        ExtensionHooks::ComponentSceneStop(*this);
         SystemRegistry::SceneStop(*this);
 
         auto view = m_Registry.view<ScriptComponent>();

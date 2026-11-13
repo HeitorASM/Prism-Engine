@@ -151,7 +151,7 @@ namespace Prism {
                 return true;
             if (!topLevel)
                 return false;
-            return lower == "source" || lower == "cache" || lower == "build" || lower == "out"
+            return lower == "source" || lower == "cache" || lower == "build" || lower == "out" || lower == "intermediate"
                 || lower == ".vs" || lower == ".vscode" || lower == ".idea";
         }
 

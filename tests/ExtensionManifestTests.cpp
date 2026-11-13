@@ -118,7 +118,7 @@ static void TestTemplate() {
         CHECK(content.find("@NAME@") == std::string::npos && content.find("@IDENT@") == std::string::npos);
     }
     auto parsed = ParseExtensionManifest(manifest); // o manifesto gerado precisa ser valido
-    CHECK(parsed.Ok && parsed.Manifest.Name == "Minha-Ext" && parsed.Manifest.ApiVersion == 1);
+    CHECK(parsed.Ok && parsed.Manifest.Name == "Minha-Ext" && parsed.Manifest.ApiVersion == 2);
     CHECK(source.find("struct Minha_Ext ") != std::string::npos);
 
     namespace fs = std::filesystem;

@@ -10,6 +10,7 @@
 #include "../Particles/ParticleSystem.h"
 #include "../Core/Input.h"
 #include "../Core/Log.h"
+#include "../Core/Paths.h"
 #include "../UI/UISystem.h"
 #include "../Project/Project.h"
 
@@ -508,6 +509,19 @@ namespace Prism {
 #endif
         }
 
+        // Texto seguro dentro de um argumento entre aspas do CMake ("..."): barra normal nos caminhos
+        // (generic_string) e escape de \ " $ (variavel) para o caminho nunca ser interpretado como codigo.
+        std::string CMakeQuoted(const std::string& text) {
+            std::string out;
+            out.reserve(text.size() + 2);
+            for (char ch : text) {
+                if (ch == '\\' || ch == '"' || ch == '$')
+                    out += '\\';
+                out += ch;
+            }
+            return out;
+        }
+
         // Escreve 'content' em 'path' so se o arquivo ainda nao existir.
         bool WriteIfMissing(const std::filesystem::path& path, const std::string& content) {
             std::error_code ec;
@@ -909,6 +923,9 @@ namespace Prism {
         std::filesystem::create_directories(project.GetProjectDirectory() / "Binaries", ec);
 
         std::string sdkPath = sdk.generic_string(); // barras normais: CMake aceita em todas as plataformas
+        // Para o F5 do Visual Studio (ver PrismGenerated.cmake abaixo): o editor que esta rodando agora.
+        const std::filesystem::path editorExe = GetExecutablePath();
+        const std::filesystem::path projectFile = project.GetProjectFilePath();
 
         // PrismGenerated.cmake: tudo que e DA ENGINE (caminho do SDK, saida, flags). Sempre
         // regravado - o caminho do SDK muda se a engine mudar de pasta. O usuario nao edita.
@@ -918,6 +935,13 @@ namespace Prism {
             "\n"
             "# Caminhos de include da engine/GLM/EnTT (gerado no build da engine).\n"
             "include(\"" + sdkPath + "\")\n"
+            "\n"
+            "# Visual Studio (menu Arquivo > Scripts C++ > Gerar solucao do Visual Studio): F5 abre o\n"
+            "# editor com este projeto, ja com o depurador anexado - breakpoints nos scripts funcionam.\n"
+            "# Outros geradores (Ninja, Makefiles) ignoram isto.\n"
+            "set(PRISM_EDITOR_EXE \"" + CMakeQuoted(editorExe.generic_string()) + "\")\n"
+            "set(PRISM_EDITOR_DIR \"" + CMakeQuoted(editorExe.parent_path().generic_string()) + "\")\n"
+            "set(PRISM_PROJECT_FILE \"" + CMakeQuoted(projectFile.generic_string()) + "\")\n"
             "\n"
             "# Configura 'target' como modulo de scripts da Prism: includes do SDK, C++20,\n"
             "# saida em <Projeto>/Binaries/NativeScripts.(dll|so|dylib).\n"
@@ -945,6 +969,31 @@ namespace Prism {
             "        if(DEFINED PRISM_BUILD_ID)\n"
             "            set_target_properties(${target} PROPERTIES PDB_NAME \"NativeScripts_${PRISM_BUILD_ID}\")\n"
             "        endif()\n"
+            "    endif()\n"
+            "\n"
+            "    # --- Visual Studio: organizacao e depuracao ---\n"
+            "    # Arquivos em pastas, como no disco (so os que estao dentro desta pasta).\n"
+            "    get_target_property(_prism_sources ${target} SOURCES)\n"
+            "    if(_prism_sources)\n"
+            "        set(_prism_local_sources \"\")\n"
+            "        foreach(_prism_file IN LISTS _prism_sources)\n"
+            "            get_filename_component(_prism_abs \"${_prism_file}\" ABSOLUTE BASE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+            "            string(FIND \"${_prism_abs}\" \"${CMAKE_CURRENT_SOURCE_DIR}/\" _prism_pos)\n"
+            "            if(_prism_pos EQUAL 0)\n"
+            "                list(APPEND _prism_local_sources \"${_prism_abs}\")\n"
+            "            endif()\n"
+            "        endforeach()\n"
+            "        if(_prism_local_sources)\n"
+            "            source_group(TREE \"${CMAKE_CURRENT_SOURCE_DIR}\" FILES ${_prism_local_sources})\n"
+            "        endif()\n"
+            "    endif()\n"
+            "    set_property(DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\" PROPERTY VS_STARTUP_PROJECT ${target})\n"
+            "    # F5 = rodar o editor com este projeto (o modulo e carregado por ele, como no uso normal).\n"
+            "    if(PRISM_EDITOR_EXE AND PRISM_PROJECT_FILE)\n"
+            "        set_target_properties(${target} PROPERTIES\n"
+            "            VS_DEBUGGER_COMMAND \"${PRISM_EDITOR_EXE}\"\n"
+            "            VS_DEBUGGER_COMMAND_ARGUMENTS \"\\\"${PRISM_PROJECT_FILE}\\\"\"\n"
+            "            VS_DEBUGGER_WORKING_DIRECTORY \"${PRISM_EDITOR_DIR}\")\n"
             "    endif()\n"
             "endfunction()\n";
 

@@ -174,3 +174,8 @@ O alvo **PrismRuntime** é um executável só do jogo: `PrismRuntime <pasta-do-p
 - Desfazer uma exclusão recria as entidades com identidades novas: um passo **mais antigo** do histórico que mexia na entidade excluída (por exemplo, uma movimentação anterior) deixa de ter efeito depois de desfazer a exclusão.
 - Copiar/colar vale só dentro do editor (a área de transferência do sistema não é usada), mas funciona entre mapas.
 - Não há resolução configurável para a janela de Play.
+
+## Editor de codigo: zoom
+
+Botoes `-`/`+` no cabecalho do editor, `Ctrl`+roda do mouse, `Ctrl` `+`/`-` e `Ctrl` `0` (restaurar).
+O zoom e salvo no `imgui.ini`.

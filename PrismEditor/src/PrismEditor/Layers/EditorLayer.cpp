@@ -8,6 +8,9 @@
 #include "../Core/FileDialog.h"
 #include "../Core/EditorIcons.h"
 #include "../Core/EditorTheme.h"
+#include "../Core/ShellOps.h"
+#include "../Panels/ExtensionPanelHost.h"
+#include "../Core/VisualStudioSolution.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
 #include <imgui_internal.h> // DockBuilder (layout padrao dos paineis)
@@ -98,6 +101,7 @@ namespace PrismEditor {
         // Clicar num erro/aviso da Saida de Build abre o arquivo no Editor de Codigo.
         m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*Prism::Project::GetActive()));
         m_Extensions.SetOnCompile([this](const std::filesystem::path& directory) { StartExtensionBuild(directory); });
+        m_Extensions.SetOnGenerateSolution([this](const std::filesystem::path& directory) { StartExtensionSolutionGeneration(directory); });
         m_Extensions.SetOnOpenFile([this](const std::filesystem::path& filePath) {
             if (m_ScriptEditor.Open(filePath))
                 ImGui::SetWindowFocus("###ScriptEditorPanel");
@@ -334,6 +338,7 @@ namespace PrismEditor {
         m_BuildOutput.OnImGuiRender();
         m_Extensions.SetBusy(m_NativeBuilder.IsRunning() || m_GameExporter.IsRunning());
         m_Extensions.OnImGuiRender();
+        m_ExtensionPanels.OnImGuiRender(); // paineis e janelas adicionados por extensoes
         RenderContentBrowserPanel();
         RenderScriptEditorPanel();
         m_Docs.OnImGuiRender();
@@ -484,6 +489,8 @@ namespace PrismEditor {
                         StartGameExport();
                 }
                 ImGui::Separator();
+                RenderNativeScriptsMenu();
+                ImGui::Separator();
                 if (ImGui::MenuItem("Fechar Projeto"))
                     m_Document.RunAfterUnsavedCheck([this]() { CloseProject(); });
                 if (ImGui::MenuItem("Sair do Editor")) {
@@ -491,6 +498,11 @@ namespace PrismEditor {
                         m_Document.SetAllowWindowClose(true);
                         Prism::Application::Get().Close();
                         });
+                }
+                // Itens que extensoes adicionaram a este menu (ExtensionUi.h).
+                if (m_ExtensionPanels.HasMenuItems("Arquivo")) {
+                    ImGui::Separator();
+                    m_ExtensionPanels.DrawMenuItems("Arquivo");
                 }
                 ImGui::EndMenu();
             }
@@ -502,6 +514,11 @@ namespace PrismEditor {
                     m_Ctx.History.Undo();
                 if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, m_Ctx.History.CanRedo()))
                     m_Ctx.History.Redo();
+                // Itens que extensoes adicionaram a este menu (ExtensionUi.h).
+                if (m_ExtensionPanels.HasMenuItems("Editar")) {
+                    ImGui::Separator();
+                    m_ExtensionPanels.DrawMenuItems("Editar");
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Entidade")) {
@@ -658,6 +675,11 @@ namespace PrismEditor {
                     EntityOps::CutEntity(m_Ctx, m_Ctx.SelectedEntity);
                 if (ImGui::MenuItem("Colar", "Ctrl+V", false, EntityClipboard::HasContent()))
                     EntityOps::PasteEntity(m_Ctx);
+                // Itens que extensoes adicionaram a este menu (ExtensionUi.h).
+                if (m_ExtensionPanels.HasMenuItems("Entidade")) {
+                    ImGui::Separator();
+                    m_ExtensionPanels.DrawMenuItems("Entidade");
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Janela")) {
@@ -669,6 +691,12 @@ namespace PrismEditor {
                     m_Extensions.Toggle();
                 ImGui::TextDisabled("Arraste as abas para reorganizar os paineis.");
                 // REMOVIDO: entrada para o painel "Camera" que agora está integrado
+                // Paineis que extensoes registraram + itens que elas adicionaram a este menu (ExtensionUi.h).
+                m_ExtensionPanels.DrawWindowMenuEntries();
+                if (m_ExtensionPanels.HasMenuItems("Janela")) {
+                    ImGui::Separator();
+                    m_ExtensionPanels.DrawMenuItems("Janela");
+                }
                 ImGui::EndMenu();
             }
 
@@ -690,8 +718,14 @@ namespace PrismEditor {
                     m_Docs.Open("10-ui-in-game.md");
                 if (ImGui::MenuItem("Como a engine funciona"))
                     m_Docs.Open("11-como-a-engine-funciona.md");
+                // Itens que extensoes adicionaram a este menu (ExtensionUi.h).
+                if (m_ExtensionPanels.HasMenuItems("Ajuda")) {
+                    ImGui::Separator();
+                    m_ExtensionPanels.DrawMenuItems("Ajuda");
+                }
                 ImGui::EndMenu();
             }
+            m_ExtensionPanels.DrawExtraMenus({ "Arquivo", "Editar", "Entidade", "Janela", "Ajuda" });
 
             ImGui::EndMenuBar();
         }
@@ -787,6 +821,100 @@ namespace PrismEditor {
         }
     }
 
+    // Arquivo > Scripts C++: compilar e (Windows) trabalhar no Visual Studio.
+    void EditorLayer::RenderNativeScriptsMenu() {
+        if (!ImGui::BeginMenu("Scripts C++"))
+            return;
+        auto project = Prism::Project::GetActive();
+        const bool busy = m_NativeBuilder.IsRunning() || m_GameExporter.IsRunning();
+        const bool hasProject = project != nullptr;
+
+        if (ImGui::MenuItem("Compilar", nullptr, false, hasProject && !busy))
+            StartNativeBuild();
+        if (ImGui::MenuItem("Mostrar a pasta Source", nullptr, false, hasProject))
+            ShellOps::RevealInFileExplorer(Prism::NativeScripting::GetSourceDirectory(*project));
+
+        ImGui::Separator();
+#if defined(_WIN32)
+        const bool visualStudioAvailable = true;
+#else
+        const bool visualStudioAvailable = false;
+#endif
+        const bool solutionExists = hasProject
+            && !VisualStudio::FindSolutionFile(NativeBuilder::GetSolutionDirectory(*project)).empty();
+
+        if (ImGui::MenuItem("Abrir no Visual Studio", nullptr, false, visualStudioAvailable && hasProject && !busy))
+            OpenSolutionInVisualStudio();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", !visualStudioAvailable ? "Disponivel so no Windows."
+                : solutionExists ? "Abre a solucao do Visual Studio dos scripts C++ (Intermediate/VisualStudio)."
+                : "Gera a solucao do Visual Studio e a abre.");
+        if (ImGui::MenuItem("Gerar solucao do Visual Studio", nullptr, false, visualStudioAvailable && hasProject && !busy))
+            StartSolutionGeneration();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", !visualStudioAvailable ? "Disponivel so no Windows."
+                : "Recria a solucao (use depois de adicionar ou remover arquivos em Source/ pelo disco).");
+        ImGui::EndMenu();
+    }
+
+    void EditorLayer::StartSolutionGeneration() {
+        auto project = Prism::Project::GetActive();
+        if (!project || m_NativeBuilder.IsRunning() || m_GameExporter.IsRunning())
+            return;
+
+        // Regrava o PrismGenerated.cmake (caminho do SDK, deste editor e do projeto: o F5 do Visual Studio
+        // depende deles) e cria Source/ se faltar. Nunca mexe no CMakeLists.txt do usuario.
+        std::string message;
+        if (!Prism::NativeScripting::GenerateProjectFiles(*project, message)) {
+            PRISM_ERROR(message);
+            return;
+        }
+
+        m_ExtensionBuildDirectory.clear();
+        m_BuildOutput.SetBaseDirectory(Prism::NativeScripting::GetSourceDirectory(*project));
+        m_BuildOutput.BeginBuild();
+        std::string error;
+        if (m_NativeBuilder.StartSolution(*project, error)) {
+            m_SolutionGenerationActive = true;
+            PRISM_INFO("Gerando a solucao do Visual Studio...");
+        }
+        else {
+            m_BuildOutput.AddLine(error);
+            m_BuildOutput.EndBuild(false);
+            PRISM_ERROR(error);
+        }
+    }
+
+    void EditorLayer::StartExtensionSolutionGeneration(const std::filesystem::path& extensionDirectory) {
+        if (m_GameExporter.IsRunning() || m_NativeBuilder.IsRunning())
+            return;
+        m_ExtensionBuildDirectory.clear();
+        m_BuildOutput.SetBaseDirectory(extensionDirectory);
+        m_BuildOutput.BeginBuild();
+        m_BuildOutput.AddLine("Gerando a solucao da extensao '" + extensionDirectory.filename().string() + "'...");
+        std::string error;
+        if (m_NativeBuilder.StartExtensionSolution(extensionDirectory, Prism::GetExecutableDirectory() / "PrismSDK.cmake", error)) {
+            m_SolutionGenerationActive = true;
+        }
+        else {
+            m_BuildOutput.AddLine(error);
+            m_BuildOutput.EndBuild(false);
+            PRISM_ERROR(error);
+        }
+    }
+
+    // "Abrir no Visual Studio": abre a .sln se ja existe; senao gera (e abre ao terminar, ver PollNativeBuild).
+    void EditorLayer::OpenSolutionInVisualStudio() {
+        auto project = Prism::Project::GetActive();
+        if (!project)
+            return;
+        const std::filesystem::path solution = VisualStudio::FindSolutionFile(NativeBuilder::GetSolutionDirectory(*project));
+        if (solution.empty())
+            StartSolutionGeneration();
+        else
+            ShellOps::OpenWithDefaultApp(solution);
+    }
+
     // Arquivo > Exportar Jogo...: o exportador copia ARQUIVOS DO DISCO, entao um mapa com
     // alteracoes nao salvas ficaria de fora - pergunta antes (Salvar / Nao salvar / Cancelar).
     void EditorLayer::StartGameExport() {
@@ -874,7 +1002,8 @@ namespace PrismEditor {
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         if (building) {
-            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), m_ExtensionBuildDirectory.empty() ? "Compilando scripts C++..." : "Compilando extensao...");
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), m_SolutionGenerationActive ? "Gerando solucao do Visual Studio..."
+                : m_ExtensionBuildDirectory.empty() ? "Compilando scripts C++..." : "Compilando extensao...");
         }
         else if (m_LastNativeBuildFailed) {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Erro de build (ver Saida de Build)");
@@ -897,7 +1026,21 @@ namespace PrismEditor {
         for (const auto& line : lines)
             m_BuildOutput.AddLine(line.Text);
 
-        if (justFinished && !m_ExtensionBuildDirectory.empty()) {
+        if (justFinished && m_SolutionGenerationActive) {
+            // Geracao da solucao do Visual Studio: nao e uma compilacao (nao mexe no modulo nem no estado de build).
+            m_SolutionGenerationActive = false;
+                m_BuildOutput.EndBuild(success);
+            if (success) {
+                const std::filesystem::path solution = m_NativeBuilder.GetSolutionPath();
+                PRISM_INFO("Solucao do Visual Studio gerada: ", FileDialog::ToUtf8(solution));
+                if (!solution.empty())
+                    ShellOps::OpenWithDefaultApp(solution);
+            }
+            else {
+                PRISM_ERROR("Falha ao gerar a solucao do Visual Studio (veja a aba Saida de Build).");
+            }
+        }
+        else if (justFinished && !m_ExtensionBuildDirectory.empty()) {
             // Build de uma EXTENSAO: nao mexe no modulo de scripts C++ nem no estado "ultimo build falhou".
             m_BuildOutput.EndBuild(success);
             m_Extensions.NotifyCompiled(m_ExtensionBuildDirectory, success);

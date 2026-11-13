@@ -152,7 +152,7 @@ namespace Prism {
         std::error_code ec;
         if (!std::filesystem::exists(gitignore, ec)) {
             std::ofstream out(gitignore, std::ios::binary);
-            out << "# Gerado pela Prism Engine\nCache/\nBinaries/\n";
+            out << "# Gerado pela Prism Engine\nCache/\nBinaries/\nIntermediate/\n";
         }
         return project;
     }

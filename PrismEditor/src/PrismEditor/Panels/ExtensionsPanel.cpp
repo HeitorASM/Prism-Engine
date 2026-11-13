@@ -206,6 +206,17 @@ namespace PrismEditor {
             ImGui::SetTooltip(entry.HasCMake ? "Compila a extensao (saida na aba Saida de Build). Reinicie o editor para carregar."
                                               : "Esta extensao nao tem CMakeLists.txt (so a biblioteca pronta).");
 
+#if defined(_WIN32)
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!entry.HasCMake || m_Busy || !m_OnGenerateSolution);
+        if (ImGui::Button("Abrir no Visual Studio") && m_OnGenerateSolution)
+            m_OnGenerateSolution(entry.Directory);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(entry.HasCMake ? "Gera a solucao do Visual Studio da extensao (build/VisualStudio) e a abre."
+                                              : "Esta extensao nao tem CMakeLists.txt (so a biblioteca pronta).");
+#endif
+
         ImGui::SameLine();
         if (ImGui::Button("Mostrar na pasta"))
             ShellOps::RevealInFileExplorer(entry.Directory);

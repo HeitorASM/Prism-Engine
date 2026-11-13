@@ -23,12 +23,14 @@
 //
 // Regras: (1) compile com a mesma versao de EnTT/GLM/C++ e o mesmo runtime (CRT) da engine;
 // (2) a engine nunca descarrega a dll antes de sair do processo (objetos da dll vivem em cenas);
-// (3) para o inspetor, use host.Ui (DragFloat, DragInt, Checkbox, InputText, Text): nao exige
+// (3) para o inspetor e paineis, use host.Ui / host.UiEx (DragFloat, DragInt, Checkbox, InputText, Text): nao exige
 //     linkar o ImGui. Quem preferir o ImGui completo precisa linka-lo na dll e chamar
 //     ImGui::SetCurrentContext((ImGuiContext*)host.ImGuiContext) no Init.
 // ============================================================================
 
 #include "EngineSystem.h"
+#include "ExtensionHooks.h"
+#include "ExtensionUi.h"
 #include "../Scene/ComponentRegistry.h"
 #include "../Scene/Entity.h"
 
@@ -48,8 +50,14 @@
 
 namespace Prism {
 
-    // Suba quando a tabela abaixo (ou o contrato de carga) mudar de forma incompativel.
-    constexpr uint32_t kExtensionApiVersion = 1;
+    // Suba quando a tabela abaixo (ou o contrato de carga) mudar.
+    //  v2: paineis/janelas e menus (RegisterPanel/RegisterMenuItem), hooks de component e de estagio
+    //      (RegisterComponentHook/RegisterStageHook), host.UiEx, BindImGui.
+    // A tabela ExtensionHost so CRESCE no final: uma extensao compilada para a v1 continua carregando
+    // (a engine aceita de kExtensionApiMinVersion ate kExtensionApiVersion). Extensao v2 em engine v1
+    // e recusada (api maior que a da engine).
+    constexpr uint32_t kExtensionApiVersion = 2;
+    constexpr uint32_t kExtensionApiMinVersion = 1;
 
     // Widgets do inspetor SEM precisar linkar o ImGui na dll (ImGui tem estado global por modulo).
     // Todos devolvem true quando o valor mudou. Use dentro de ExtensionComponentDesc::DrawInspector.
@@ -59,6 +67,36 @@ namespace Prism {
         bool (*Checkbox)(const char* label, bool* value) = nullptr;
         bool (*InputText)(const char* label, char* buffer, size_t bufferSize) = nullptr;
         void (*Text)(const char* text) = nullptr;
+    };
+
+    // Widgets extras (v2), para paineis e inspetores sem linkar o ImGui. Mesma convencao de ExtensionUi:
+    // devolvem true quando o usuario interagiu/mudou o valor. Preenchido pela engine; todos nao-nulos.
+    struct ExtensionUiEx {
+        bool (*Button)(const char* label) = nullptr;
+        void (*SameLine)() = nullptr;
+        void (*Separator)() = nullptr;
+        void (*Spacing)() = nullptr;
+        void (*TextWrapped)(const char* text) = nullptr;
+        void (*TextDisabled)(const char* text) = nullptr;
+        void (*TextColored)(float r, float g, float b, float a, const char* text) = nullptr;
+        bool (*SliderFloat)(const char* label, float* value, float minValue, float maxValue) = nullptr;
+        bool (*SliderInt)(const char* label, int* value, int minValue, int maxValue) = nullptr;
+        bool (*InputFloat)(const char* label, float* value) = nullptr;
+        bool (*InputInt)(const char* label, int* value) = nullptr;
+        bool (*InputTextMultiline)(const char* label, char* buffer, size_t bufferSize, float width, float height) = nullptr;
+        bool (*Combo)(const char* label, int* current, const char* itemsSeparatedByNul) = nullptr; // "A\0B\0C\0\0"
+        bool (*ColorEdit4)(const char* label, float* rgba) = nullptr;
+        bool (*Selectable)(const char* label, bool selected) = nullptr;
+        bool (*CollapsingHeader)(const char* label) = nullptr;
+        bool (*TreeNode)(const char* label) = nullptr;   // se true, chame TreePop() no fim
+        void (*TreePop)() = nullptr;
+        void (*BeginDisabled)(bool disabled) = nullptr;
+        void (*EndDisabled)() = nullptr;
+        void (*PushId)(const char* id) = nullptr;
+        void (*PopId)() = nullptr;
+        void (*SetTooltipOnHover)(const char* text) = nullptr; // tooltip do ULTIMO widget, so se estiver sob o mouse
+        void (*ProgressBar)(float fraction, const char* overlay) = nullptr;
+        void (*GetContentRegionAvail)(float* width, float* height) = nullptr;
     };
 
     struct ExtensionHost {
@@ -76,7 +114,52 @@ namespace Prism {
         bool (*RegisterComponentRaw)(ExtensionComponentDesc* desc, ExtensionComponentOps* ops) = nullptr;
         bool (*RegisterSystemRaw)(IEngineSystem* system, const char* source) = nullptr; // assume a posse de 'system'
         void (*LogRaw)(int level, const char* message) = nullptr;                       // 0 info, 1 aviso, 2 erro
+
+        // ---- v2 (so existe a partir daqui; extensoes v1 nunca leem alem de LogRaw) ----------------
+        ExtensionUiEx UiEx;
+        // Nao chame direto: use RegisterPanel / RegisterMenuItem / SetPanelOpen / RegisterComponentHook / RegisterStageHook.
+        bool (*RegisterPanelRaw)(ExtensionPanelDesc* desc, const char* source) = nullptr;
+        bool (*RegisterMenuItemRaw)(ExtensionMenuItemDesc* desc, const char* source) = nullptr;
+        bool (*SetPanelOpenRaw)(const char* source, const char* id, bool open) = nullptr;
+        bool (*RegisterComponentHookRaw)(ExtensionComponentHookDesc* desc, const char* source) = nullptr;
+        bool (*RegisterStageHookRaw)(ExtensionStageHookDesc* desc, const char* source) = nullptr;
+        // Alocador do ImGui da engine (para BindImGui, so de quem linka o ImGui na dll).
+        void* ImGuiAllocFn = nullptr;
+        void* ImGuiFreeFn = nullptr;
+        void* ImGuiAllocUserData = nullptr;
     };
+
+    // --- v2: interface no editor ----------------------------------------------------------------
+    // Painel: aparece em Janela > Extensoes > <nome da extensao> e (Docked) acopla como os demais.
+    // No runtime (jogo exportado) nada e desenhado: o registro e aceito e ignorado.
+    inline bool RegisterPanel(const ExtensionHost& host, ExtensionPanelDesc desc) {
+        return host.RegisterPanelRaw && host.RegisterPanelRaw(&desc, host.ExtensionName);
+    }
+    inline bool RegisterMenuItem(const ExtensionHost& host, ExtensionMenuItemDesc desc) {
+        return host.RegisterMenuItemRaw && host.RegisterMenuItemRaw(&desc, host.ExtensionName);
+    }
+    // Abre/fecha um painel desta extensao pelo codigo (ex: um item de menu que abre uma janela).
+    inline bool SetPanelOpen(const ExtensionHost& host, const char* panelId, bool open) {
+        return host.SetPanelOpenRaw && host.SetPanelOpenRaw(host.ExtensionName, panelId, open);
+    }
+
+    // --- v2: modificar o que a engine ja faz (ver ExtensionHooks.h) ------------------------------
+    inline bool RegisterComponentHook(const ExtensionHost& host, ExtensionComponentHookDesc desc) {
+        return host.RegisterComponentHookRaw && host.RegisterComponentHookRaw(&desc, host.ExtensionName);
+    }
+    inline bool RegisterStageHook(const ExtensionHost& host, ExtensionStageHookDesc desc) {
+        return host.RegisterStageHookRaw && host.RegisterStageHookRaw(&desc, host.ExtensionName);
+    }
+
+    // Para quem linka o ImGui na propria dll: inclua <imgui.h> ANTES deste header e chame no Init.
+    // Liga o contexto e o alocador da engine (sem isso o ImGui da dll tem estado proprio e crasha).
+#ifdef IMGUI_VERSION
+    inline void BindImGui(const ExtensionHost& host) {
+        if (host.ImGuiAllocFn && host.ImGuiFreeFn)
+            ImGui::SetAllocatorFunctions((ImGuiMemAllocFunc)host.ImGuiAllocFn, (ImGuiMemFreeFunc)host.ImGuiFreeFn, host.ImGuiAllocUserData);
+        ImGui::SetCurrentContext((ImGuiContext*)host.ImGuiContext);
+    }
+#endif
 
     template<typename T>
     bool RegisterComponent(const ExtensionHost& host, ExtensionComponentDesc desc) {

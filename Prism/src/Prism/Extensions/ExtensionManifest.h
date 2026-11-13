@@ -7,7 +7,7 @@
 //
 // Formato (uma chave por linha; '#' ou ';' comeca comentario):
 //     name        = Health            (obrigatorio: letras, numeros, _ . -)
-//     api         = 1                 (obrigatorio: kExtensionApiVersion para a qual foi compilada)
+//     api         = 1                 (obrigatorio: API para a qual foi compilada; a engine aceita de kExtensionApiMinVersion a kExtensionApiVersion)
 //     version     = 1.0.0
 //     description = Vida e dano
 //     author      = Fulano

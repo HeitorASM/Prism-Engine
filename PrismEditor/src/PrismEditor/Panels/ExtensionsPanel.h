@@ -26,6 +26,8 @@ namespace PrismEditor {
 
         void SetOnCompile(CompileFn fn) { m_OnCompile = std::move(fn); }
         void SetOnOpenFile(OpenFileFn fn) { m_OnOpenFile = std::move(fn); }
+        // "Solucao VS" (so Windows): gera e abre a solucao do Visual Studio da extensao.
+        void SetOnGenerateSolution(CompileFn fn) { m_OnGenerateSolution = std::move(fn); }
         // true enquanto uma compilacao esta rodando (desabilita os botoes Compilar).
         void SetBusy(bool busy) { m_Busy = busy; }
         // Chamado pelo EditorLayer quando a compilacao de uma extensao termina.
@@ -69,6 +71,7 @@ namespace PrismEditor {
         bool m_LastBuildOk = true;
 
         CompileFn m_OnCompile;
+        CompileFn m_OnGenerateSolution;
         OpenFileFn m_OnOpenFile;
     };
 

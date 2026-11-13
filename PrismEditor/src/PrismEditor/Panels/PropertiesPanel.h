@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 // ============================================================================
 // PropertiesPanel.h
@@ -76,6 +77,7 @@ namespace PrismEditor {
         void DrawEnvironmentUI();
         // Components de extensao (PropertiesPanel_Extensions.cpp).
         void DrawExtensionComponentsUI();
+        void DrawWithExtensionHooks(const char* registryName, const std::function<void()>& builtin);
 
         // --- Vinculo vivo de PREFAB (PrefabInstanceRootComponent/
         // PrefabInstanceMemberComponent, ver Components.h e

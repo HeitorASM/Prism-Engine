@@ -38,6 +38,8 @@
 #include "Prism/Scripting/NativeScripting.h"
 #include "Prism/Extensions/SystemRegistry.h"
 #include "Prism/Extensions/ExtensionLoader.h"
+#include "Prism/Extensions/ExtensionHooks.h"
+#include "Prism/Extensions/ExtensionUi.h"
 #include "Prism/Particles/ParticleSystem.h"
 #include "Prism/Animation/AnimationSystem.h"
 #include "Prism/UI/UISystem.h"
