@@ -112,3 +112,5 @@ Licenças das dependências em [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md
 - [x] Profiler (painel Desempenho: CPU, GPU, desenhos e triângulos; ver `docs/desempenho.md`)
 - [x] Física: camadas/máscaras configuráveis, juntas e character controller
 - [x] Testes de serialização, do ComponentRegistry e do PrefabSyncer
+- [x] Partículas v2: curvas/gradiente ao longo da vida, formas de emissão, rotação, espaço local/mundo, flipbook e modos de mistura (ver `docs/renderizacao.md`)
+- [ ] Partículas v2: asset reutilizável, soft particles, batching/ordenação entre emissores, trails, colisão e sub-emissores

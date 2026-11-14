@@ -296,7 +296,44 @@ namespace Prism {
         lua.new_usertype<ParticleEmitterComponent>("ParticleEmitter",
             "Enabled", &ParticleEmitterComponent::Enabled,
             "Loop", &ParticleEmitterComponent::Loop,
-            "Additive", &ParticleEmitterComponent::Additive,
+            // Compatibilidade: Additive = (BlendMode == Additive). Prefira BlendMode.
+            "Additive", sol::property(
+                [](ParticleEmitterComponent& c) { return c.IsAdditive(); },
+                [](ParticleEmitterComponent& c, bool v) { c.SetAdditive(v); }),
+            // Enums como inteiros (0..N), sempre limitados a faixa valida:
+            //   BlendMode: 0 Alpha, 1 Additive, 2 SoftAdditive, 3 Multiply
+            //   SimulationSpace: 0 World, 1 Local
+            //   Shape: 0 Cone, 1 Sphere, 2 Hemisphere, 3 Box, 4 Circle, 5 Edge
+            //   FlipbookMode: 0 OverLifetime, 1 FixedFPS, 2 RandomStatic
+            "BlendMode", sol::property(
+                [](ParticleEmitterComponent& c) { return (int)c.BlendMode; },
+                [](ParticleEmitterComponent& c, int v) { c.BlendMode = (ParticleBlendMode)std::min(std::max(v, 0), 3); }),
+            "SimulationSpace", sol::property(
+                [](ParticleEmitterComponent& c) { return (int)c.SimulationSpace; },
+                [](ParticleEmitterComponent& c, int v) { c.SimulationSpace = (ParticleSimulationSpace)std::min(std::max(v, 0), 1); }),
+            "Shape", sol::property(
+                [](ParticleEmitterComponent& c) { return (int)c.Shape; },
+                [](ParticleEmitterComponent& c, int v) { c.Shape = (ParticleShape)std::min(std::max(v, 0), 5); }),
+            "FlipbookMode", sol::property(
+                [](ParticleEmitterComponent& c) { return (int)c.FlipbookMode; },
+                [](ParticleEmitterComponent& c, int v) { c.FlipbookMode = (ParticleFlipbookMode)std::min(std::max(v, 0), 2); }),
+            "ShapeRadius", &ParticleEmitterComponent::ShapeRadius,
+            "ShapeThickness", &ParticleEmitterComponent::ShapeThickness,
+            "ShapeRadialBlend", &ParticleEmitterComponent::ShapeRadialBlend,
+            "SetShapeBox", [](ParticleEmitterComponent& c, float x, float y, float z) { c.ShapeBox = { std::max(x, 0.0f), std::max(y, 0.0f), std::max(z, 0.0f) }; },
+            "Drag", &ParticleEmitterComponent::Drag,
+            "SizeVariation", &ParticleEmitterComponent::SizeVariation,
+            "RotationMin", &ParticleEmitterComponent::RotationMin,
+            "RotationMax", &ParticleEmitterComponent::RotationMax,
+            "AngularVelocityMin", &ParticleEmitterComponent::AngularVelocityMin,
+            "AngularVelocityMax", &ParticleEmitterComponent::AngularVelocityMax,
+            "FlipbookColumns", sol::property(
+                [](ParticleEmitterComponent& c) { return c.FlipbookColumns; },
+                [](ParticleEmitterComponent& c, int v) { c.FlipbookColumns = (uint32_t)std::min(std::max(v, 1), 64); }),
+            "FlipbookRows", sol::property(
+                [](ParticleEmitterComponent& c) { return c.FlipbookRows; },
+                [](ParticleEmitterComponent& c, int v) { c.FlipbookRows = (uint32_t)std::min(std::max(v, 1), 64); }),
+            "FlipbookFPS", &ParticleEmitterComponent::FlipbookFPS,
             "Duration", &ParticleEmitterComponent::Duration,
             "EmissionRate", &ParticleEmitterComponent::EmissionRate,
             "BurstCount", &ParticleEmitterComponent::BurstCount,

@@ -22,6 +22,7 @@
 #include "../Renderer/Culling.h"
 #include "../Level/EditableMesh.h"
 #include "../Physics/PhysicsLayers.h"
+#include "../Particles/ParticleMath.h"
 #include "../UI/UIDocumentRuntime.h"
 #include <string>
 #include <vector>
@@ -770,11 +771,17 @@ namespace Prism {
     };
 
     // Emissor de particulas (billboards desenhados com blend). A simulacao e
-    // na CPU (ver Particles/ParticleSystem.h) e as particulas vivem em espaco
-    // de MUNDO: se a entidade se move, as ja emitidas ficam para tras. As
-    // particulas saem em um cone ao redor do eixo +Y LOCAL da entidade (gire
-    // a entidade para apontar o jato). Cores sao de tela (mesmo espaco dos
-    // seletores de cor); alpha vai de ColorStart.a a ColorEnd.a ao longo da vida.
+    // na CPU (ver Particles/ParticleSystem.h). O eixo de emissao e o +Y LOCAL da
+    // entidade (gire a entidade para apontar o jato). Por padrao as particulas
+    // vivem em espaco de MUNDO (SimulationSpace::World): se a entidade se move,
+    // as ja emitidas ficam para tras; com Local elas acompanham a entidade.
+    // Cores sao de tela (mesmo espaco dos seletores de cor).
+    //
+    // APARENCIA ao longo da vida (t = idade / vida, 0..1):
+    //   tamanho = lerp(SizeStart, SizeEnd, t) * SizeOverLife(t) * (variacao por particula)
+    //   cor     = lerp(ColorStart, ColorEnd, t) * ColorOverLife(t)
+    // SizeOverLife/ColorOverLife nascem neutros (curva 1 / gradiente branco), entao um
+    // emissor que nunca os editou desenha exatamente como antes. Ver Particles/ParticleMath.h.
     struct ParticleEmitterComponent {
         bool Enabled = true;
         bool PlayOnStart = true;      // comeca a emitir ao iniciar o Play
@@ -790,18 +797,50 @@ namespace Prism {
         float SpeedMin = 1.0f;
         float SpeedMax = 3.0f;
         float SpreadAngle = 25.0f;    // meio-angulo do cone, graus (0 = reto, 180 = esfera)
-        float GravityScale = 0.0f;    // multiplica -9.81 em Y (negativo = sobe)
+        float GravityScale = 0.0f;    // multiplica -9.81 em Y (negativo = sobe); sempre gravidade do MUNDO
 
         float SizeStart = 0.30f;
         float SizeEnd = 0.05f;
         glm::vec4 ColorStart = { 1.0f, 0.70f, 0.20f, 1.0f };
         glm::vec4 ColorEnd = { 1.0f, 0.10f, 0.0f, 0.0f };
 
-        bool Additive = true;         // true: soma luz (fogo, brilho); false: alpha normal (fumaca)
+        // Como a cor e misturada com o fundo. (Antes era um bool 'Additive'; arquivos antigos
+        // sao convertidos na leitura: true -> Additive, false -> Alpha.)
+        ParticleBlendMode BlendMode = ParticleBlendMode::Additive;
         std::string TexturePath;      // opcional, relativo ao projeto; vazio = circulo suave
+
+        // --- Bloco v2: curvas, espaco, forma, rotacao e folha de sprites -------------------
+        ParticleCurve SizeOverLife;              // multiplicador do tamanho (padrao: 1)
+        ParticleGradient ColorOverLife;          // multiplicador da cor RGBA (padrao: branco)
+        ParticleCurve SpeedOverLife;             // multiplicador da velocidade (padrao: 1)
+        float Drag = 0.0f;                       // atrito: a velocidade cai ~exp(-Drag * t) (0 = sem)
+        float SizeVariation = 0.0f;              // 0..1: cada particula nasce entre (1 - v) e 1 do tamanho
+
+        ParticleSimulationSpace SimulationSpace = ParticleSimulationSpace::World;
+
+        ParticleShape Shape = ParticleShape::Cone;
+        float ShapeRadius = 0.5f;                // Sphere/Hemisphere/Circle: raio; Edge: meio-comprimento
+        float ShapeThickness = 1.0f;             // 0 = so superficie/aro, 1 = volume/disco cheio
+        glm::vec3 ShapeBox = { 1.0f, 1.0f, 1.0f }; // Box: tamanho total
+        float ShapeRadialBlend = 0.0f;           // Box/Circle: 0 = cone, 1 = para fora do centro
+
+        float RotationMin = 0.0f;                // rotacao inicial, graus
+        float RotationMax = 0.0f;
+        float AngularVelocityMin = 0.0f;         // graus por segundo (positivo = anti-horario na tela)
+        float AngularVelocityMax = 0.0f;
+
+        uint32_t FlipbookColumns = 1;            // folha de sprites (1x1 = textura simples)
+        uint32_t FlipbookRows = 1;
+        ParticleFlipbookMode FlipbookMode = ParticleFlipbookMode::OverLifetime;
+        float FlipbookFPS = 12.0f;               // so FixedFPS
+
+        // Atalho de compatibilidade (scripts Lua antigos, codigo de extensao).
+        bool IsAdditive() const { return BlendMode == ParticleBlendMode::Additive; }
+        void SetAdditive(bool additive) { BlendMode = additive ? ParticleBlendMode::Additive : ParticleBlendMode::Alpha; }
 
         ParticleEmitterComponent() = default;
         ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
+        ParticleEmitterComponent& operator=(const ParticleEmitterComponent&) = default;
     };
 
     // --- UI in-game -----------------------------------------------------------

@@ -215,6 +215,17 @@ if(MSVC)
 endif()
 add_test(NAME DrawBatchingTests COMMAND PrismDrawBatchingTests)
 
+# PrismParticleMathTests: curvas, gradiente, formas de emissao e flipbook de particulas (Particles/ParticleMath.h, so std).
+add_executable(PrismParticleMathTests
+    ParticleMathTests.cpp
+)
+target_include_directories(PrismParticleMathTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismParticleMathTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismParticleMathTests PRIVATE /utf-8)
+endif()
+add_test(NAME ParticleMathTests COMMAND PrismParticleMathTests)
+
 # PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
 add_executable(PrismBuildAnalysisTests
     BuildOutputAnalysisTests.cpp
