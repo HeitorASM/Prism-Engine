@@ -1,11 +1,13 @@
 #include "PropertiesPanel.h"
 #include "ComponentEditUtils.h"
+#include "ParticleCurveWidgets.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
 #include <Prism/Particles/ParticleSystem.h>
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 
 // PropertiesPanel_ParticleEmitter.cpp
 // UI do ParticleEmitterComponent. Fora do Play, a entidade selecionada e
@@ -31,6 +33,45 @@ namespace PrismEditor {
                 TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
             };
 
+            // Combo de enum: copia antes + CommitComponentEdit (widget discreto).
+            auto combo = [&](const char* label, auto& value, const char* const* names, int count) {
+                using Enum = std::decay_t<decltype(value)>;
+                auto before = emitter;
+                int current = (int)value;
+                if (ImGui::Combo(label, &current, names, count)) {
+                    value = (Enum)current;
+                    CommitComponentEdit(m_Ctx, before, emitter, title);
+                }
+            };
+            auto dragInt = [&](const char* label, uint32_t& value, int low, int high) {
+                int v = (int)value;
+                if (ImGui::DragInt(label, &v, 0.2f, low, high))
+                    value = (uint32_t)std::min(std::max(v, low), high);
+                TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
+            };
+            // Curva/gradiente: UM comando de Undo por gesto (ver ParticleCurveWidgets.h).
+            // 'before' = copia do emissor tirada ANTES de chamar o widget.
+            auto gesture = [&](const Prism::ParticleEmitterComponent& before, const ParticleWidgetResult& result) {
+                if (result.Started)
+                    m_ParticleBeforeEdit = before;
+                if (result.Finished)
+                    CommitComponentEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
+            };
+            auto resetButton = [&](const char* id, auto& target, const auto& neutral) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton(id)) {
+                    auto before = emitter;
+                    target = neutral;
+                    CommitComponentEdit(m_Ctx, before, emitter, title);
+                }
+            };
+
+            static const char* const kShapeNames[] = { "Cone", "Esfera", "Hemisferio", "Caixa", "Circulo / anel", "Linha" };
+            static const char* const kSpaceNames[] = { "Mundo", "Local (acompanha a entidade)" };
+            static const char* const kBlendNames[] = { "Alpha (fumaca, poeira)", "Aditivo (fogo, brilho)", "Aditivo suave (neblina luminosa)", "Multiplicar (escurece)" };
+            static const char* const kFlipbookNames[] = { "Ao longo da vida", "FPS fixo", "Quadro aleatorio" };
+            using Shape = Prism::ParticleShape;
+
             checkbox("Habilitado", emitter.Enabled);
             checkbox("Tocar ao iniciar", emitter.PlayOnStart);
             checkbox("Loop", emitter.Loop);
@@ -48,22 +89,84 @@ namespace PrismEditor {
                 emitter.BurstCount = (uint32_t)std::min(std::max(burst, 0), 10000);
             TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
 
+            ImGui::Separator(); ImGui::TextDisabled("Forma de emissao");
+            combo("Forma", emitter.Shape, kShapeNames, 6);
+            switch (emitter.Shape) {
+            case Shape::Sphere:
+            case Shape::Hemisphere:
+                dragFloat("Raio", emitter.ShapeRadius, 0.01f, 0.0f, 1000.0f);
+                dragFloat("Espessura (0 = casca, 1 = cheia)", emitter.ShapeThickness, 0.01f, 0.0f, 1.0f);
+                ImGui::TextDisabled("As particulas saem para fora do centro.");
+                break;
+            case Shape::Box:
+                ImGui::DragFloat3("Tamanho", &emitter.ShapeBox.x, 0.01f, 0.0f, 1000.0f);
+                TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
+                dragFloat("Abertura do cone (graus)", emitter.SpreadAngle, 0.5f, 0.0f, 180.0f);
+                dragFloat("Direcao para fora (0-1)", emitter.ShapeRadialBlend, 0.01f, 0.0f, 1.0f);
+                break;
+            case Shape::Circle:
+                dragFloat("Raio", emitter.ShapeRadius, 0.01f, 0.0f, 1000.0f);
+                dragFloat("Espessura (0 = aro, 1 = disco)", emitter.ShapeThickness, 0.01f, 0.0f, 1.0f);
+                dragFloat("Abertura do cone (graus)", emitter.SpreadAngle, 0.5f, 0.0f, 180.0f);
+                dragFloat("Direcao para fora (0-1)", emitter.ShapeRadialBlend, 0.01f, 0.0f, 1.0f);
+                break;
+            case Shape::Edge:
+                dragFloat("Meio-comprimento", emitter.ShapeRadius, 0.01f, 0.0f, 1000.0f);
+                dragFloat("Abertura do cone (graus)", emitter.SpreadAngle, 0.5f, 0.0f, 180.0f);
+                break;
+            case Shape::Cone:
+            default:
+                dragFloat("Abertura do cone (graus)", emitter.SpreadAngle, 0.5f, 0.0f, 180.0f);
+                break;
+            }
+
             ImGui::Separator(); ImGui::TextDisabled("Movimento");
+            combo("Espaco de simulacao", emitter.SimulationSpace, kSpaceNames, 2);
             dragFloat("Vida minima (s)", emitter.LifetimeMin, 0.02f, 0.01f, 60.0f);
             dragFloat("Vida maxima (s)", emitter.LifetimeMax, 0.02f, 0.01f, 60.0f);
             dragFloat("Velocidade minima", emitter.SpeedMin, 0.05f, 0.0f, 200.0f);
             dragFloat("Velocidade maxima", emitter.SpeedMax, 0.05f, 0.0f, 200.0f);
-            dragFloat("Abertura do cone (graus)", emitter.SpreadAngle, 0.5f, 0.0f, 180.0f);
             dragFloat("Gravidade (x -9.81)", emitter.GravityScale, 0.02f, -5.0f, 5.0f);
+            dragFloat("Atrito", emitter.Drag, 0.02f, 0.0f, 100.0f);
+            dragFloat("Rotacao inicial min (graus)", emitter.RotationMin, 0.5f, -3600.0f, 3600.0f);
+            dragFloat("Rotacao inicial max (graus)", emitter.RotationMax, 0.5f, -3600.0f, 3600.0f);
+            dragFloat("Vel. angular min (graus/s)", emitter.AngularVelocityMin, 0.5f, -3600.0f, 3600.0f);
+            dragFloat("Vel. angular max (graus/s)", emitter.AngularVelocityMax, 0.5f, -3600.0f, 3600.0f);
+
+            ImGui::TextUnformatted("Velocidade ao longo da vida");
+            resetButton("Resetar##SpeedCurve", emitter.SpeedOverLife, Prism::ParticleCurve{});
+            {
+                auto before = emitter;
+                gesture(before, ParticleCurveEditor("##SpeedCurve", emitter.SpeedOverLife, 0.0f, 2.0f));
+            }
 
             ImGui::Separator(); ImGui::TextDisabled("Aparencia");
             dragFloat("Tamanho inicial", emitter.SizeStart, 0.01f, 0.0f, 50.0f);
             dragFloat("Tamanho final", emitter.SizeEnd, 0.01f, 0.0f, 50.0f);
+            dragFloat("Variacao de tamanho (0-1)", emitter.SizeVariation, 0.01f, 0.0f, 1.0f);
+            ImGui::TextUnformatted("Tamanho ao longo da vida (multiplica)");
+            resetButton("Resetar##SizeCurve", emitter.SizeOverLife, Prism::ParticleCurve{});
+            {
+                auto before = emitter;
+                gesture(before, ParticleCurveEditor("##SizeCurve", emitter.SizeOverLife, 0.0f, 2.0f));
+            }
+
             ImGui::ColorEdit4("Cor inicial", &emitter.ColorStart.x);
             TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
             ImGui::ColorEdit4("Cor final", &emitter.ColorEnd.x);
             TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
-            checkbox("Aditivo (brilho)", emitter.Additive);
+            ImGui::TextUnformatted("Cor ao longo da vida (multiplica)");
+            resetButton("Resetar##ColorGradient", emitter.ColorOverLife, Prism::ParticleGradient{});
+            {
+                auto before = emitter;
+                gesture(before, ParticleGradientEditor("##ColorGradient", emitter.ColorOverLife));
+            }
+            {
+                const int selectedStop = ParticleGradientSelection("##ColorGradient", emitter.ColorOverLife);
+                ImGui::ColorEdit4("Cor da parada", emitter.ColorOverLife.C[selectedStop]);
+                TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
+            }
+            combo("Mistura", emitter.BlendMode, kBlendNames, 4);
 
             // Textura opcional: arraste uma imagem do Conteudo do Projeto.
             std::string label = emitter.TexturePath.empty() ? "Textura: arraste uma imagem (opcional)" : "Textura: " + emitter.TexturePath;
@@ -89,6 +192,17 @@ namespace PrismEditor {
                     auto before = emitter;
                     emitter.TexturePath.clear();
                     CommitComponentEdit(m_Ctx, before, emitter, title);
+                }
+            }
+
+            if (!emitter.TexturePath.empty()) {
+                ImGui::TextDisabled("Folha de sprites (flipbook): colunas x linhas. 1x1 = textura simples.");
+                dragInt("Colunas", emitter.FlipbookColumns, 1, 64);
+                dragInt("Linhas", emitter.FlipbookRows, 1, 64);
+                if (emitter.FlipbookColumns * emitter.FlipbookRows > 1) {
+                    combo("Animacao", emitter.FlipbookMode, kFlipbookNames, 3);
+                    if (emitter.FlipbookMode == Prism::ParticleFlipbookMode::FixedFPS)
+                        dragFloat("Quadros por segundo", emitter.FlipbookFPS, 0.1f, 0.0f, 240.0f);
                 }
             }
 

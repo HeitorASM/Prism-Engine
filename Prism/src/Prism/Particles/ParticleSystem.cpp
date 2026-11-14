@@ -2,28 +2,18 @@
 #include "../Scene/Scene.h"
 #include <algorithm>
 #include <cmath>
+#include <glm/glm.hpp>
 
 namespace Prism {
 
     std::unordered_map<const Scene*, ParticleSystem::SceneStates> ParticleSystem::s_States;
 
     namespace {
-        constexpr float kPi = 3.14159265358979f;
         constexpr float kGravity = 9.81f;
+        constexpr float kDegToRad = 3.14159265358979f / 180.0f;
 
-        // xorshift32: barato e deterministico por emissor (sem estado global).
-        float Random01(uint32_t& seed) {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            return (float)(seed & 0xFFFFFF) / (float)0x1000000;
-        }
-
-        float RandomRange(uint32_t& seed, float a, float b) {
-            if (b < a)
-                std::swap(a, b);
-            return a + (b - a) * Random01(seed);
-        }
+        using ParticleMath::Random01;
+        using ParticleMath::RandomRange;
     }
 
     void ParticleSystem::Start(Scene& scene, entt::entity entity, EmitterState& state) {
@@ -60,34 +50,49 @@ namespace Prism {
         if (count == 0)
             return;
 
+        const bool local = emitter.SimulationSpace == ParticleSimulationSpace::Local;
         glm::mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
-        glm::vec3 origin = glm::vec3(world[3]);
-        glm::vec3 axis = glm::vec3(world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
-        axis = glm::length(axis) > 1e-6f ? glm::normalize(axis) : glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 fallbackAxis = glm::vec3(world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+        fallbackAxis = glm::length(fallbackAxis) > 1e-6f ? glm::normalize(fallbackAxis) : glm::vec3(0.0f, 1.0f, 0.0f);
 
-        // Base ortonormal (axis, tangent, bitangent) para o cone.
-        glm::vec3 helper = std::abs(axis.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-        glm::vec3 tangent = glm::normalize(glm::cross(helper, axis));
-        glm::vec3 bitangent = glm::cross(axis, tangent);
+        ParticleMath::ShapeParams shape;
+        shape.Type = emitter.Shape;
+        shape.Radius = emitter.ShapeRadius;
+        shape.Thickness = emitter.ShapeThickness;
+        shape.Box[0] = emitter.ShapeBox.x;
+        shape.Box[1] = emitter.ShapeBox.y;
+        shape.Box[2] = emitter.ShapeBox.z;
+        shape.SpreadAngleDeg = emitter.SpreadAngle;
+        shape.RadialBlend = emitter.ShapeRadialBlend;
 
-        float spread = std::min(std::max(emitter.SpreadAngle, 0.0f), 180.0f) * kPi / 180.0f;
-        float cosMax = std::cos(spread);
         uint32_t limit = std::min<uint32_t>(std::max<uint32_t>(emitter.MaxParticles, 1u), 10000u);
 
         for (uint32_t i = 0; i < count; i++) {
             if (state.Particles.size() >= limit)
                 break;
 
-            // cos(theta) uniforme entre cosMax e 1 => distribuicao uniforme na calota esferica.
-            float cosTheta = 1.0f - Random01(state.Seed) * (1.0f - cosMax);
-            float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
-            float phi = Random01(state.Seed) * 2.0f * kPi;
-            glm::vec3 direction = axis * cosTheta + (tangent * std::cos(phi) + bitangent * std::sin(phi)) * sinTheta;
+            // Forma e direcao no espaco LOCAL do emissor (eixo de emissao = +Y).
+            ParticleMath::ShapeSample sample = ParticleMath::SampleShape(shape, state.Seed);
+            glm::vec3 localPosition(sample.Position[0], sample.Position[1], sample.Position[2]);
+            glm::vec3 localDirection(sample.Direction[0], sample.Direction[1], sample.Direction[2]);
 
             Particle particle;
-            particle.Position = origin;
+            glm::vec3 direction;
+            if (local) {
+                particle.Position = localPosition;
+                direction = localDirection;
+            }
+            else {
+                particle.Position = glm::vec3(world * glm::vec4(localPosition, 1.0f));
+                direction = glm::vec3(world * glm::vec4(localDirection, 0.0f));
+                direction = glm::length(direction) > 1e-6f ? glm::normalize(direction) : fallbackAxis;
+            }
             particle.Velocity = direction * RandomRange(state.Seed, emitter.SpeedMin, emitter.SpeedMax);
             particle.Lifetime = std::max(0.01f, RandomRange(state.Seed, emitter.LifetimeMin, emitter.LifetimeMax));
+            particle.Rotation = RandomRange(state.Seed, emitter.RotationMin, emitter.RotationMax) * kDegToRad;
+            particle.AngularVelocity = RandomRange(state.Seed, emitter.AngularVelocityMin, emitter.AngularVelocityMax) * kDegToRad;
+            particle.SizeScale = 1.0f - std::min(std::max(emitter.SizeVariation, 0.0f), 1.0f) * Random01(state.Seed);
+            particle.Random = Random01(state.Seed);
             state.Particles.push_back(particle);
         }
     }
@@ -111,8 +116,19 @@ namespace Prism {
             }
         }
 
-        // Fisica simples: gravidade + integracao de Euler; remove as mortas (swap-erase).
-        float gravity = -kGravity * emitter.GravityScale;
+        // Gravidade e SEMPRE a do mundo; num emissor Local ela e levada para o espaco local
+        // do emissor (inversa da matriz de mundo), uma vez por chamada.
+        glm::vec3 gravity(0.0f, -kGravity * emitter.GravityScale, 0.0f);
+        if (emitter.SimulationSpace == ParticleSimulationSpace::Local && gravity.y != 0.0f && !state.Particles.empty()) {
+            glm::mat4 world = scene.GetWorldTransform(Entity(entity, &scene));
+            if (std::abs(glm::determinant(glm::mat3(world))) > 1e-12f)
+                gravity = glm::vec3(glm::inverse(world) * glm::vec4(gravity, 0.0f));
+            else
+                gravity = glm::vec3(0.0f);
+        }
+        const float dragFactor = emitter.Drag > 0.0f ? std::exp(-emitter.Drag * deltaTime) : 1.0f;
+
+        // Integracao de Euler (+ atrito, curva de velocidade e rotacao); remove as mortas (swap-erase).
         for (size_t i = 0; i < state.Particles.size();) {
             Particle& particle = state.Particles[i];
             particle.Age += deltaTime;
@@ -121,8 +137,11 @@ namespace Prism {
                 state.Particles.pop_back();
                 continue;
             }
-            particle.Velocity.y += gravity * deltaTime;
-            particle.Position += particle.Velocity * deltaTime;
+            const float t = particle.Age / particle.Lifetime;
+            particle.Velocity += gravity * deltaTime;
+            particle.Velocity *= dragFactor;
+            particle.Position += particle.Velocity * (emitter.SpeedOverLife.Evaluate(t) * deltaTime);
+            particle.Rotation += particle.AngularVelocity * deltaTime;
             i++;
         }
     }

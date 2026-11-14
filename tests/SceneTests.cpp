@@ -19,6 +19,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -306,6 +307,120 @@ static void TestOldBlockVersionsStillLoad() {
         std::istringstream in(MakeBlockStream("Collider", FindInfo("Collider")->Version, out.str()), std::ios::in | std::ios::binary);
         CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
         CHECK(!dst.HasComponent<ColliderComponent>() || (dst.GetComponent<ColliderComponent>().Layer >= 0 && dst.GetComponent<ColliderComponent>().Layer < 32));
+    }
+}
+
+// Emissor de particulas: bloco v1 (so o bool 'Additive') ainda carrega, o bloco v2 faz ida e volta
+// com todos os campos novos, e valores invalidos sao saneados.
+static void TestParticleEmitterBlocks() {
+    auto scene = Scene::Create("ParticleBlocks");
+    const ComponentTypeInfo* info = FindInfo("Particle Emitter");
+    CHECK(info != nullptr);
+    if (!info)
+        return;
+    CHECK(info->Version >= 2);
+
+    { // Bloco v1: exatamente o layout antigo, sem nada depois da textura.
+        std::ostringstream out(std::ios::out | std::ios::binary);
+        ComponentRegistry::WriteRaw(out, true);          // Enabled
+        ComponentRegistry::WriteRaw(out, true);          // PlayOnStart
+        ComponentRegistry::WriteRaw(out, true);          // Loop
+        ComponentRegistry::WriteRaw(out, 5.0f);          // Duration
+        ComponentRegistry::WriteRaw(out, (uint32_t)200); // MaxParticles
+        ComponentRegistry::WriteRaw(out, 30.0f);         // EmissionRate
+        ComponentRegistry::WriteRaw(out, (uint32_t)0);   // BurstCount
+        ComponentRegistry::WriteRaw(out, 0.5f);          // LifetimeMin
+        ComponentRegistry::WriteRaw(out, 1.0f);          // LifetimeMax
+        ComponentRegistry::WriteRaw(out, 1.0f);          // SpeedMin
+        ComponentRegistry::WriteRaw(out, 2.0f);          // SpeedMax
+        ComponentRegistry::WriteRaw(out, 40.0f);         // SpreadAngle
+        ComponentRegistry::WriteRaw(out, 0.5f);          // GravityScale
+        ComponentRegistry::WriteRaw(out, 0.4f);          // SizeStart
+        ComponentRegistry::WriteRaw(out, 0.1f);          // SizeEnd
+        ComponentRegistry::WriteRaw(out, glm::vec4(1.0f, 0.5f, 0.25f, 1.0f)); // ColorStart
+        ComponentRegistry::WriteRaw(out, glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));  // ColorEnd
+        ComponentRegistry::WriteRaw(out, false);         // Additive (false => Alpha)
+        ComponentRegistry::WriteString(out, "Textures/smoke.png");
+        Entity dst = scene->CreateEntity("dst");
+        std::istringstream in(MakeBlockStream("Particle Emitter", 1, out.str()), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+        CHECK(dst.HasComponent<ParticleEmitterComponent>());
+        if (dst.HasComponent<ParticleEmitterComponent>()) {
+            const auto& c = dst.GetComponent<ParticleEmitterComponent>();
+            CHECK(c.BlendMode == ParticleBlendMode::Alpha);
+            CHECK(c.SpreadAngle == 40.0f && c.MaxParticles == 200 && c.TexturePath == "Textures/smoke.png");
+            // campos novos ficam neutros: o emissor antigo desenha como antes
+            CHECK(c.Shape == ParticleShape::Cone);
+            CHECK(c.SimulationSpace == ParticleSimulationSpace::World);
+            CHECK(std::fabs(c.SizeOverLife.Evaluate(0.5f) - 1.0f) < 1e-6f);
+            CHECK(std::fabs(c.SpeedOverLife.Evaluate(0.5f) - 1.0f) < 1e-6f);
+            float tint[4];
+            c.ColorOverLife.Evaluate(0.5f, tint);
+            CHECK(tint[0] == 1.0f && tint[1] == 1.0f && tint[2] == 1.0f && tint[3] == 1.0f);
+            CHECK(c.FlipbookColumns == 1 && c.FlipbookRows == 1 && c.Drag == 0.0f);
+        }
+    }
+
+    { // Ida e volta do bloco v2 com valores nao padrao.
+        Entity src = scene->CreateEntity("src");
+        auto& c = src.AddComponent<ParticleEmitterComponent>();
+        c.BlendMode = ParticleBlendMode::SoftAdditive;
+        c.SizeOverLife.AddKey(0.5f, 2.0f);
+        c.SpeedOverLife = ParticleCurve::Constant(0.5f);
+        c.ColorOverLife.AddStop(0.5f);
+        c.ColorOverLife.C[1][0] = 0.25f;
+        c.Drag = 1.5f;
+        c.SizeVariation = 0.3f;
+        c.SimulationSpace = ParticleSimulationSpace::Local;
+        c.Shape = ParticleShape::Box;
+        c.ShapeRadius = 2.0f; c.ShapeThickness = 0.5f; c.ShapeBox = { 1.0f, 2.0f, 3.0f }; c.ShapeRadialBlend = 0.75f;
+        c.RotationMin = -45.0f; c.RotationMax = 45.0f; c.AngularVelocityMin = -90.0f; c.AngularVelocityMax = 90.0f;
+        c.FlipbookColumns = 4; c.FlipbookRows = 2; c.FlipbookMode = ParticleFlipbookMode::FixedFPS; c.FlipbookFPS = 24.0f;
+
+        std::ostringstream first(std::ios::out | std::ios::binary);
+        info->Serialize(first, src);
+        Entity dst = scene->CreateEntity("dst");
+        std::istringstream in(MakeBlockStream("Particle Emitter", info->Version, first.str()), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+        CHECK(dst.HasComponent<ParticleEmitterComponent>());
+        if (dst.HasComponent<ParticleEmitterComponent>()) {
+            const auto& d = dst.GetComponent<ParticleEmitterComponent>();
+            CHECK(d.BlendMode == ParticleBlendMode::SoftAdditive);
+            CHECK(d.SizeOverLife.Count == 3 && std::fabs(d.SizeOverLife.Evaluate(0.5f) - 2.0f) < 1e-6f);
+            CHECK(std::fabs(d.SpeedOverLife.Evaluate(0.9f) - 0.5f) < 1e-6f);
+            CHECK(d.ColorOverLife.Count == 3 && std::fabs(d.ColorOverLife.C[1][0] - 0.25f) < 1e-6f);
+            CHECK(d.Drag == 1.5f && std::fabs(d.SizeVariation - 0.3f) < 1e-6f);
+            CHECK(d.SimulationSpace == ParticleSimulationSpace::Local && d.Shape == ParticleShape::Box);
+            CHECK(d.ShapeBox == glm::vec3(1.0f, 2.0f, 3.0f) && d.ShapeRadialBlend == 0.75f && d.ShapeThickness == 0.5f);
+            CHECK(d.RotationMin == -45.0f && d.AngularVelocityMax == 90.0f);
+            CHECK(d.FlipbookColumns == 4 && d.FlipbookRows == 2 && d.FlipbookMode == ParticleFlipbookMode::FixedFPS && d.FlipbookFPS == 24.0f);
+            std::ostringstream second(std::ios::out | std::ios::binary);
+            info->Serialize(second, dst);
+            CHECK(first.str() == second.str());
+        }
+    }
+
+    { // Enums e valores fora de faixa viram padrao em vez de lixo.
+        Entity src = scene->CreateEntity("src");
+        auto& c = src.AddComponent<ParticleEmitterComponent>();
+        c.Shape = (ParticleShape)99;
+        c.BlendMode = (ParticleBlendMode)-4;
+        c.FlipbookColumns = 100000;
+        c.Drag = std::numeric_limits<float>::quiet_NaN();
+        c.SizeOverLife.V[0] = std::numeric_limits<float>::infinity();
+        std::ostringstream out(std::ios::out | std::ios::binary);
+        info->Serialize(out, src);
+        Entity dst = scene->CreateEntity("dst");
+        std::istringstream in(MakeBlockStream("Particle Emitter", info->Version, out.str()), std::ios::in | std::ios::binary);
+        CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+        if (dst.HasComponent<ParticleEmitterComponent>()) {
+            const auto& d = dst.GetComponent<ParticleEmitterComponent>();
+            CHECK(d.Shape == ParticleShape::Cone);
+            CHECK(d.BlendMode == ParticleBlendMode::Additive);
+            CHECK(d.FlipbookColumns == 64);
+            CHECK(d.Drag == 0.0f);
+            CHECK(std::isfinite(d.SizeOverLife.V[0]));
+        }
     }
 }
 
@@ -923,6 +1038,7 @@ int main() {
     TestBlockStreamFraming();
     TestUnknownBlocksArePreserved();
     TestOldBlockVersionsStillLoad();
+    TestParticleEmitterBlocks();
     TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
