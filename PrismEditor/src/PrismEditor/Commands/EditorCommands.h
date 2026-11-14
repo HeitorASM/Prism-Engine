@@ -391,6 +391,95 @@ namespace PrismEditor {
         Prism::Entity m_Instantiated;
     };
 
+    // Substitui uma entidade local pela instancia do prefab que acabou de ser
+    // criado. O snapshot permite desfazer sem perder a subarvore original.
+    class ConvertEntityToPrefabCommand : public Prism::Command {
+    public:
+        ConvertEntityToPrefabCommand(Prism::Ref<Prism::Scene> scene, Prism::Entity entity, std::filesystem::path prefabPath)
+            : m_Scene(scene), m_Original(entity), m_PrefabPath(std::move(prefabPath)) {
+            m_Snapshot = Prism::Scene::Create("__convert_prefab_undo__");
+            m_SnapshotRoot = m_Snapshot->CopyEntityTreeFrom(entity, /*exact*/ true);
+
+            if (auto* rel = scene->GetRegistry().try_get<Prism::RelationshipComponent>(entity.GetHandle())) {
+                m_ParentHandle = rel->Parent;
+                if (m_ParentHandle != entt::null) {
+                    if (auto* parentRel = scene->GetRegistry().try_get<Prism::RelationshipComponent>(m_ParentHandle)) {
+                        auto it = std::find(parentRel->Children.begin(), parentRel->Children.end(), entity.GetHandle());
+                        if (it != parentRel->Children.end())
+                            m_SiblingIndex = (size_t)(it - parentRel->Children.begin());
+                    }
+                }
+            }
+        }
+
+        void Execute() override {
+            if (!m_Original.IsValid())
+                return;
+
+            m_Converted = Prism::PrefabSerializer::Instantiate(*m_Scene, m_PrefabPath, ResolveAssetID());
+            if (!m_Converted)
+                return;
+
+            if (m_ParentHandle != entt::null && m_Scene->GetRegistry().valid(m_ParentHandle))
+                m_Scene->SetParent(m_Converted, Prism::Entity(m_ParentHandle, m_Scene.get()));
+
+            m_Scene->DestroyEntity(m_Original);
+            m_Original = {};
+        }
+
+        void Undo() override {
+            if (m_Converted)
+                m_Scene->DestroyEntity(m_Converted);
+            m_Converted = {};
+
+            if (!m_SnapshotRoot.IsValid())
+                return;
+            Prism::Entity restored = m_Scene->CopyEntityTreeFrom(m_SnapshotRoot, /*exact*/ true);
+            if (!restored)
+                return;
+
+            if (m_ParentHandle != entt::null && m_Scene->GetRegistry().valid(m_ParentHandle)) {
+                m_Scene->SetParent(restored, Prism::Entity(m_ParentHandle, m_Scene.get()));
+                auto* parentRel = m_Scene->GetRegistry().try_get<Prism::RelationshipComponent>(m_ParentHandle);
+                if (parentRel) {
+                    auto it = std::find(parentRel->Children.begin(), parentRel->Children.end(), restored.GetHandle());
+                    if (it != parentRel->Children.end()) {
+                        parentRel->Children.erase(it);
+                        size_t index = std::min(m_SiblingIndex, parentRel->Children.size());
+                        parentRel->Children.insert(parentRel->Children.begin() + (std::ptrdiff_t)index, restored.GetHandle());
+                    }
+                }
+            }
+            m_Original = restored;
+        }
+
+        std::string GetName() const override { return "Converter em Prefab"; }
+        Prism::Entity GetConvertedEntity() const { return m_Converted; }
+
+    private:
+        Prism::AssetID ResolveAssetID() const {
+            auto project = Prism::Project::GetActive();
+            if (!project)
+                return {};
+            auto& registry = project->GetAssetRegistry();
+            Prism::AssetID id = registry.IdForPath(registry.ToRelative(m_PrefabPath));
+            if (!id.IsValid()) {
+                registry.Refresh();
+                id = registry.IdForPath(registry.ToRelative(m_PrefabPath));
+            }
+            return id;
+        }
+
+        Prism::Ref<Prism::Scene> m_Scene;
+        Prism::Entity m_Original;
+        Prism::Entity m_Converted;
+        Prism::Ref<Prism::Scene> m_Snapshot;
+        Prism::Entity m_SnapshotRoot;
+        std::filesystem::path m_PrefabPath;
+        entt::entity m_ParentHandle = entt::null;
+        size_t m_SiblingIndex = 0;
+    };
+
     // Sincroniza uma INSTANCIA de prefab com o .prismprefab de origem
     // ATUAL - "Atualizar" no painel Prefab (ver EditorLayer.cpp e
     // Scene/PrefabSyncer.h para a logica de override por component).

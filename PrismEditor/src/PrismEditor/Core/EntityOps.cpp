@@ -57,6 +57,17 @@ namespace PrismEditor::EntityOps {
         ctx.SelectedEntity = instantiated;
     }
 
+    void ConvertEntityToPrefab(EditorContext& ctx, Prism::Entity entity, const std::filesystem::path& prefabPath) {
+        if (!entity)
+            return;
+
+        auto command = Prism::CreateScope<ConvertEntityToPrefabCommand>(ctx.ActiveScene, entity, prefabPath);
+        ConvertEntityToPrefabCommand* raw = command.get();
+        ctx.History.Execute(std::move(command));
+        if (Prism::Entity converted = raw->GetConvertedEntity())
+            ctx.SelectedEntity = converted;
+    }
+
     void InstantiateModel(EditorContext& ctx, const std::filesystem::path& modelPath, Prism::Entity parent) {
         auto command = Prism::CreateScope<InstantiateModelCommand>(ctx.ActiveScene, modelPath);
         InstantiateModelCommand* raw = command.get();

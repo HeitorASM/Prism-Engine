@@ -33,6 +33,10 @@ namespace PrismEditor::EntityOps {
     // precisa apertar Ctrl+Z, nao percebe que sao dois comandos).
     void InstantiatePrefab(EditorContext& ctx, const std::filesystem::path& prefabPath, Prism::Entity parent = {});
 
+    // Converte uma entidade existente em uma instancia do prefab recem-criado,
+    // preservando o pai e permitindo desfazer/refazer a operacao.
+    void ConvertEntityToPrefab(EditorContext& ctx, Prism::Entity entity, const std::filesystem::path& prefabPath);
+
         // Duplica 'entity' via DuplicateEntityCommand e seleciona a copia -
     // logica compartilhada entre o menu de contexto (m_EntityContextMenu,
     // ver Panels/EntityContextMenuPanel.h) e o atalho de teclado Ctrl+D

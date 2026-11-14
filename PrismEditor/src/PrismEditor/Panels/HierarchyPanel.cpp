@@ -345,6 +345,8 @@ namespace PrismEditor {
                     // chegava ao arquivo.
                     project->GetAssetRegistry().Refresh();
                     m_Ctx.ContentBrowser->RefreshEntries();
+
+                    EntityOps::ConvertEntityToPrefab(m_Ctx, m_PrefabToCreateFrom, previewPath);
                 }
                 m_PrefabToCreateFrom = {};
                 ImGui::CloseCurrentPopup();
