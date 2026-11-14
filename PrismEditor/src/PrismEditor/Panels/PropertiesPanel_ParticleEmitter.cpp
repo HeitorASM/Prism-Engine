@@ -217,6 +217,25 @@ namespace PrismEditor {
             dragFloat("Vel. angular min (graus/s)", emitter.AngularVelocityMin, 0.5f, -3600.0f, 3600.0f);
             dragFloat("Vel. angular max (graus/s)", emitter.AngularVelocityMax, 0.5f, -3600.0f, 3600.0f);
 
+            // --- Forcas e colisao (espaco de MUNDO) ---
+            ImGui::Separator();
+            ImGui::TextDisabled("Forcas");
+            ImGui::DragFloat3("Vento (m/s2)", &emitter.Wind.x, 0.05f, -1000.0f, 1000.0f);
+            TrackContinuousEdit(m_Ctx, m_ParticleBeforeEdit, emitter, title);
+            dragFloat("Turbulencia (forca)", emitter.TurbulenceStrength, 0.02f, 0.0f, 1000.0f);
+            if (emitter.TurbulenceStrength > 0.0f) {
+                dragFloat("Turbulencia: frequencia", emitter.TurbulenceFrequency, 0.01f, 0.001f, 100.0f);
+                dragFloat("Turbulencia: velocidade", emitter.TurbulenceSpeed, 0.01f, 0.0f, 100.0f);
+            }
+            checkbox("Colidir com o chao", emitter.CollideGround);
+            if (emitter.CollideGround) {
+                dragFloat("Altura do chao (Y)", emitter.GroundHeight, 0.02f, -1.0e6f, 1.0e6f);
+                dragFloat("Quique", emitter.Bounce, 0.01f, 0.0f, 1.0f);
+                dragFloat("Atrito no impacto", emitter.CollisionFriction, 0.01f, 0.0f, 1.0f);
+                dragFloat("Vida perdida por impacto", emitter.CollisionLifeLoss, 0.01f, 0.0f, 1.0f);
+            }
+            ImGui::Separator();
+
             ImGui::TextUnformatted("Velocidade ao longo da vida");
             resetButton("Resetar##SpeedCurve", emitter.SpeedOverLife, Prism::ParticleCurve{});
             {

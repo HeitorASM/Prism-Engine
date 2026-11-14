@@ -63,6 +63,7 @@ namespace Prism {
         struct EmitterState {
             std::vector<Particle> Particles;
             float Accumulator = 0.0f;
+            float SimTime = 0.0f;   // relogio proprio do campo de turbulencia (anda enquanto houver particulas)
             float Time = 0.0f;
             bool Playing = false;
             uint32_t Seed = 0x9E3779B9u;

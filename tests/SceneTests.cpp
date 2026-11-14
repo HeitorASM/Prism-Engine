@@ -422,31 +422,52 @@ static void TestParticleEmitterBlocks() {
             CHECK(std::isfinite(d.SizeOverLife.V[0]));
         }
     }
-    { // Bloco v3: LinkedAsset (vinculo com recurso) vai ao fim; blocos v2 nao o tem e ficam sem vinculo.
+    { // Blocos v3 e v4: LinkedAsset e depois forcas/colisao, sempre NO FIM; blocos mais antigos ficam com os padroes.
         Entity src = scene->CreateEntity("src3");
         auto& c = src.AddComponent<ParticleEmitterComponent>();
         c.Drag = 2.0f;
         c.LinkedAsset = AssetID{ 0xABCDEF0123456789ull };
+        c.Wind = { 1.0f, 2.0f, 3.0f }; c.TurbulenceStrength = 4.0f; c.TurbulenceFrequency = 0.25f; c.TurbulenceSpeed = 1.5f;
+        c.CollideGround = true; c.GroundHeight = -2.0f; c.Bounce = 0.75f; c.CollisionFriction = 0.2f; c.CollisionLifeLoss = 0.5f;
         std::ostringstream full(std::ios::out | std::ios::binary);
         info->Serialize(full, src);
-        CHECK(info->Version >= 3);
-        {
-            Entity dst = scene->CreateEntity("dst3");
-            std::istringstream in(MakeBlockStream("Particle Emitter", 3, full.str()), std::ios::in | std::ios::binary);
-            CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
-            CHECK(dst.HasComponent<ParticleEmitterComponent>() && dst.GetComponent<ParticleEmitterComponent>().LinkedAsset == c.LinkedAsset);
-        }
-        {   // v2: o mesmo conteudo SEM os 8 bytes finais do AssetID
-            std::string v2 = full.str();
-            CHECK(v2.size() > sizeof(AssetID));
-            v2.resize(v2.size() - sizeof(AssetID));
-            Entity dst = scene->CreateEntity("dst2");
-            std::istringstream in(MakeBlockStream("Particle Emitter", 2, v2), std::ios::in | std::ios::binary);
+        CHECK(info->Version >= 4);
+        const size_t v4Tail = sizeof(glm::vec3) + 3 * sizeof(float) + sizeof(bool) + 4 * sizeof(float);
+        auto load = [&](uint32_t version, const std::string& bytes, const char* name) {
+            Entity dst = scene->CreateEntity(name);
+            std::istringstream in(MakeBlockStream("Particle Emitter", version, bytes), std::ios::in | std::ios::binary);
             CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
             CHECK(dst.HasComponent<ParticleEmitterComponent>());
+            return dst;
+        };
+        { // v4 completo
+            Entity dst = load(4, full.str(), "dst4");
+            if (dst.HasComponent<ParticleEmitterComponent>()) {
+                const auto& d = dst.GetComponent<ParticleEmitterComponent>();
+                CHECK(d.LinkedAsset == c.LinkedAsset && d.Wind == glm::vec3(1.0f, 2.0f, 3.0f));
+                CHECK(d.TurbulenceStrength == 4.0f && d.TurbulenceFrequency == 0.25f && d.TurbulenceSpeed == 1.5f);
+                CHECK(d.CollideGround && d.GroundHeight == -2.0f && d.Bounce == 0.75f && d.CollisionFriction == 0.2f && d.CollisionLifeLoss == 0.5f);
+            }
+        }
+        { // v3: sem a cauda v4 -> vinculo preservado, forcas/colisao nos padroes
+            std::string v3 = full.str();
+            CHECK(v3.size() > v4Tail);
+            v3.resize(v3.size() - v4Tail);
+            Entity dst = load(3, v3, "dst3");
+            if (dst.HasComponent<ParticleEmitterComponent>()) {
+                const auto& d = dst.GetComponent<ParticleEmitterComponent>();
+                CHECK(d.LinkedAsset == c.LinkedAsset && d.Drag == 2.0f);
+                CHECK(d.Wind == glm::vec3(0.0f) && d.TurbulenceStrength == 0.0f && !d.CollideGround);
+            }
+        }
+        { // v2: tambem sem o AssetID -> sem vinculo
+            std::string v2 = full.str();
+            v2.resize(v2.size() - v4Tail - sizeof(AssetID));
+            Entity dst = load(2, v2, "dst2");
             if (dst.HasComponent<ParticleEmitterComponent>()) {
                 CHECK(!dst.GetComponent<ParticleEmitterComponent>().LinkedAsset.IsValid());
                 CHECK(dst.GetComponent<ParticleEmitterComponent>().Drag == 2.0f);
+                CHECK(!dst.GetComponent<ParticleEmitterComponent>().CollideGround);
             }
         }
     }

@@ -38,6 +38,8 @@ static ParticleEmitterComponent MakeCustom() {
     c.ShapeRadius = 2.0f; c.ShapeThickness = 0.5f; c.ShapeBox = { 1.0f, 2.0f, 3.0f }; c.ShapeRadialBlend = 0.75f;
     c.RotationMin = -45.0f; c.RotationMax = 45.0f; c.AngularVelocityMin = -90.0f; c.AngularVelocityMax = 90.0f;
     c.FlipbookColumns = 4; c.FlipbookRows = 2; c.FlipbookMode = ParticleFlipbookMode::FixedFPS; c.FlipbookFPS = 24.0f;
+    c.Wind = { 1.0f, -2.0f, 0.5f }; c.TurbulenceStrength = 3.0f; c.TurbulenceFrequency = 0.2f; c.TurbulenceSpeed = 1.5f;
+    c.CollideGround = true; c.GroundHeight = -1.5f; c.Bounce = 0.7f; c.CollisionFriction = 0.3f; c.CollisionLifeLoss = 0.25f;
     return c;
 }
 

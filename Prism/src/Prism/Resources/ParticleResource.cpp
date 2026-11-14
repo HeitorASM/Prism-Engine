@@ -154,6 +154,16 @@ namespace Prism::ParticleResource {
         r.Set("FlipbookRows", ResourceValue::MakeInt(c.FlipbookRows));
         r.Set("FlipbookMode", ResourceValue::MakeString(NameOf((int)c.FlipbookMode, kFlipbookNames)));
         r.Set("FlipbookFPS", ResourceValue::MakeFloat32(c.FlipbookFPS));
+
+        r.Set("Wind", ResourceValue::MakeFloatArray(&c.Wind.x, 3));
+        r.Set("TurbulenceStrength", ResourceValue::MakeFloat32(c.TurbulenceStrength));
+        r.Set("TurbulenceFrequency", ResourceValue::MakeFloat32(c.TurbulenceFrequency));
+        r.Set("TurbulenceSpeed", ResourceValue::MakeFloat32(c.TurbulenceSpeed));
+        r.Set("CollideGround", ResourceValue::MakeBool(c.CollideGround));
+        r.Set("GroundHeight", ResourceValue::MakeFloat32(c.GroundHeight));
+        r.Set("Bounce", ResourceValue::MakeFloat32(c.Bounce));
+        r.Set("CollisionFriction", ResourceValue::MakeFloat32(c.CollisionFriction));
+        r.Set("CollisionLifeLoss", ResourceValue::MakeFloat32(c.CollisionLifeLoss));
         return doc;
     }
 
@@ -211,6 +221,16 @@ namespace Prism::ParticleResource {
         ReadUInt(r, "FlipbookRows", c.FlipbookRows);
         if (IndexOf(r, "FlipbookMode", kFlipbookNames, index)) c.FlipbookMode = (ParticleFlipbookMode)index;
         r.GetFloat("FlipbookFPS", c.FlipbookFPS);
+
+        r.GetFloatArray("Wind", &c.Wind.x, 3);
+        r.GetFloat("TurbulenceStrength", c.TurbulenceStrength);
+        r.GetFloat("TurbulenceFrequency", c.TurbulenceFrequency);
+        r.GetFloat("TurbulenceSpeed", c.TurbulenceSpeed);
+        r.GetBool("CollideGround", c.CollideGround);
+        r.GetFloat("GroundHeight", c.GroundHeight);
+        r.GetFloat("Bounce", c.Bounce);
+        r.GetFloat("CollisionFriction", c.CollisionFriction);
+        r.GetFloat("CollisionLifeLoss", c.CollisionLifeLoss);
 
         c.Sanitize();
         emitter = c;

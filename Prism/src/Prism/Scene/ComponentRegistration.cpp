@@ -508,6 +508,16 @@ namespace Prism {
                 WriteRaw(out, c.BlendMode);
                 // v3 do bloco: vinculo com um recurso (.prismres).
                 WriteRaw(out, c.LinkedAsset);
+                // v4 do bloco: forcas e colisao.
+                WriteRaw(out, c.Wind);
+                WriteRaw(out, c.TurbulenceStrength);
+                WriteRaw(out, c.TurbulenceFrequency);
+                WriteRaw(out, c.TurbulenceSpeed);
+                WriteRaw(out, c.CollideGround);
+                WriteRaw(out, c.GroundHeight);
+                WriteRaw(out, c.Bounce);
+                WriteRaw(out, c.CollisionFriction);
+                WriteRaw(out, c.CollisionLifeLoss);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ParticleEmitterComponent>();
@@ -547,6 +557,16 @@ namespace Prism {
                     }
                 }
 
+                // Bloco v4: forcas e colisao (blocos antigos ficam com os padroes: sem forcas, sem colisao).
+                if (ComponentRegistry::CurrentBlockVersion() >= 4) {
+                    if (!(ReadRaw(in, c.Wind) && ReadRaw(in, c.TurbulenceStrength) && ReadRaw(in, c.TurbulenceFrequency)
+                        && ReadRaw(in, c.TurbulenceSpeed) && ReadRaw(in, c.CollideGround) && ReadRaw(in, c.GroundHeight)
+                        && ReadRaw(in, c.Bounce) && ReadRaw(in, c.CollisionFriction) && ReadRaw(in, c.CollisionLifeLoss))) {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (emissor de particulas da entidade ", entityIndex, ").");
+                        return false;
+                    }
+                }
+
                 // Limites, enums fora de faixa, NaN etc.: valores invalidos viram padrao em vez de lixo.
                 c.Sanitize();
                 return true;
@@ -554,7 +574,8 @@ namespace Prism {
         );
         // v2 do bloco: curvas, espaco, forma, rotacao, flipbook e modo de blend no fim.
         // v3: LinkedAsset (vinculo com um recurso .prismres) no fim.
-        s_Registry.back().Version = 3;
+        // v4: forcas (vento, turbulencia) e colisao com o chao no fim.
+        s_Registry.back().Version = 4;
 
         // --- CameraComponent -----------------------------------------------------
         Register<CameraComponent>(

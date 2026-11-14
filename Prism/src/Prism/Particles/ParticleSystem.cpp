@@ -1,5 +1,6 @@
 #include "ParticleSystem.h"
 #include "../Scene/Scene.h"
+#include "ParticleForces.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
@@ -20,6 +21,7 @@ namespace Prism {
         (void)scene;
         state.Particles.clear();
         state.Accumulator = 0.0f;
+        state.SimTime = 0.0f;
         state.Time = 0.0f;
         state.Playing = true;
         state.Seed = 0x9E3779B9u ^ ((uint32_t)entity * 2654435761u);
@@ -128,7 +130,25 @@ namespace Prism {
         }
         const float dragFactor = emitter.Drag > 0.0f ? std::exp(-emitter.Drag * deltaTime) : 1.0f;
 
-        // Integracao de Euler (+ atrito, curva de velocidade e rotacao); remove as mortas (swap-erase).
+        // Forcas e colisao sao de MUNDO. Num emissor Local, as particulas guardam posicao/velocidade locais:
+        // leva-se cada uma ao mundo (matriz do emissor), aplica-se o efeito e volta-se (inversa).
+        const bool local = emitter.SimulationSpace == ParticleSimulationSpace::Local;
+        const bool hasWind = emitter.Wind != glm::vec3(0.0f);
+        const bool hasTurbulence = emitter.TurbulenceStrength > 0.0f;
+        const bool needsWorldPass = hasWind || hasTurbulence || emitter.CollideGround;
+        glm::mat4 toWorld(1.0f), toLocal(1.0f);
+        bool worldPass = needsWorldPass && !state.Particles.empty();
+        if (worldPass && local) {
+            toWorld = scene.GetWorldTransform(Entity(entity, &scene));
+            if (std::abs(glm::determinant(glm::mat3(toWorld))) > 1e-12f)
+                toLocal = glm::inverse(toWorld);
+            else
+                worldPass = false; // matriz degenerada: sem forcas/colisao neste quadro
+        }
+        state.SimTime += deltaTime;
+        const float noiseTime = state.SimTime * emitter.TurbulenceSpeed;
+
+        // Integracao de Euler (+ atrito, curva de velocidade, forcas, colisao e rotacao); remove as mortas (swap-erase).
         for (size_t i = 0; i < state.Particles.size();) {
             Particle& particle = state.Particles[i];
             particle.Age += deltaTime;
@@ -142,6 +162,30 @@ namespace Prism {
             particle.Velocity *= dragFactor;
             particle.Position += particle.Velocity * (emitter.SpeedOverLife.Evaluate(t) * deltaTime);
             particle.Rotation += particle.AngularVelocity * deltaTime;
+
+            if (worldPass) {
+                glm::vec3 position = local ? glm::vec3(toWorld * glm::vec4(particle.Position, 1.0f)) : particle.Position;
+                glm::vec3 velocity = local ? glm::vec3(toWorld * glm::vec4(particle.Velocity, 0.0f)) : particle.Velocity;
+                if (hasWind)
+                    velocity += emitter.Wind * deltaTime;
+                if (hasTurbulence)
+                    velocity += ParticleForces::TurbulenceField(position, noiseTime, emitter.TurbulenceFrequency) * (emitter.TurbulenceStrength * deltaTime);
+                bool hit = false;
+                if (emitter.CollideGround) {
+                    const float size = (emitter.SizeStart + (emitter.SizeEnd - emitter.SizeStart) * t) * emitter.SizeOverLife.Evaluate(t) * particle.SizeScale;
+                    hit = ParticleForces::CollideGround(position, velocity, emitter.GroundHeight, std::max(size, 0.0f) * 0.5f, emitter.Bounce, emitter.CollisionFriction);
+                }
+                if (local) {
+                    particle.Position = glm::vec3(toLocal * glm::vec4(position, 1.0f));
+                    particle.Velocity = glm::vec3(toLocal * glm::vec4(velocity, 0.0f));
+                }
+                else {
+                    particle.Position = position;
+                    particle.Velocity = velocity;
+                }
+                if (hit && emitter.CollisionLifeLoss > 0.0f)
+                    particle.Age += (particle.Lifetime - particle.Age) * emitter.CollisionLifeLoss; // 1 => morre no proximo quadro
+            }
             i++;
         }
     }

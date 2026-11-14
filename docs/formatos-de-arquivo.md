@@ -116,7 +116,7 @@ SizeOverLife = [[0.0, 1.0], [0.5, 2.0], [1.0, 0.0]]
 
 - Chaves desconhecidas são ignoradas e as ausentes usam o padrão (versões novas não quebram as antigas); valores inválidos são corrigidos na leitura.
 - Referências a outros assets usam o `AssetID` (`@asset(<16 hex>, "dica")`), estável ao mover/renomear.
-- **Emissor de partículas vinculado:** o componente guarda o `AssetID` do recurso (bloco `Particle Emitter` v3). Editar o emissor atualiza o arquivo (com atraso, nunca com o mouse apertado), e todos os emissores vinculados ao mesmo arquivo acompanham; mudar o arquivo por fora recarrega no editor. `Enabled`/`PlayOnStart` ficam na entidade, não no recurso. Durante o Play nada é gravado.
+- **Emissor de partículas vinculado:** o componente guarda o `AssetID` do recurso (bloco `Particle Emitter` v3). O bloco `Particle Emitter` v4 acrescenta, no fim, vento, turbulência e colisão com o chão. Editar o emissor atualiza o arquivo (com atraso, nunca com o mouse apertado), e todos os emissores vinculados ao mesmo arquivo acompanham; mudar o arquivo por fora recarrega no editor. `Enabled`/`PlayOnStart` ficam na entidade, não no recurso. Durante o Play nada é gravado.
 
 ## `.meta`
 

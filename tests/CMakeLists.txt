@@ -281,6 +281,15 @@ target_include_directories(PrismParticleBatcherTests PRIVATE ${PRISM_SRC})
 target_compile_features(PrismParticleBatcherTests PRIVATE cxx_std_20)
 add_test(NAME ParticleBatcherTests COMMAND PrismParticleBatcherTests)
 
+# PrismParticleForcesTests: ruido, turbulencia e colisao com o chao (Particles/ParticleForces.h, std + glm).
+add_executable(PrismParticleForcesTests
+    ParticleForcesTests.cpp
+)
+target_include_directories(PrismParticleForcesTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismParticleForcesTests PRIVATE cxx_std_20)
+target_link_libraries(PrismParticleForcesTests PRIVATE glm)
+add_test(NAME ParticleForcesTests COMMAND PrismParticleForcesTests)
+
 # PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
 add_executable(PrismBuildAnalysisTests
     BuildOutputAnalysisTests.cpp

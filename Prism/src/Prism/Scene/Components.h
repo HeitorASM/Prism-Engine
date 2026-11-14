@@ -834,6 +834,17 @@ namespace Prism {
         ParticleFlipbookMode FlipbookMode = ParticleFlipbookMode::OverLifetime;
         float FlipbookFPS = 12.0f;               // so FixedFPS
 
+        // --- Bloco v4: forcas e colisao (ver Particles/ParticleForces.h). Tudo em espaco de MUNDO. ---
+        glm::vec3 Wind = { 0.0f, 0.0f, 0.0f };   // aceleracao constante (m/s^2)
+        float TurbulenceStrength = 0.0f;         // aceleracao maxima do ruido (m/s^2); 0 = desligado
+        float TurbulenceFrequency = 0.5f;        // ciclos por metro (menor = redemoinhos maiores)
+        float TurbulenceSpeed = 0.5f;            // quao rapido o campo evolui no tempo
+        bool CollideGround = false;              // colide com o plano y = GroundHeight
+        float GroundHeight = 0.0f;               // altura do chao (Y de mundo)
+        float Bounce = 0.5f;                     // 0..1: fracao da velocidade vertical devolvida
+        float CollisionFriction = 0.1f;          // 0..1: fracao da velocidade horizontal perdida por impacto
+        float CollisionLifeLoss = 0.0f;          // 0..1: fracao da vida RESTANTE perdida por impacto (1 = morre)
+
         // --- Bloco v3: vinculo com um recurso (.prismres, tipo "ParticleEmitter") ----------
         // Se valido, os campos acima sao uma COPIA dos valores do recurso: editar o emissor no
         // painel regrava o arquivo e toda entidade com o mesmo vinculo e atualizada (mesmo
@@ -874,6 +885,15 @@ namespace Prism {
             FlipbookColumns = std::min<uint32_t>(std::max<uint32_t>(FlipbookColumns, 1u), 64u);
             FlipbookRows = std::min<uint32_t>(std::max<uint32_t>(FlipbookRows, 1u), 64u);
             FlipbookFPS = clampf(FlipbookFPS, 12.0f, 0.0f, 240.0f);
+            for (int i = 0; i < 3; i++)
+                Wind[i] = clampf(Wind[i], 0.0f, -1000.0f, 1000.0f);
+            TurbulenceStrength = clampf(TurbulenceStrength, 0.0f, 0.0f, 1000.0f);
+            TurbulenceFrequency = clampf(TurbulenceFrequency, 0.5f, 0.001f, 100.0f);
+            TurbulenceSpeed = clampf(TurbulenceSpeed, 0.5f, 0.0f, 100.0f);
+            GroundHeight = clampf(GroundHeight, 0.0f, -1.0e6f, 1.0e6f);
+            Bounce = clampf(Bounce, 0.5f, 0.0f, 1.0f);
+            CollisionFriction = clampf(CollisionFriction, 0.1f, 0.0f, 1.0f);
+            CollisionLifeLoss = clampf(CollisionLifeLoss, 0.0f, 0.0f, 1.0f);
         }
 
         // Atalho de compatibilidade (scripts Lua antigos, codigo de extensao).
