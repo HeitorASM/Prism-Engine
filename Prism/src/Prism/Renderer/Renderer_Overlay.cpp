@@ -12,6 +12,7 @@
 #include "../Scene/Scene.h"
 #include "../Scene/Entity.h"
 #include "../Particles/ParticleSystem.h"
+#include "../Particles/ParticleBatcher.h"
 #include "../UI/UISystem.h"
 #include "DrawContext.h"
 #include "../Assets/ModelLoader.h"
@@ -190,31 +191,44 @@ namespace Prism {
             glm::vec4 Color;
             glm::vec4 Extra;       // x = rotacao (rad), y = quadro do flipbook
         };
-        std::vector<GPUParticle> gpuParticles;
-        std::vector<std::pair<float, uint32_t>> order; // (distancia^2, indice) para ordenar o blend normal
-        std::vector<glm::vec3> worldPositions;         // posicao de mundo de cada particula (emissor Local: ja transformada)
+        // Estado de desenho compartilhado por varias particulas/emissores (blend + textura + grade do flipbook).
+        struct DrawState {
+            ParticleBlendMode Blend;
+            Texture2D* Texture;    // nullptr = circulo suave
+            uint32_t Columns, Rows;
+        };
 
-        bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
-        bool shaderBound = false;
+        // Buffers de trabalho PERSISTENTES entre frames: nada de alocacao por frame depois do aquecimento.
+        static std::vector<GPUParticle> s_Particles;        // todas as particulas de todos os emissores (ordem de coleta)
+        static std::vector<GPUParticle> s_Ordered;          // na ordem final de desenho
+        static std::vector<ParticleSortItem> s_Items;
+        static std::vector<ParticleRun> s_Runs;
+        static std::vector<DrawState> s_States;
+        static std::vector<uint8_t> s_OrderDependent;
+        s_Particles.clear(); s_Ordered.clear(); s_Items.clear(); s_Runs.clear(); s_States.clear(); s_OrderDependent.clear();
 
+        // ---- 1) Coleta: cada emissor visivel contribui com todas as suas particulas ----
         for (auto handle : emitters) {
             const std::vector<Particle>* particles = ParticleSystem::GetParticles(scene, handle);
             if (!particles || particles->empty() || !scene.IsEntityVisible(handle))
                 continue;
             const auto& emitter = emitters.get<ParticleEmitterComponent>(handle);
 
-            if (!shaderBound) {
-                glEnable(GL_BLEND);
-                glDepthMask(GL_FALSE);
-                glDisable(GL_CULL_FACE);
-                glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
-                s_ParticleShader->Bind();
-                s_ParticleShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
-                s_ParticleShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
-                s_ParticleShader->SetFloat3("u_CameraRight", cameraRight.x, cameraRight.y, cameraRight.z);
-                s_ParticleShader->SetFloat3("u_CameraUp", cameraUp.x, cameraUp.y, cameraUp.z);
-                s_ParticleShader->SetInt("u_Texture", 0);
-                shaderBound = true;
+            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
+            if (texture && !texture->IsValid())
+                texture = nullptr;
+            const uint32_t columns = texture ? std::max(emitter.FlipbookColumns, 1u) : 1u;
+            const uint32_t rows = texture ? std::max(emitter.FlipbookRows, 1u) : 1u;
+
+            uint32_t stateIndex = (uint32_t)s_States.size();
+            for (uint32_t k = 0; k < (uint32_t)s_States.size(); k++) {
+                const DrawState& st = s_States[k];
+                if (st.Blend == emitter.BlendMode && st.Texture == texture && st.Columns == columns && st.Rows == rows) { stateIndex = k; break; }
+            }
+            if (stateIndex == s_States.size()) {
+                s_States.push_back({ emitter.BlendMode, texture, columns, rows });
+                // Alpha e SoftAdditive dependem da ordem; Aditivo e Multiplicar nao.
+                s_OrderDependent.push_back(emitter.BlendMode == ParticleBlendMode::Alpha || emitter.BlendMode == ParticleBlendMode::SoftAdditive ? 1 : 0);
             }
 
             // Emissor Local: as particulas guardam posicao LOCAL; leva para o mundo com a matriz atual.
@@ -223,31 +237,8 @@ namespace Prism {
             if (localSpace)
                 emitterWorld = scene.GetWorldTransform(Entity(handle, &scene));
 
-            worldPositions.resize(particles->size());
-            for (size_t i = 0; i < particles->size(); i++) {
-                const glm::vec3& position = (*particles)[i].Position;
-                worldPositions[i] = localSpace ? glm::vec3(emitterWorld * glm::vec4(position, 1.0f)) : position;
-            }
-
-            // Ordem de desenho: so Alpha depende dela (de tras para frente); os outros modos sao comutativos.
-            order.clear();
-            order.reserve(particles->size());
-            for (uint32_t i = 0; i < (uint32_t)particles->size(); i++) {
-                glm::vec3 delta = worldPositions[i] - cameraPosition;
-                order.emplace_back(glm::dot(delta, delta), i);
-            }
-            if (emitter.BlendMode == ParticleBlendMode::Alpha)
-                std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
-            const bool useTexture = texture && texture->IsValid();
-            const uint32_t flipbookColumns = useTexture ? std::max(emitter.FlipbookColumns, 1u) : 1u;
-            const uint32_t flipbookRows = useTexture ? std::max(emitter.FlipbookRows, 1u) : 1u;
-
-            gpuParticles.clear();
-            gpuParticles.reserve(order.size());
-            for (const auto& entry : order) {
-                const Particle& particle = (*particles)[entry.second];
+            for (const Particle& particle : *particles) {
+                const glm::vec3 position = localSpace ? glm::vec3(emitterWorld * glm::vec4(particle.Position, 1.0f)) : particle.Position;
                 const float t = std::min(std::max(particle.Age / particle.Lifetime, 0.0f), 1.0f);
 
                 // tamanho = lerp(inicio, fim) * curva * variacao da particula
@@ -259,42 +250,65 @@ namespace Prism {
                 emitter.ColorOverLife.Evaluate(t, tint);
                 glm::vec4 color = glm::mix(emitter.ColorStart, emitter.ColorEnd, t) * glm::vec4(tint[0], tint[1], tint[2], tint[3]);
 
-                const uint32_t frame = ParticleMath::FlipbookFrame(emitter.FlipbookMode, flipbookColumns, flipbookRows,
+                const uint32_t frame = ParticleMath::FlipbookFrame(emitter.FlipbookMode, columns, rows,
                     t, particle.Age, emitter.FlipbookFPS, particle.Random);
 
-                gpuParticles.push_back({ glm::vec4(worldPositions[entry.second], size), color, glm::vec4(particle.Rotation, (float)frame, 0.0f, 0.0f) });
+                const glm::vec3 delta = position - cameraPosition;
+                s_Items.push_back({ glm::dot(delta, delta), stateIndex, (uint32_t)s_Particles.size() });
+                s_Particles.push_back({ glm::vec4(position, size), color, glm::vec4(particle.Rotation, (float)frame, 0.0f, 0.0f) });
             }
+        }
+        if (s_Particles.empty())
+            return;
 
-            glNamedBufferData(s_ParticleSSBO, (GLsizeiptr)(gpuParticles.size() * sizeof(GPUParticle)), gpuParticles.data(), GL_STREAM_DRAW);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ParticleSSBO);
+        // ---- 2) Ordem global + runs de mesmo estado (ver Particles/ParticleBatcher.h) ----
+        ParticleBatcher::BuildDrawOrder(s_Items, s_OrderDependent, s_Runs);
+        s_Ordered.reserve(s_Items.size());
+        for (const ParticleSortItem& item : s_Items)
+            s_Ordered.push_back(s_Particles[item.Source]);
 
+        // ---- 3) UM upload e um draw por run ----
+        const bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        glEnable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glBindVertexArray(GetFullscreenQuadVAOForCurrentContext()); // VAO vazio: o quad nasce no shader
+        s_ParticleShader->Bind();
+        s_ParticleShader->SetInt("u_OutputMode", s_OutputHDR ? 1 : 0);
+        s_ParticleShader->SetMat4("u_ViewProjection", glm::value_ptr(viewProjection));
+        s_ParticleShader->SetFloat3("u_CameraRight", cameraRight.x, cameraRight.y, cameraRight.z);
+        s_ParticleShader->SetFloat3("u_CameraUp", cameraUp.x, cameraUp.y, cameraUp.z);
+        s_ParticleShader->SetInt("u_Texture", 0);
+
+        glNamedBufferData(s_ParticleSSBO, (GLsizeiptr)(s_Ordered.size() * sizeof(GPUParticle)), s_Ordered.data(), GL_STREAM_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ParticleSSBO);
+
+        for (const ParticleRun& run : s_Runs) {
+            const DrawState& state = s_States[run.State];
             // O glBlendFunc de cada modo casa com o que particle.frag faz (ver comentario no topo dele).
-            switch (emitter.BlendMode) {
+            switch (state.Blend) {
             case ParticleBlendMode::Additive:     glBlendFunc(GL_SRC_ALPHA, GL_ONE); break;
             case ParticleBlendMode::SoftAdditive: glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR); break;
             case ParticleBlendMode::Multiply:     glBlendFunc(GL_DST_COLOR, GL_ZERO); break;
             case ParticleBlendMode::Alpha:
             default:                              glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
             }
-            s_ParticleShader->SetInt("u_BlendMode", (int)emitter.BlendMode);
-            s_ParticleShader->SetFloat2("u_FlipbookGrid", (float)flipbookColumns, (float)flipbookRows);
-
-            if (useTexture)
-                texture->Bind(0);
-            s_ParticleShader->SetInt("u_UseTexture", useTexture ? 1 : 0);
-
-            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)gpuParticles.size());
+            s_ParticleShader->SetInt("u_BlendMode", (int)state.Blend);
+            s_ParticleShader->SetFloat2("u_FlipbookGrid", (float)state.Columns, (float)state.Rows);
+            if (state.Texture)
+                state.Texture->Bind(0);
+            s_ParticleShader->SetInt("u_UseTexture", state.Texture ? 1 : 0);
+            s_ParticleShader->SetInt("u_FirstInstance", (int)run.First); // gl_InstanceID nao inclui a base da instancia
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)run.Count);
         }
 
-        if (shaderBound) {
-            glBindVertexArray(0);
-            s_ParticleShader->Unbind();
-            glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            if (cullWasEnabled)
-                glEnable(GL_CULL_FACE);
-        }
+        glBindVertexArray(0);
+        s_ParticleShader->Unbind();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        if (cullWasEnabled)
+            glEnable(GL_CULL_FACE);
     }
 
 }

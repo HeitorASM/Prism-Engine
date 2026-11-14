@@ -273,6 +273,14 @@ if(MSVC)
 endif()
 add_test(NAME ParticleLinkSyncTests COMMAND PrismParticleLinkSyncTests)
 
+# PrismParticleBatcherTests: ordem global + runs das particulas (Particles/ParticleBatcher.h, so std).
+add_executable(PrismParticleBatcherTests
+    ParticleBatcherTests.cpp
+)
+target_include_directories(PrismParticleBatcherTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismParticleBatcherTests PRIVATE cxx_std_20)
+add_test(NAME ParticleBatcherTests COMMAND PrismParticleBatcherTests)
+
 # PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
 add_executable(PrismBuildAnalysisTests
     BuildOutputAnalysisTests.cpp

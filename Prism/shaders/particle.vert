@@ -26,6 +26,7 @@ uniform mat4 u_ViewProjection;
 uniform vec3 u_CameraRight;
 uniform vec3 u_CameraUp;
 uniform vec2 u_FlipbookGrid; // colunas, linhas (>= 1)
+uniform int u_FirstInstance; // primeira particula do draw (varios draws compartilham o mesmo SSBO)
 
 out vec2 v_UV;      // 0..1 no quad inteiro (circulo suave, sem textura)
 out vec2 v_AtlasUV; // UV dentro do quadro atual da textura
@@ -37,7 +38,7 @@ const vec2 kCorners[6] = vec2[6](
 );
 
 void main() {
-    Particle p = u_Particles[gl_InstanceID];
+    Particle p = u_Particles[u_FirstInstance + gl_InstanceID];
     vec2 corner = kCorners[gl_VertexID];
 
     float s = sin(p.Extra.x);
