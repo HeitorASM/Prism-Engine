@@ -86,7 +86,7 @@ namespace PrismEditor {
         bool DeleteEntry(const std::filesystem::path& path, std::string& error);
         bool CreateFolder(const std::string& name, std::string& error);
         // Tipos de arquivo criaveis pelo menu de contexto (extensao e modelo por tipo).
-        enum class NewFileKind { Lua, UIDocument, Material, Text, Empty };
+        enum class NewFileKind { Lua, UIDocument, Material, Text, Empty, ParticleText, ParticleBinary };
         bool CreateFileOfKind(NewFileKind kind, const std::string& name, std::string& error);
         void BeginNewFile(NewFileKind kind);
         // Abre pasta/arquivo no gerenciador de arquivos / terminal do SO.

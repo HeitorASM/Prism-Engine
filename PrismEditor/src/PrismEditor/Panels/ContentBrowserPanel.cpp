@@ -1,3 +1,4 @@
+#include <Prism/Resources/ParticleResource.h>
 #include "ContentBrowserPanel.h"
 #include "../Core/EditorIcons.h"
 #include "../Core/EditorTheme.h"
@@ -219,6 +220,8 @@ namespace PrismEditor {
             case 1: return ".prismui";
             case 2: return ".prismmat";
             case 3: return ".txt";
+            case 5: return ".prismtres";
+            case 6: return ".prismres";
             default: return "";
             }
         }
@@ -228,6 +231,8 @@ namespace PrismEditor {
             case 1: return "Documento de UI";
             case 2: return "Material";
             case 3: return "Arquivo de texto";
+            case 5: return "Recurso de particula (texto)";
+            case 6: return "Recurso de particula (binario)";
             default: return "Arquivo vazio";
             }
         }
@@ -237,6 +242,7 @@ namespace PrismEditor {
             case 1: return "NovaUI";
             case 2: return "NovoMaterial";
             case 3: return "NovoTexto";
+            case 5: case 6: return "NovaParticula";
             default: return "NovoArquivo.txt";
             }
         }
@@ -280,7 +286,12 @@ namespace PrismEditor {
         std::error_code ec;
         if (fs::exists(target, ec)) { error = "Ja existe um item com esse nome."; return false; }
 
-        if (kind == NewFileKind::Material) {
+        if (kind == NewFileKind::ParticleText || kind == NewFileKind::ParticleBinary) {
+            // Emissor padrao; o formato vem da extensao (.prismtres texto, .prismres binario).
+            std::string saveError;
+            if (!Prism::ParticleResource::SaveByExtension(target, Prism::ParticleEmitterComponent{}, &saveError)) { error = "Falha ao criar o recurso: " + saveError; return false; }
+        }
+        else if (kind == NewFileKind::Material) {
             Prism::MaterialComponent material;
             Prism::MaterialSerializer::Serialize(material, target);
             if (!fs::exists(target, ec)) { error = "Falha ao criar o material."; return false; }
@@ -503,7 +514,8 @@ namespace PrismEditor {
     static bool AcceptPathPayload(std::string& outPath) {
         static const char* kTypes[] = {
             "CONTENT_BROWSER_MOVE_PATH", "CONTENT_BROWSER_IMAGE_PATH", "CONTENT_BROWSER_PREFAB_PATH",
-            "CONTENT_BROWSER_MATERIAL_PATH", "CONTENT_BROWSER_MODEL_PATH", "CONTENT_BROWSER_AUDIO_PATH" };
+            "CONTENT_BROWSER_MATERIAL_PATH", "CONTENT_BROWSER_MODEL_PATH", "CONTENT_BROWSER_AUDIO_PATH",
+            "CONTENT_BROWSER_RESOURCE_PATH" };
         for (const char* type : kTypes) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(type)) {
                 outPath = (const char*)payload->Data;
@@ -647,13 +659,14 @@ namespace PrismEditor {
                 const bool isProjectFile = !entry.IsDirectory && ext == ".prismproj";
                 const bool isPrefabFile = !entry.IsDirectory && ext == ".prismprefab";
                 const bool isMaterialFile = !entry.IsDirectory && ext == ".prismmat";
+                const bool isResourceFile = !entry.IsDirectory && Prism::ResourceIO::IsResourcePath(entry.Path);
                 // Mesma classificacao que o AssetRegistry usa (AssetType, ver AssetMeta.h).
                 const bool isModelFile = !entry.IsDirectory && Prism::AssetTypeFromExtension(entry.Path) == Prism::AssetType::Model;
                 const bool isAudioFile = !entry.IsDirectory && Prism::AssetTypeFromExtension(entry.Path) == Prism::AssetType::Audio;
                 const bool isScriptFile = !entry.IsDirectory && (ext == ".lua" || ext == ".cpp" || ext == ".h" || ext == ".hpp");
                 // Extensoes que stb_image decodifica (ver Texture.cpp).
                 const bool isImage = !entry.IsDirectory && (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".psd" || ext == ".gif");
-                const bool isTyped = isImage || isPrefabFile || isMaterialFile || isModelFile || isAudioFile;
+                const bool isTyped = isImage || isPrefabFile || isMaterialFile || isResourceFile || isModelFile || isAudioFile;
                 const bool isProtectedEntry = IsProtected(entry.Path);
 
                 // Miniatura de imagem: reduzida e guardada em Cache/Thumbnails (ver ThumbnailCache.h),
@@ -665,7 +678,7 @@ namespace PrismEditor {
                     : isMapFile ? FileIcon::Map
                     : isProjectFile ? FileIcon::Project
                     : isPrefabFile ? FileIcon::Prefab
-                    : isMaterialFile ? FileIcon::Material
+                    : isMaterialFile || isResourceFile ? FileIcon::Material
                     : isModelFile ? FileIcon::Model
                     : isAudioFile ? FileIcon::Audio
                     : isImage ? FileIcon::Image
@@ -676,6 +689,7 @@ namespace PrismEditor {
                     : isProjectFile ? ImVec4(0.65f, 0.45f, 0.85f, 1.0f)
                     : isPrefabFile ? ImVec4(0.35f, 0.80f, 0.55f, 1.0f)
                     : isMaterialFile ? ImVec4(0.85f, 0.35f, 0.65f, 1.0f)
+                    : isResourceFile ? ImVec4(0.30f, 0.78f, 0.78f, 1.0f)
                     : isModelFile ? ImVec4(0.35f, 0.70f, 0.85f, 1.0f)
                     : isAudioFile ? ImVec4(0.90f, 0.75f, 0.25f, 1.0f)
                     : isImage ? ImVec4(0.60f, 0.78f, 0.45f, 1.0f)
@@ -756,6 +770,7 @@ namespace PrismEditor {
                 const char* payloadType = isImage ? "CONTENT_BROWSER_IMAGE_PATH"
                     : isPrefabFile ? "CONTENT_BROWSER_PREFAB_PATH"
                     : isMaterialFile ? "CONTENT_BROWSER_MATERIAL_PATH"
+                    : isResourceFile ? "CONTENT_BROWSER_RESOURCE_PATH"
                     : isModelFile ? "CONTENT_BROWSER_MODEL_PATH"
                     : isAudioFile ? "CONTENT_BROWSER_AUDIO_PATH"
                     : (!isProtectedEntry && !isProjectFile) ? "CONTENT_BROWSER_MOVE_PATH" : nullptr;
@@ -817,6 +832,8 @@ namespace PrismEditor {
                 if (ImGui::MenuItem("Script Lua (.lua)")) BeginNewFile(NewFileKind::Lua);
                 if (ImGui::MenuItem("Documento de UI (.prismui)")) BeginNewFile(NewFileKind::UIDocument);
                 if (ImGui::MenuItem("Material (.prismmat)")) BeginNewFile(NewFileKind::Material);
+                if (ImGui::MenuItem("Recurso de particula - texto (.prismtres)")) BeginNewFile(NewFileKind::ParticleText);
+                if (ImGui::MenuItem("Recurso de particula - binario (.prismres)")) BeginNewFile(NewFileKind::ParticleBinary);
                 if (ImGui::MenuItem("Arquivo de texto (.txt)")) BeginNewFile(NewFileKind::Text);
                 if (ImGui::MenuItem("Arquivo vazio...")) BeginNewFile(NewFileKind::Empty);
                 ImGui::EndMenu();

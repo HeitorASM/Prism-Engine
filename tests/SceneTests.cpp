@@ -422,6 +422,34 @@ static void TestParticleEmitterBlocks() {
             CHECK(std::isfinite(d.SizeOverLife.V[0]));
         }
     }
+    { // Bloco v3: LinkedAsset (vinculo com recurso) vai ao fim; blocos v2 nao o tem e ficam sem vinculo.
+        Entity src = scene->CreateEntity("src3");
+        auto& c = src.AddComponent<ParticleEmitterComponent>();
+        c.Drag = 2.0f;
+        c.LinkedAsset = AssetID{ 0xABCDEF0123456789ull };
+        std::ostringstream full(std::ios::out | std::ios::binary);
+        info->Serialize(full, src);
+        CHECK(info->Version >= 3);
+        {
+            Entity dst = scene->CreateEntity("dst3");
+            std::istringstream in(MakeBlockStream("Particle Emitter", 3, full.str()), std::ios::in | std::ios::binary);
+            CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+            CHECK(dst.HasComponent<ParticleEmitterComponent>() && dst.GetComponent<ParticleEmitterComponent>().LinkedAsset == c.LinkedAsset);
+        }
+        {   // v2: o mesmo conteudo SEM os 8 bytes finais do AssetID
+            std::string v2 = full.str();
+            CHECK(v2.size() > sizeof(AssetID));
+            v2.resize(v2.size() - sizeof(AssetID));
+            Entity dst = scene->CreateEntity("dst2");
+            std::istringstream in(MakeBlockStream("Particle Emitter", 2, v2), std::ios::in | std::ios::binary);
+            CHECK(ComponentRegistry::ReadComponentBlocks(in, dst, 0));
+            CHECK(dst.HasComponent<ParticleEmitterComponent>());
+            if (dst.HasComponent<ParticleEmitterComponent>()) {
+                CHECK(!dst.GetComponent<ParticleEmitterComponent>().LinkedAsset.IsValid());
+                CHECK(dst.GetComponent<ParticleEmitterComponent>().Drag == 2.0f);
+            }
+        }
+    }
 }
 
 static void TestMaterialSurface(const fs::path& dir) {

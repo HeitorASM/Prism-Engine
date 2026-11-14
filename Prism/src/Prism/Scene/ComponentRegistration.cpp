@@ -506,6 +506,8 @@ namespace Prism {
                 WriteRaw(out, c.FlipbookMode);
                 WriteRaw(out, c.FlipbookFPS);
                 WriteRaw(out, c.BlendMode);
+                // v3 do bloco: vinculo com um recurso (.prismres).
+                WriteRaw(out, c.LinkedAsset);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ParticleEmitterComponent>();
@@ -537,40 +539,22 @@ namespace Prism {
                 // Limites: um arquivo editado a mao nao pode pedir milhoes de particulas.
                 c.MaxParticles = std::min<uint32_t>(std::max<uint32_t>(c.MaxParticles, 1u), 10000u);
 
-                // Enums fora de faixa (arquivo editado/corrompido) voltam ao padrao em vez de virar lixo.
-                auto fixEnum = [](auto& value, int maxValue, auto fallback) {
-                    const int v = (int)value;
-                    if (v < 0 || v > maxValue)
-                        value = fallback;
-                };
-                fixEnum(c.SimulationSpace, 1, ParticleSimulationSpace::World);
-                fixEnum(c.Shape, 5, ParticleShape::Cone);
-                fixEnum(c.BlendMode, 3, ParticleBlendMode::Additive);
-                fixEnum(c.FlipbookMode, 2, ParticleFlipbookMode::OverLifetime);
+                // Bloco v3: vinculo com um recurso (.prismres). Ausente nos blocos v1/v2 = sem vinculo.
+                if (ComponentRegistry::CurrentBlockVersion() >= 3) {
+                    if (!ReadRaw(in, c.LinkedAsset)) {
+                        PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (emissor de particulas da entidade ", entityIndex, ").");
+                        return false;
+                    }
+                }
 
-                c.SizeOverLife.Sanitize(0.0f, 100.0f);
-                c.SpeedOverLife.Sanitize(-100.0f, 100.0f);
-                c.ColorOverLife.Sanitize();
-                auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
-                c.Drag = std::min(std::max(finiteOr(c.Drag, 0.0f), 0.0f), 100.0f);
-                c.SizeVariation = std::min(std::max(finiteOr(c.SizeVariation, 0.0f), 0.0f), 1.0f);
-                c.ShapeRadius = std::min(std::max(finiteOr(c.ShapeRadius, 0.5f), 0.0f), 1000.0f);
-                c.ShapeThickness = std::min(std::max(finiteOr(c.ShapeThickness, 1.0f), 0.0f), 1.0f);
-                c.ShapeRadialBlend = std::min(std::max(finiteOr(c.ShapeRadialBlend, 0.0f), 0.0f), 1.0f);
-                for (int i = 0; i < 3; i++)
-                    c.ShapeBox[i] = std::min(std::max(finiteOr(c.ShapeBox[i], 1.0f), 0.0f), 1000.0f);
-                c.RotationMin = finiteOr(c.RotationMin, 0.0f);
-                c.RotationMax = finiteOr(c.RotationMax, 0.0f);
-                c.AngularVelocityMin = finiteOr(c.AngularVelocityMin, 0.0f);
-                c.AngularVelocityMax = finiteOr(c.AngularVelocityMax, 0.0f);
-                c.FlipbookColumns = std::min<uint32_t>(std::max<uint32_t>(c.FlipbookColumns, 1u), 64u);
-                c.FlipbookRows = std::min<uint32_t>(std::max<uint32_t>(c.FlipbookRows, 1u), 64u);
-                c.FlipbookFPS = std::min(std::max(finiteOr(c.FlipbookFPS, 12.0f), 0.0f), 240.0f);
+                // Limites, enums fora de faixa, NaN etc.: valores invalidos viram padrao em vez de lixo.
+                c.Sanitize();
                 return true;
             }
         );
         // v2 do bloco: curvas, espaco, forma, rotacao, flipbook e modo de blend no fim.
-        s_Registry.back().Version = 2;
+        // v3: LinkedAsset (vinculo com um recurso .prismres) no fim.
+        s_Registry.back().Version = 3;
 
         // --- CameraComponent -----------------------------------------------------
         Register<CameraComponent>(
@@ -1029,4 +1013,6 @@ namespace Prism {
         s_Registry.back().AddedInSceneFormat = 22;
     }
 
+
+    size_t ParticleEmitterComponentEngineSize() { return sizeof(ParticleEmitterComponent); }
 }

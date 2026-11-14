@@ -104,12 +104,14 @@ static void TestAssetType() {
     CHECK(AssetTypeFromExtension("s.lua") == AssetType::Script);
     CHECK(AssetTypeFromExtension("m.glb") == AssetType::Model);
     CHECK(AssetTypeFromExtension("a.ogg") == AssetType::Audio);
+    CHECK(AssetTypeFromExtension("Fogo.PRISMRES") == AssetType::Resource);
+    CHECK(AssetTypeFromExtension("Fogo.prismtres") == AssetType::Resource);
     CHECK(AssetTypeFromExtension("semextensao") == AssetType::Unknown);
     CHECK(AssetTypeFromExtension("x.xyz") == AssetType::Unknown);
 
     // String round-trip para todos, e desconhecido nunca falha.
     for (AssetType t : { AssetType::Texture, AssetType::Material, AssetType::Prefab,
-                         AssetType::Scene, AssetType::Script, AssetType::Model, AssetType::Audio })
+                         AssetType::Scene, AssetType::Script, AssetType::Model, AssetType::Audio, AssetType::Resource })
         CHECK(AssetTypeFromString(AssetTypeToString(t)) == t);
     CHECK(AssetTypeFromString("TipoDoFuturo") == AssetType::Unknown);
     CHECK(AssetTypeFromString("") == AssetType::Unknown);

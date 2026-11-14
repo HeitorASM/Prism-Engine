@@ -6,6 +6,8 @@
 | `.prismmap` | cena completa | binário | `Maps/` |
 | `.prismprefab` | entidade e subárvore | binário | `Assets/Prefabs/` |
 | `.prismmat` | um material | binário | `Assets/Materials/` |
+| `.prismtres` | um recurso genérico (ex.: emissor de partículas) | **texto** | `Assets/` |
+| `.prismres` | o mesmo recurso genérico | **binário** | `Assets/` |
 | `.meta` | identidade de um asset | texto (`Chave=Valor`) | ao lado de cada asset |
 
 Os arquivos binários usam little-endian e começam com um cabeçalho `magic` (4 bytes) + `versão` (uint32).
@@ -100,6 +102,21 @@ Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` 
 - Versão atual: **4** (`kMaterialFormatVersion` em `MaterialSerializer.cpp`); a v1 (sem os campos de superfície) ainda é lida
 
 Guarda os campos de um `MaterialComponent`: caminhos de `Albedo`, `Normal` e `RoughnessMetallic`, mais `AlbedoTint`, `RoughnessFactor` e `MetallicFactor`. A v2 acrescenta, no fim, a **superfície**: `BlendMode`, `Opacity`, `AlphaCutoff`, `UVTiling`, `UVOffset`, `EmissiveColor`, `EmissiveIntensity` e `DoubleSided`. A v3 acrescenta `ShaderPath` (shader de material, ver [shaders-customizados.md](shaders-customizados.md)) e a v4 os valores dos parâmetros desse shader (nome + 4 floats cada). O bloco `Material` das cenas/prefabs tem a mesma ampliação (bloco v4); valores inválidos (NaN, fora de faixa) são corrigidos na leitura.
+
+## Recursos: `.prismtres` (texto) e `.prismres` (binário)
+
+Formato genérico no estilo `.tres`/`.res` da Godot: um arquivo guarda **um recurso de um tipo nomeado** (hoje `ParticleEmitter`) como uma árvore de valores. O conteúdo é o mesmo nos dois; só muda a codificação: `.prismtres` é texto legível (bom para diff/merge), `.prismres` é binário compacto (magic `PRES`). Ao **ler**, o formato é detectado pelo conteúdo, então um arquivo renomeado continua abrindo; ao **gravar**, vale a extensão. Os formatos completos estão em `Prism/src/Prism/Resources/Resource.h`.
+
+```
+prism_resource type="ParticleEmitter" version=1
+Drag = 0.5
+Shape = "Sphere"
+SizeOverLife = [[0.0, 1.0], [0.5, 2.0], [1.0, 0.0]]
+```
+
+- Chaves desconhecidas são ignoradas e as ausentes usam o padrão (versões novas não quebram as antigas); valores inválidos são corrigidos na leitura.
+- Referências a outros assets usam o `AssetID` (`@asset(<16 hex>, "dica")`), estável ao mover/renomear.
+- **Emissor de partículas vinculado:** o componente guarda o `AssetID` do recurso (bloco `Particle Emitter` v3). Editar o emissor atualiza o arquivo (com atraso, nunca com o mouse apertado), e todos os emissores vinculados ao mesmo arquivo acompanham; mudar o arquivo por fora recarrega no editor. `Enabled`/`PlayOnStart` ficam na entidade, não no recurso. Durante o Play nada é gravado.
 
 ## `.meta`
 

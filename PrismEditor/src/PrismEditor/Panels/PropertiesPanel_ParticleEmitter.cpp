@@ -2,8 +2,10 @@
 #include "ComponentEditUtils.h"
 #include "ParticleCurveWidgets.h"
 #include "../Commands/EditorCommands.h"
+#include "ContentBrowserPanel.h"
 #include <imgui.h>
 #include <Prism/Particles/ParticleSystem.h>
+#include <Prism/Resources/ParticleResource.h>
 #include <algorithm>
 #include <filesystem>
 #include <string>
@@ -21,6 +23,88 @@ namespace PrismEditor {
         if (ImGui::CollapsingHeader("Particle Emitter", &keepOpen, ImGuiTreeNodeFlags_DefaultOpen)) {
             // Widgets continuos: TrackContinuousEdit logo apos cada um (ver ComponentEditUtils.h).
             // Discretos (checkbox): copia antes + CommitComponentEdit.
+            // --- Recurso (.prismtres texto / .prismres binario): salvar, carregar, vinculo vivo ---
+            {
+                auto project = Prism::Project::GetActive();
+                if (emitter.LinkedAsset.IsValid()) {
+                    const std::filesystem::path linkedPath = project ? project->GetAssetRegistry().AbsolutePath(emitter.LinkedAsset) : std::filesystem::path{};
+                    const bool broken = linkedPath.empty();
+                    ImGui::TextColored(broken ? ImVec4(0.85f, 0.35f, 0.35f, 1.0f) : ImVec4(0.95f, 0.75f, 0.20f, 1.0f), broken ? "[Vinculo quebrado]" : "[Vinculado]");
+                    if (ImGui::IsItemHovered()) {
+                        if (broken)
+                            ImGui::SetTooltip("O recurso vinculado nao foi encontrado. Edicoes nao serao salvas ate corrigir ou desvincular.");
+                        else
+                            ImGui::SetTooltip("Vinculado a:\n%s\n\nEditar aqui atualiza o arquivo, e todo emissor vinculado ao mesmo recurso acompanha.", linkedPath.filename().string().c_str());
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", broken ? "" : linkedPath.filename().string().c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Desvincular")) {
+                        m_Ctx.ParticleLinks.FlushAll(Prism::ParticleLinkSync::PathResolver([&](Prism::AssetID id) { return project ? project->GetAssetRegistry().AbsolutePath(id) : std::filesystem::path{}; }));
+                        auto before = emitter;
+                        emitter.LinkedAsset = {};
+                        CommitComponentEdit(m_Ctx, before, emitter, "Desvincular recurso");
+                    }
+                }
+                static char s_ResourceName[128] = "";
+                static int s_ResourceFormat = 0; // 0 texto, 1 binario
+                if (ImGui::SmallButton("Salvar como recurso...")) {
+                    const std::string suggested = m_Ctx.SelectedEntity.HasComponent<Prism::TagComponent>() ? m_Ctx.SelectedEntity.GetComponent<Prism::TagComponent>().Tag : std::string("Particula");
+                    std::snprintf(s_ResourceName, sizeof(s_ResourceName), "%s", suggested.c_str());
+                    ImGui::OpenPopup("Salvar recurso de particulas");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("ou arraste um .prismtres/.prismres:");
+                ImGui::Button("Carregar recurso (arraste aqui)", ImVec2(-1, 0));
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_RESOURCE_PATH")) {
+                        const std::string pathString((const char*)payload->Data, payload->DataSize - 1);
+                        m_Ctx.ParticleLinks.FlushAll(Prism::ParticleLinkSync::PathResolver([&](Prism::AssetID id) { return project ? project->GetAssetRegistry().AbsolutePath(id) : std::filesystem::path{}; }));
+                        m_Ctx.History.Execute(Prism::CreateScope<LoadParticleResourceCommand>(m_Ctx.SelectedEntity, pathString));
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (ImGui::BeginPopupModal("Salvar recurso de particulas", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::TextUnformatted("Nome do recurso:");
+                    ImGui::SetNextItemWidth(320);
+                    ImGui::InputText("##ResName", s_ResourceName, sizeof(s_ResourceName));
+                    ImGui::RadioButton("Texto (.prismtres) - legivel, bom para controle de versao", &s_ResourceFormat, 0);
+                    ImGui::RadioButton("Binario (.prismres) - compacto", &s_ResourceFormat, 1);
+                    std::string name = s_ResourceName;
+                    for (char& c : name)
+                        if (std::string("/\\:*?\"<>|").find(c) != std::string::npos) c = '_';
+                    const bool ok = project && !name.empty();
+                    const std::filesystem::path target = ok ? project->GetAssetDirectory() / (name + (s_ResourceFormat == 1 ? ".prismres" : ".prismtres")) : std::filesystem::path{};
+                    if (ok && std::filesystem::exists(target))
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Ja existe - sera sobrescrito.");
+                    else if (ok)
+                        ImGui::TextDisabled("%s", target.filename().string().c_str());
+                    if (ImGui::Button("Salvar", ImVec2(120, 0)) && ok) {
+                        std::string saveError;
+                        if (!Prism::ParticleResource::SaveByExtension(target, emitter, &saveError))
+                            PRISM_ERROR("Falha ao salvar o recurso: ", saveError);
+                        else {
+                            project->GetAssetRegistry().Refresh();
+                            if (m_Ctx.ContentBrowser) m_Ctx.ContentBrowser->RefreshEntries();
+                            // Vincula o emissor ao arquivo recem-criado (o conteudo ja e igual: nada a recarregar).
+                            const std::string relative = project->GetAssetRegistry().ToRelative(target);
+                            const Prism::AssetID id = relative.empty() ? Prism::AssetID{} : project->GetAssetRegistry().IdForPath(relative);
+                            if (id.IsValid()) {
+                                auto before = emitter;
+                                emitter.LinkedAsset = id;
+                                CommitComponentEdit(m_Ctx, before, emitter, "Vincular recurso");
+                            }
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancelar", ImVec2(120, 0)))
+                        ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+                ImGui::Separator();
+            }
+
             const char* title = "Particle Emitter";
 
             auto checkbox = [&](const char* label, bool& value) {

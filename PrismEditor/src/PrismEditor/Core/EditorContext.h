@@ -14,6 +14,7 @@
 #include <Prism.h>
 #include "EditorCamera.h"
 #include "MaterialLinkSync.h"
+#include <Prism/Resources/ParticleLinkSync.h>
 #include <filesystem>
 #include <functional>
 #include <vector>
@@ -80,6 +81,9 @@ namespace PrismEditor {
 
         // Vinculo vivo de Material (ver MaterialLinkSync.h).
         MaterialLinkSync MaterialLinks;
+
+        // Vinculo vivo de emissor de particulas com recurso (ver ParticleLinkHost.h).
+        Prism::ParticleLinkSync ParticleLinks;
 
         // Ponteiros nao-donos para paineis que outros paineis precisam chamar.
         // Ligados pelo EditorLayer em OnAttach; nunca nulos depois disso.

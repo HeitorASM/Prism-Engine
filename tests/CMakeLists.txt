@@ -226,6 +226,53 @@ if(MSVC)
 endif()
 add_test(NAME ParticleMathTests COMMAND PrismParticleMathTests)
 
+# PrismResourceTests: formato generico de recurso (.prismres), texto e binario (Resources/Resource.h). So std.
+add_executable(PrismResourceTests
+    ResourceTests.cpp
+    ${PRISM_SRC}/Prism/Resources/Resource.cpp
+    ${PRISM_SRC}/Prism/Resources/ResourceText.cpp
+    ${PRISM_SRC}/Prism/Assets/AssetID.cpp
+)
+target_include_directories(PrismResourceTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismResourceTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismResourceTests PRIVATE /utf-8)
+endif()
+add_test(NAME ResourceTests COMMAND PrismResourceTests)
+
+# PrismParticleResourceTests: emissor de particulas <-> recurso (Resources/ParticleResource.h). Usa so Components.h (glm/EnTT).
+add_executable(PrismParticleResourceTests
+    ParticleResourceTests.cpp
+    ${PRISM_SRC}/Prism/Resources/Resource.cpp
+    ${PRISM_SRC}/Prism/Resources/ResourceText.cpp
+    ${PRISM_SRC}/Prism/Resources/ParticleResource.cpp
+    ${PRISM_SRC}/Prism/Assets/AssetID.cpp
+)
+target_include_directories(PrismParticleResourceTests PRIVATE ${PRISM_SRC} ${PRISM_SRC}/Prism)
+target_compile_features(PrismParticleResourceTests PRIVATE cxx_std_20)
+target_link_libraries(PrismParticleResourceTests PRIVATE glm EnTT::EnTT)
+if(MSVC)
+    target_compile_options(PrismParticleResourceTests PRIVATE /utf-8)
+endif()
+add_test(NAME ParticleResourceTests COMMAND PrismParticleResourceTests)
+
+# PrismParticleLinkSyncTests: vinculo vivo emissor <-> .prismres (Resources/ParticleLinkSync.h).
+add_executable(PrismParticleLinkSyncTests
+    ParticleLinkSyncTests.cpp
+    ${PRISM_SRC}/Prism/Resources/Resource.cpp
+    ${PRISM_SRC}/Prism/Resources/ResourceText.cpp
+    ${PRISM_SRC}/Prism/Resources/ParticleResource.cpp
+    ${PRISM_SRC}/Prism/Resources/ParticleLinkSync.cpp
+    ${PRISM_SRC}/Prism/Assets/AssetID.cpp
+)
+target_include_directories(PrismParticleLinkSyncTests PRIVATE ${PRISM_SRC} ${PRISM_SRC}/Prism)
+target_compile_features(PrismParticleLinkSyncTests PRIVATE cxx_std_20)
+target_link_libraries(PrismParticleLinkSyncTests PRIVATE glm EnTT::EnTT)
+if(MSVC)
+    target_compile_options(PrismParticleLinkSyncTests PRIVATE /utf-8)
+endif()
+add_test(NAME ParticleLinkSyncTests COMMAND PrismParticleLinkSyncTests)
+
 # PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
 add_executable(PrismBuildAnalysisTests
     BuildOutputAnalysisTests.cpp

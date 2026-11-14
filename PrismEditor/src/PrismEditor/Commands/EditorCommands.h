@@ -1,4 +1,5 @@
 #pragma once
+#include <Prism/Resources/ParticleResource.h>
 
 // ============================================================================
 // EditorCommands.h
@@ -1072,6 +1073,48 @@ namespace PrismEditor {
         std::filesystem::path m_AssetPath;
         Prism::MaterialComponent m_Before;
         bool m_Loaded = false; // false se Deserialize falhou (arquivo corrompido/inexistente) - Undo() nao faz nada nesse caso, pois Execute() tambem nao mudou nada
+    };
+
+    // Carrega um recurso de particulas (.prismtres/.prismres) no emissor e o VINCULA (ParticleLinkSync).
+    // Enabled/PlayOnStart do emissor sao preservados (nao fazem parte do recurso). Undo restaura o emissor inteiro.
+    class LoadParticleResourceCommand : public Prism::Command {
+    public:
+        LoadParticleResourceCommand(Prism::Entity entity, std::filesystem::path assetPath)
+            : m_Entity(entity), m_AssetPath(std::move(assetPath)) {}
+
+        void Execute() override {
+            if (!m_Entity || !m_Entity.HasComponent<Prism::ParticleEmitterComponent>())
+                return;
+            auto& emitter = m_Entity.GetComponent<Prism::ParticleEmitterComponent>();
+            Prism::ParticleEmitterComponent loaded = emitter; // mantem Enabled/PlayOnStart/vinculo se o arquivo nao os define
+            std::string error;
+            if (!Prism::ParticleResource::Load(m_AssetPath, loaded, &error)) {
+                PRISM_ERROR("Nao foi possivel carregar o recurso '", m_AssetPath.string(), "': ", error);
+                return;
+            }
+            m_Before = emitter;
+            auto project = Prism::Project::GetActive();
+            if (project) {
+                const std::string relative = project->GetAssetRegistry().ToRelative(m_AssetPath);
+                if (!relative.empty())
+                    loaded.LinkedAsset = project->GetAssetRegistry().IdForPath(relative);
+            }
+            emitter = loaded;
+            m_Loaded = true;
+        }
+
+        void Undo() override {
+            if (m_Loaded && m_Entity && m_Entity.HasComponent<Prism::ParticleEmitterComponent>())
+                m_Entity.GetComponent<Prism::ParticleEmitterComponent>() = m_Before;
+        }
+
+        std::string GetName() const override { return "Carregar Recurso de Particulas"; }
+
+    private:
+        Prism::Entity m_Entity;
+        std::filesystem::path m_AssetPath;
+        Prism::ParticleEmitterComponent m_Before;
+        bool m_Loaded = false;
     };
 
     // Vincula um Model Asset (.obj/.fbx/.gltf/.glb - ver

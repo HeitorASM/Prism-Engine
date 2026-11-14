@@ -834,6 +834,48 @@ namespace Prism {
         ParticleFlipbookMode FlipbookMode = ParticleFlipbookMode::OverLifetime;
         float FlipbookFPS = 12.0f;               // so FixedFPS
 
+        // --- Bloco v3: vinculo com um recurso (.prismres, tipo "ParticleEmitter") ----------
+        // Se valido, os campos acima sao uma COPIA dos valores do recurso: editar o emissor no
+        // painel regrava o arquivo e toda entidade com o mesmo vinculo e atualizada (mesmo
+        // modelo do Material, ver MaterialComponent::LinkedAsset). Enabled e PlayOnStart
+        // pertencem a INSTANCIA e nunca vao para o recurso. Ver Resources/ParticleResource.h.
+        AssetID LinkedAsset;
+
+        // Corrige valores invalidos (arquivo editado a mao, recurso corrompido): limites,
+        // NaN/infinito, enums fora da faixa, curvas/gradiente. Idempotente.
+        void Sanitize() {
+            auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+            auto clampf = [&](float v, float fallback, float lo, float hi) { return std::min(std::max(finiteOr(v, fallback), lo), hi); };
+            auto fixEnum = [](auto& value, int maxValue, auto fallback) {
+                const int v = (int)value;
+                if (v < 0 || v > maxValue)
+                    value = fallback;
+            };
+            MaxParticles = std::min<uint32_t>(std::max<uint32_t>(MaxParticles, 1u), 10000u);
+            fixEnum(SimulationSpace, 1, ParticleSimulationSpace::World);
+            fixEnum(Shape, 5, ParticleShape::Cone);
+            fixEnum(BlendMode, 3, ParticleBlendMode::Additive);
+            fixEnum(FlipbookMode, 2, ParticleFlipbookMode::OverLifetime);
+
+            SizeOverLife.Sanitize(0.0f, 100.0f);
+            SpeedOverLife.Sanitize(-100.0f, 100.0f);
+            ColorOverLife.Sanitize();
+            Drag = clampf(Drag, 0.0f, 0.0f, 100.0f);
+            SizeVariation = clampf(SizeVariation, 0.0f, 0.0f, 1.0f);
+            ShapeRadius = clampf(ShapeRadius, 0.5f, 0.0f, 1000.0f);
+            ShapeThickness = clampf(ShapeThickness, 1.0f, 0.0f, 1.0f);
+            ShapeRadialBlend = clampf(ShapeRadialBlend, 0.0f, 0.0f, 1.0f);
+            for (int i = 0; i < 3; i++)
+                ShapeBox[i] = clampf(ShapeBox[i], 1.0f, 0.0f, 1000.0f);
+            RotationMin = finiteOr(RotationMin, 0.0f);
+            RotationMax = finiteOr(RotationMax, 0.0f);
+            AngularVelocityMin = finiteOr(AngularVelocityMin, 0.0f);
+            AngularVelocityMax = finiteOr(AngularVelocityMax, 0.0f);
+            FlipbookColumns = std::min<uint32_t>(std::max<uint32_t>(FlipbookColumns, 1u), 64u);
+            FlipbookRows = std::min<uint32_t>(std::max<uint32_t>(FlipbookRows, 1u), 64u);
+            FlipbookFPS = clampf(FlipbookFPS, 12.0f, 0.0f, 240.0f);
+        }
+
         // Atalho de compatibilidade (scripts Lua antigos, codigo de extensao).
         bool IsAdditive() const { return BlendMode == ParticleBlendMode::Additive; }
         void SetAdditive(bool additive) { BlendMode = additive ? ParticleBlendMode::Additive : ParticleBlendMode::Alpha; }
@@ -842,6 +884,11 @@ namespace Prism {
         ParticleEmitterComponent(const ParticleEmitterComponent&) = default;
         ParticleEmitterComponent& operator=(const ParticleEmitterComponent&) = default;
     };
+
+    // sizeof(ParticleEmitterComponent) COMO A BIBLIOTECA DA ENGINE o enxerga (definido em ComponentRegistration.cpp).
+    // O editor compara com o seu proprio sizeof ao iniciar: se diferirem, a engine ficou com objetos antigos
+    // (build incremental desatualizado) e os campos novos do emissor leriam memoria nao inicializada.
+    size_t ParticleEmitterComponentEngineSize();
 
     // --- UI in-game -----------------------------------------------------------
     // Documento de UI em texto (.prismui, XML - ver docs/ui-prismui.md): UMA

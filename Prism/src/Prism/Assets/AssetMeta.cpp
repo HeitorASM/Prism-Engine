@@ -19,6 +19,7 @@ namespace Prism {
             case AssetType::Script:   return "Script";
             case AssetType::Model:    return "Model";
             case AssetType::Audio:    return "Audio";
+            case AssetType::Resource: return "Resource";
             case AssetType::Unknown:  break;
         }
         return "Unknown";
@@ -27,7 +28,7 @@ namespace Prism {
     AssetType AssetTypeFromString(const std::string& text) {
         static const AssetType kAll[] = {
             AssetType::Texture, AssetType::Material, AssetType::Prefab,
-            AssetType::Scene, AssetType::Script, AssetType::Model, AssetType::Audio
+            AssetType::Scene, AssetType::Script, AssetType::Model, AssetType::Audio, AssetType::Resource
         };
         for (AssetType t : kAll)
             if (text == AssetTypeToString(t))
@@ -44,6 +45,7 @@ namespace Prism {
         if (ext == ".prismmat")    return AssetType::Material;
         if (ext == ".prismprefab") return AssetType::Prefab;
         if (ext == ".prismmap")    return AssetType::Scene;
+        if (ext == ".prismres" || ext == ".prismtres") return AssetType::Resource;
         if (ext == ".lua")         return AssetType::Script;
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") return AssetType::Model;
         if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac") return AssetType::Audio;

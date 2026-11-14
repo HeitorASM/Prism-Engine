@@ -1,4 +1,5 @@
 #include "SceneDocument.h"
+#include "ParticleLinkHost.h"
 #include "EntityOps.h"
 #include "../Play/PlayWindow.h"
 #include "Autosave.h"
@@ -41,6 +42,7 @@ namespace PrismEditor {
         // depois so limparia a pendencia com seguranca (HasComponent
         // checaria um ponteiro morto), sem nunca gravar a edicao.
         m_Ctx.MaterialLinks.FlushSave();
+        ParticleLinkHost::FlushAndReset(m_Ctx); // antes de trocar a cena (emissores antigos somem)
 
         m_Ctx.ActiveScene = serializer.GetScene();
         m_Ctx.CurrentMapPath = associatedMap;
@@ -66,6 +68,7 @@ namespace PrismEditor {
         // Ver comentario identico em LoadScene() sobre por que isto vem
         // ANTES de substituir EditorContext::ActiveScene.
         m_Ctx.MaterialLinks.FlushSave();
+        ParticleLinkHost::FlushAndReset(m_Ctx); // antes de trocar a cena (emissores antigos somem)
 
         m_Ctx.ActiveScene = Prism::Scene::Create("Nova Cena");
         // Todo mapa novo nasce com um Ambiente (luz ambiente + skybox da cena).
@@ -113,6 +116,7 @@ namespace PrismEditor {
         // comentario la sobre Entity::m_Scene ser um ponteiro cru) - caso
         // este metodo um dia passe a ser chamado de novo em outro ponto.
         m_Ctx.MaterialLinks.FlushSave();
+        ParticleLinkHost::FlushAndReset(m_Ctx); // antes de trocar a cena (emissores antigos somem)
         m_Ctx.ActiveScene = Prism::Scene::Create("Cena de exemplo");
         m_Ctx.CurrentMapPath.clear();
         m_Ctx.MaterialLinks.ForgetPending();

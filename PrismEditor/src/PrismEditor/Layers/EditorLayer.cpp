@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "../Core/ParticleLinkHost.h"
 #include "ProjectManagerLayer.h"
 #include <PrismVersion.h>
 #include "../Core/LevelEditing.h"
@@ -34,6 +35,10 @@ namespace PrismEditor {
           m_BuildNativeOnOpen(buildNativeOnOpen), m_Game(m_Ctx) {}
 
     void EditorLayer::OnAttach() {
+        // Build desatualizado (engine com objetos antigos): o emissor de particulas teria campos lidos de memoria nao inicializada.
+        if (sizeof(Prism::ParticleEmitterComponent) != Prism::ParticleEmitterComponentEngineSize())
+            PRISM_CORE_ERROR("ParticleEmitterComponent tem tamanhos diferentes no editor (", sizeof(Prism::ParticleEmitterComponent), ") e na engine (", Prism::ParticleEmitterComponentEngineSize(), "): recompile o alvo Prism por completo (Rebuild/Clean).");
+
         PRISM_INFO("EditorLayer anexada. Projeto ativo: ",
             Prism::Project::GetActive()->GetConfig().Name);
 
@@ -167,6 +172,7 @@ namespace PrismEditor {
         // usa Application::Get() - ver o comentario grande no topo desta
         // funcao e MaterialLinkSync::WritePendingOnShutdown.
         m_Ctx.MaterialLinks.WritePendingOnShutdown();
+        ParticleLinkHost::FlushAndReset(m_Ctx);
 
         // Saida normal do editor: o autosave so existe para o caso de NAO chegarmos aqui (crash).
         // Se o usuario escolheu "Nao salvar" no aviso de alteracoes, descartar tambem e o desejado.
@@ -470,6 +476,7 @@ namespace PrismEditor {
         // reler desnecessariamente o arquivo que acabamos de escrever.
         m_Ctx.MaterialLinks.FlushSave();
         m_Ctx.MaterialLinks.Reconcile(m_Ctx.ActiveScene);
+        ParticleLinkHost::Tick(m_Ctx);
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("Arquivo")) {
