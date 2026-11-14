@@ -66,7 +66,6 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | v19 | `UIElement` (UI antiga; **removido** - o leitor legado descarta o bloco) |
 | v20 | `Environment` (ambiente e skybox da cena) e `Camera` com `ClearMode`, `ClearColor`, `Exposure`, `SSAO` |
 | (bloco Camera v3) | `Camera` ganha `Bloom`, `BloomThreshold`, `BloomIntensity`, `FXAA`, `Saturation`, `Contrast` no fim do bloco; **sem** subir a versão do mapa |
-| (bloco ParticleEmitter v2) | `ParticleEmitter` ganha no fim do bloco: curvas `SizeOverLife`/`SpeedOverLife` e gradiente `ColorOverLife` (contagem + pares), `Drag`, `SizeVariation`, `SimulationSpace`, `Shape` (+ `ShapeRadius`, `ShapeThickness`, `ShapeBox`, `ShapeRadialBlend`), rotação inicial e velocidade angular, flipbook (colunas, linhas, modo, FPS) e `BlendMode`. O bool `Additive` continua na posição antiga (= `BlendMode == Additive`); blocos v1 viram `Additive`/`Alpha` e os campos novos ficam neutros; **sem** subir a versão do mapa |
 | (bloco Camera v4) | `Camera` ganha `CullMask` (camadas que enxerga) no fim do bloco; **sem** subir a versão do mapa |
 | (bloco MeshRenderer v2) | `MeshRenderer` ganha `Layers` (camadas em que está) no fim do bloco; **sem** subir a versão do mapa |
 | v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |

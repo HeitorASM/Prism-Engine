@@ -184,15 +184,12 @@ namespace Prism {
         glm::vec3 cameraUp(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
         glm::vec3 cameraPosition(s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
 
-        // Deve casar com 'struct Particle' de particle.vert (std430: 3 vec4 = 48 bytes).
         struct GPUParticle {
             glm::vec4 PositionSize;
             glm::vec4 Color;
-            glm::vec4 Extra;       // x = rotacao (rad), y = quadro do flipbook
         };
         std::vector<GPUParticle> gpuParticles;
         std::vector<std::pair<float, uint32_t>> order; // (distancia^2, indice) para ordenar o blend normal
-        std::vector<glm::vec3> worldPositions;         // posicao de mundo de cada particula (emissor Local: ja transformada)
 
         bool cullWasEnabled = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
         bool shaderBound = false;
@@ -217,68 +214,36 @@ namespace Prism {
                 shaderBound = true;
             }
 
-            // Emissor Local: as particulas guardam posicao LOCAL; leva para o mundo com a matriz atual.
-            const bool localSpace = emitter.SimulationSpace == ParticleSimulationSpace::Local;
-            glm::mat4 emitterWorld(1.0f);
-            if (localSpace)
-                emitterWorld = scene.GetWorldTransform(Entity(handle, &scene));
-
-            worldPositions.resize(particles->size());
-            for (size_t i = 0; i < particles->size(); i++) {
-                const glm::vec3& position = (*particles)[i].Position;
-                worldPositions[i] = localSpace ? glm::vec3(emitterWorld * glm::vec4(position, 1.0f)) : position;
-            }
-
-            // Ordem de desenho: so Alpha depende dela (de tras para frente); os outros modos sao comutativos.
+            // Ordem de desenho: aditivo nao depende dela; alpha normal vai de tras para frente.
             order.clear();
             order.reserve(particles->size());
             for (uint32_t i = 0; i < (uint32_t)particles->size(); i++) {
-                glm::vec3 delta = worldPositions[i] - cameraPosition;
+                glm::vec3 delta = (*particles)[i].Position - cameraPosition;
                 order.emplace_back(glm::dot(delta, delta), i);
             }
-            if (emitter.BlendMode == ParticleBlendMode::Alpha)
+            if (!emitter.Additive)
                 std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-
-            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
-            const bool useTexture = texture && texture->IsValid();
-            const uint32_t flipbookColumns = useTexture ? std::max(emitter.FlipbookColumns, 1u) : 1u;
-            const uint32_t flipbookRows = useTexture ? std::max(emitter.FlipbookRows, 1u) : 1u;
 
             gpuParticles.clear();
             gpuParticles.reserve(order.size());
             for (const auto& entry : order) {
                 const Particle& particle = (*particles)[entry.second];
-                const float t = std::min(std::max(particle.Age / particle.Lifetime, 0.0f), 1.0f);
-
-                // tamanho = lerp(inicio, fim) * curva * variacao da particula
-                const float size = (emitter.SizeStart + (emitter.SizeEnd - emitter.SizeStart) * t)
-                    * emitter.SizeOverLife.Evaluate(t) * particle.SizeScale;
-
-                // cor = lerp(inicio, fim) * gradiente
-                float tint[4];
-                emitter.ColorOverLife.Evaluate(t, tint);
-                glm::vec4 color = glm::mix(emitter.ColorStart, emitter.ColorEnd, t) * glm::vec4(tint[0], tint[1], tint[2], tint[3]);
-
-                const uint32_t frame = ParticleMath::FlipbookFrame(emitter.FlipbookMode, flipbookColumns, flipbookRows,
-                    t, particle.Age, emitter.FlipbookFPS, particle.Random);
-
-                gpuParticles.push_back({ glm::vec4(worldPositions[entry.second], size), color, glm::vec4(particle.Rotation, (float)frame, 0.0f, 0.0f) });
+                float t = std::min(std::max(particle.Age / particle.Lifetime, 0.0f), 1.0f);
+                float size = emitter.SizeStart + (emitter.SizeEnd - emitter.SizeStart) * t;
+                glm::vec4 color = glm::mix(emitter.ColorStart, emitter.ColorEnd, t);
+                gpuParticles.push_back({ glm::vec4(particle.Position, size), color });
             }
 
             glNamedBufferData(s_ParticleSSBO, (GLsizeiptr)(gpuParticles.size() * sizeof(GPUParticle)), gpuParticles.data(), GL_STREAM_DRAW);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_ParticleSSBO);
 
-            // O glBlendFunc de cada modo casa com o que particle.frag faz (ver comentario no topo dele).
-            switch (emitter.BlendMode) {
-            case ParticleBlendMode::Additive:     glBlendFunc(GL_SRC_ALPHA, GL_ONE); break;
-            case ParticleBlendMode::SoftAdditive: glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR); break;
-            case ParticleBlendMode::Multiply:     glBlendFunc(GL_DST_COLOR, GL_ZERO); break;
-            case ParticleBlendMode::Alpha:
-            default:                              glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
-            }
-            s_ParticleShader->SetInt("u_BlendMode", (int)emitter.BlendMode);
-            s_ParticleShader->SetFloat2("u_FlipbookGrid", (float)flipbookColumns, (float)flipbookRows);
+            if (emitter.Additive)
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            else
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+            Texture2D* texture = GetOrLoadTexture(emitter.TexturePath, false);
+            bool useTexture = texture && texture->IsValid();
             if (useTexture)
                 texture->Bind(0);
             s_ParticleShader->SetInt("u_UseTexture", useTexture ? 1 : 0);

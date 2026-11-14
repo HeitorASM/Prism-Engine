@@ -39,50 +39,6 @@
 namespace Prism {
 
     namespace {
-        // Curva/gradiente de particulas (ver Particles/ParticleMath.h): gravados campo a campo
-        // (contagem + pares), NAO como struct crua, para o arquivo nao depender do tamanho maximo.
-        void WriteParticleCurve(std::ostream& out, const ParticleCurve& curve) {
-            const uint32_t count = std::min<uint32_t>(std::max<uint32_t>(curve.Count, 1u), (uint32_t)kParticleMaxCurveKeys);
-            ComponentRegistry::WriteRaw(out, count);
-            for (uint32_t i = 0; i < count; i++) {
-                ComponentRegistry::WriteRaw(out, curve.T[i]);
-                ComponentRegistry::WriteRaw(out, curve.V[i]);
-            }
-        }
-        bool ReadParticleCurve(std::istream& in, ParticleCurve& curve) {
-            uint32_t count = 0;
-            if (!ComponentRegistry::ReadRaw(in, count) || count < 1 || count > (uint32_t)kParticleMaxCurveKeys)
-                return false;
-            curve.Count = count;
-            for (uint32_t i = 0; i < count; i++)
-                if (!ComponentRegistry::ReadRaw(in, curve.T[i]) || !ComponentRegistry::ReadRaw(in, curve.V[i]))
-                    return false;
-            return true;
-        }
-        void WriteParticleGradient(std::ostream& out, const ParticleGradient& gradient) {
-            const uint32_t count = std::min<uint32_t>(std::max<uint32_t>(gradient.Count, 1u), (uint32_t)kParticleMaxGradientStops);
-            ComponentRegistry::WriteRaw(out, count);
-            for (uint32_t i = 0; i < count; i++) {
-                ComponentRegistry::WriteRaw(out, gradient.T[i]);
-                for (int k = 0; k < 4; k++)
-                    ComponentRegistry::WriteRaw(out, gradient.C[i][k]);
-            }
-        }
-        bool ReadParticleGradient(std::istream& in, ParticleGradient& gradient) {
-            uint32_t count = 0;
-            if (!ComponentRegistry::ReadRaw(in, count) || count < 1 || count > (uint32_t)kParticleMaxGradientStops)
-                return false;
-            gradient.Count = count;
-            for (uint32_t i = 0; i < count; i++) {
-                if (!ComponentRegistry::ReadRaw(in, gradient.T[i]))
-                    return false;
-                for (int k = 0; k < 4; k++)
-                    if (!ComponentRegistry::ReadRaw(in, gradient.C[i][k]))
-                        return false;
-            }
-            return true;
-        }
-
         // Corpo do bloco de Material (versao 4), compartilhado por MaterialComponent e pelos
         // materiais por slot do LevelMeshComponent.
         void WriteMaterialBody(std::ostream& out, const MaterialComponent& c) {
@@ -483,29 +439,8 @@ namespace Prism {
                 WriteRaw(out, c.SizeEnd);
                 WriteRaw(out, c.ColorStart);
                 WriteRaw(out, c.ColorEnd);
-                WriteRaw(out, c.IsAdditive()); // posicao legada do bool 'Additive' (o modo completo vem no fim do bloco v2)
+                WriteRaw(out, c.Additive);
                 WriteString(out, c.TexturePath);
-                // v2 do bloco (sempre NO FIM): curvas, espaco, forma, rotacao, flipbook, blend.
-                WriteParticleCurve(out, c.SizeOverLife);
-                WriteParticleGradient(out, c.ColorOverLife);
-                WriteParticleCurve(out, c.SpeedOverLife);
-                WriteRaw(out, c.Drag);
-                WriteRaw(out, c.SizeVariation);
-                WriteRaw(out, c.SimulationSpace);
-                WriteRaw(out, c.Shape);
-                WriteRaw(out, c.ShapeRadius);
-                WriteRaw(out, c.ShapeThickness);
-                WriteRaw(out, c.ShapeBox);
-                WriteRaw(out, c.ShapeRadialBlend);
-                WriteRaw(out, c.RotationMin);
-                WriteRaw(out, c.RotationMax);
-                WriteRaw(out, c.AngularVelocityMin);
-                WriteRaw(out, c.AngularVelocityMax);
-                WriteRaw(out, c.FlipbookColumns);
-                WriteRaw(out, c.FlipbookRows);
-                WriteRaw(out, c.FlipbookMode);
-                WriteRaw(out, c.FlipbookFPS);
-                WriteRaw(out, c.BlendMode);
             },
             [](std::istream& in, Entity e, uint32_t entityIndex) -> bool {
                 auto& c = e.AddComponent<ParticleEmitterComponent>();
@@ -514,63 +449,17 @@ namespace Prism {
                     && ReadRaw(in, c.BurstCount) && ReadRaw(in, c.LifetimeMin) && ReadRaw(in, c.LifetimeMax)
                     && ReadRaw(in, c.SpeedMin) && ReadRaw(in, c.SpeedMax) && ReadRaw(in, c.SpreadAngle)
                     && ReadRaw(in, c.GravityScale) && ReadRaw(in, c.SizeStart) && ReadRaw(in, c.SizeEnd)
-                    && ReadRaw(in, c.ColorStart) && ReadRaw(in, c.ColorEnd);
-                bool legacyAdditive = true;
-                ok = ok && ReadRaw(in, legacyAdditive) && ReadString(in, c.TexturePath);
-                if (ok)
-                    c.SetAdditive(legacyAdditive); // blocos v1: so existiam Aditivo / Alpha
-                // Bloco v2: curvas, espaco, forma, rotacao, flipbook e blend (blocos v1 ficam com os padroes).
-                if (ok && ComponentRegistry::CurrentBlockVersion() >= 2) {
-                    ok = ReadParticleCurve(in, c.SizeOverLife) && ReadParticleGradient(in, c.ColorOverLife)
-                      && ReadParticleCurve(in, c.SpeedOverLife) && ReadRaw(in, c.Drag) && ReadRaw(in, c.SizeVariation)
-                      && ReadRaw(in, c.SimulationSpace) && ReadRaw(in, c.Shape) && ReadRaw(in, c.ShapeRadius)
-                      && ReadRaw(in, c.ShapeThickness) && ReadRaw(in, c.ShapeBox) && ReadRaw(in, c.ShapeRadialBlend)
-                      && ReadRaw(in, c.RotationMin) && ReadRaw(in, c.RotationMax)
-                      && ReadRaw(in, c.AngularVelocityMin) && ReadRaw(in, c.AngularVelocityMax)
-                      && ReadRaw(in, c.FlipbookColumns) && ReadRaw(in, c.FlipbookRows)
-                      && ReadRaw(in, c.FlipbookMode) && ReadRaw(in, c.FlipbookFPS) && ReadRaw(in, c.BlendMode);
-                }
+                    && ReadRaw(in, c.ColorStart) && ReadRaw(in, c.ColorEnd) && ReadRaw(in, c.Additive)
+                    && ReadString(in, c.TexturePath);
                 if (!ok) {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (emissor de particulas da entidade ", entityIndex, ").");
                     return false;
                 }
                 // Limites: um arquivo editado a mao nao pode pedir milhoes de particulas.
                 c.MaxParticles = std::min<uint32_t>(std::max<uint32_t>(c.MaxParticles, 1u), 10000u);
-
-                // Enums fora de faixa (arquivo editado/corrompido) voltam ao padrao em vez de virar lixo.
-                auto fixEnum = [](auto& value, int maxValue, auto fallback) {
-                    const int v = (int)value;
-                    if (v < 0 || v > maxValue)
-                        value = fallback;
-                };
-                fixEnum(c.SimulationSpace, 1, ParticleSimulationSpace::World);
-                fixEnum(c.Shape, 5, ParticleShape::Cone);
-                fixEnum(c.BlendMode, 3, ParticleBlendMode::Additive);
-                fixEnum(c.FlipbookMode, 2, ParticleFlipbookMode::OverLifetime);
-
-                c.SizeOverLife.Sanitize(0.0f, 100.0f);
-                c.SpeedOverLife.Sanitize(-100.0f, 100.0f);
-                c.ColorOverLife.Sanitize();
-                auto finiteOr = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
-                c.Drag = std::min(std::max(finiteOr(c.Drag, 0.0f), 0.0f), 100.0f);
-                c.SizeVariation = std::min(std::max(finiteOr(c.SizeVariation, 0.0f), 0.0f), 1.0f);
-                c.ShapeRadius = std::min(std::max(finiteOr(c.ShapeRadius, 0.5f), 0.0f), 1000.0f);
-                c.ShapeThickness = std::min(std::max(finiteOr(c.ShapeThickness, 1.0f), 0.0f), 1.0f);
-                c.ShapeRadialBlend = std::min(std::max(finiteOr(c.ShapeRadialBlend, 0.0f), 0.0f), 1.0f);
-                for (int i = 0; i < 3; i++)
-                    c.ShapeBox[i] = std::min(std::max(finiteOr(c.ShapeBox[i], 1.0f), 0.0f), 1000.0f);
-                c.RotationMin = finiteOr(c.RotationMin, 0.0f);
-                c.RotationMax = finiteOr(c.RotationMax, 0.0f);
-                c.AngularVelocityMin = finiteOr(c.AngularVelocityMin, 0.0f);
-                c.AngularVelocityMax = finiteOr(c.AngularVelocityMax, 0.0f);
-                c.FlipbookColumns = std::min<uint32_t>(std::max<uint32_t>(c.FlipbookColumns, 1u), 64u);
-                c.FlipbookRows = std::min<uint32_t>(std::max<uint32_t>(c.FlipbookRows, 1u), 64u);
-                c.FlipbookFPS = std::min(std::max(finiteOr(c.FlipbookFPS, 12.0f), 0.0f), 240.0f);
                 return true;
             }
         );
-        // v2 do bloco: curvas, espaco, forma, rotacao, flipbook e modo de blend no fim.
-        s_Registry.back().Version = 2;
 
         // --- CameraComponent -----------------------------------------------------
         Register<CameraComponent>(

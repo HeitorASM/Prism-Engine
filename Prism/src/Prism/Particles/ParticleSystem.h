@@ -22,16 +22,10 @@
 namespace Prism {
 
     struct Particle {
-        // Espaco da posicao/velocidade: MUNDO se o emissor usa SimulationSpace::World,
-        // LOCAL ao emissor se usa Local (o Renderer aplica a matriz de mundo do emissor).
         glm::vec3 Position{ 0.0f };
         glm::vec3 Velocity{ 0.0f };
         float Age = 0.0f;
         float Lifetime = 1.0f;
-        float Rotation = 0.0f;         // radianos
-        float AngularVelocity = 0.0f;  // radianos por segundo
-        float SizeScale = 1.0f;        // variacao de tamanho sorteada no nascimento
-        float Random = 0.0f;           // 0..1 fixo da particula (quadro aleatorio do flipbook)
     };
 
     class ParticleSystem {
