@@ -47,6 +47,20 @@ namespace Prism {
 
     class Scene;
 
+    // Variante de prefab (formato v11): um prefab que DERIVA de outro. O arquivo guarda o conteudo completo (como um
+    // prefab normal, com os MESMOS GUIDs do base nas entidades herdadas) + a referencia ao base + os GUIDs que o base
+    // tinha na ultima sincronizacao (para distinguir "entidade nova no base" de "entidade que a variante apagou").
+    // Ver Scene/PrefabVariants.h.
+    struct PrefabVariantInfo {
+        AssetID Base;                           // invalido = prefab comum
+        std::vector<uint64_t> KnownBaseGuids;   // GUIDs do base na ultima sincronizacao
+        // Hash dos bytes de cada component do base na ultima sincronizacao: se o valor atual da
+        // variante ainda e igual ao hash, ela NAO sobrescreveu aquele component e acompanha o base.
+        struct ComponentHash { uint64_t Guid = 0; uint64_t NameHash = 0; uint64_t DataHash = 0; };
+        std::vector<ComponentHash> BaseHashes;
+        bool IsVariant() const { return Base.IsValid(); }
+    };
+
     class PrefabSerializer {
     public:
         // Salva 'root' (e toda a sua subarvore de filhos) em 'filepath'.
@@ -60,7 +74,11 @@ namespace Prism {
         // da propria entidade quando ele existe, e gera um novo caso contrario. Zeros e repeticoes sempre viram
         // GUIDs novos. 'outGuids' (opcional) recebe os GUIDs realmente gravados, na mesma ordem.
         static bool Serialize(Entity root, const std::filesystem::path& filepath,
-                              const std::vector<uint64_t>* guids = nullptr, std::vector<uint64_t>* outGuids = nullptr);
+                              const std::vector<uint64_t>* guids = nullptr, std::vector<uint64_t>* outGuids = nullptr,
+                              const PrefabVariantInfo* variant = nullptr);
+
+        // Le so o cabecalho de variante (barato: nao le entidades). Arquivos < v11 = prefab comum. false se nao der para ler.
+        static bool ReadVariantInfo(const std::filesystem::path& filepath, PrefabVariantInfo& outInfo);
 
         // Le 'filepath' e cria a subarvore inteira dentro de 'targetScene'
         // (SEM reparentar a raiz para nada por padrao - a raiz nasce
@@ -86,7 +104,8 @@ namespace Prism {
         //
         // 'outGuids' (opcional): recebe o GUID de cada entidade do arquivo, na ordem do arquivo (indice 0 = raiz).
         // Arquivos antigos (< v10) nao tem GUIDs: recebem PrefabGuid::Migration(indice).
-        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset = {}, std::vector<uint64_t>* outGuids = nullptr);
+        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset = {}, std::vector<uint64_t>* outGuids = nullptr,
+                                  PrefabVariantInfo* outVariant = nullptr);
     };
 
 }

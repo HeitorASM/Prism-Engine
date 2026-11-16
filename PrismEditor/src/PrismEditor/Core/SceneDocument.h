@@ -13,6 +13,7 @@
 // ============================================================================
 
 #include "EditorContext.h"
+#include <Prism/Scene/PrefabSerializer.h>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -92,6 +93,8 @@ namespace PrismEditor {
         bool EnterPrefabEdit(const std::filesystem::path& prefabFile);
         bool IsEditingPrefab() const { return m_PrefabEdit.Active; }
         const std::filesystem::path& GetEditedPrefabPath() const { return m_PrefabEdit.PrefabPath; }
+        bool IsEditedPrefabVariant() const { return m_PrefabEdit.Variant.IsVariant(); }
+        Prism::AssetID GetEditedPrefabBase() const { return m_PrefabEdit.Variant.Base; }
         // Grava o prefab (mantem a edicao aberta). Nao faz nada fora do modo.
         bool SavePrefabEdit();
         // Sai do modo. 'save' grava o prefab antes. Recarrega o mapa de origem e sincroniza as instancias.
@@ -142,6 +145,7 @@ namespace PrismEditor {
             Prism::Entity Root;                      // raiz do prefab na cena de edicao
             std::vector<uint64_t> BaselineGuids;     // GUIDs do arquivo antes das edicoes desta sessao
             bool ChangedFile = false;                // gravamos o arquivo pelo menos uma vez
+            Prism::PrefabVariantInfo Variant;        // cabecalho de variante do arquivo (Base invalido = prefab comum)
         };
         PrefabEditSession m_PrefabEdit;
 

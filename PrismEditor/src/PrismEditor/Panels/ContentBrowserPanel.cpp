@@ -747,6 +747,8 @@ namespace PrismEditor {
                         openMapPath = entry.Path;
                     if (isPrefabFile && m_OnPrefabEditRequested && ImGui::MenuItem("Editar prefab"))
                         m_OnPrefabEditRequested(entry.Path);
+                    if (isPrefabFile && m_OnCreateVariantRequested && ImGui::MenuItem("Criar variante"))
+                        m_OnCreateVariantRequested(entry.Path);
                     if (!entry.IsDirectory && !isMapFile && !isTyped && !isProjectFile && m_OnTextFileDoubleClicked && ImGui::MenuItem("Abrir no editor de codigo"))
                         openTextPath = entry.Path;
                     ImGui::Separator();

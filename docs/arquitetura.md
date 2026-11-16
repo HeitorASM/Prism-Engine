@@ -177,3 +177,8 @@ Build = ""
 ```
 
 `cmake/PrismVersion.cmake` lê o arquivo ao configurar e gera `<build>/generated/PrismVersion.h` (a partir de `Prism/src/Prism/Core/Version.h.in`); o CMake reconfigura sozinho quando o `Version.py` muda. No código: `#include <PrismVersion.h>` e `Prism::Version::Full()` ("Prism Engine 0.1.0 pre-alpha"), `Version::EditorFull()` (título da janela do editor), `Version::Number`, `Version::State`, `Version::Build` e as macros `PRISM_VERSION` etc. Para um build de CI: `cmake -DPRISM_BUILD=1234 ...` sobrescreve o `Build`. A versão é registrada no Console ao iniciar o loop principal. Não confundir com `kSceneFormatVersion`/`kPrefabFormatVersion`, que versionam os formatos de arquivo.
+
+
+## Variantes de prefab (`Scene/PrefabVariants.*`)
+
+Uma variante é um `.prismprefab` completo com cabeçalho v11 (base + GUIDs e hashes de component do base). Criada pelo Content Browser (“Criar variante”). Ao sair do modo de edição de um prefab, o editor chama `PrefabVariants::UpdateDependents`: cada variante (e variante de variante, com proteção contra ciclo) reaplica o base — entidade nova entra, removida sai, component não sobrescrito acompanha o base, component sobrescrito fica — e as instâncias dessas variantes no mapa aberto são sincronizadas. Prefab aninhado (prefab contendo instância de outro) continua fora do escopo.

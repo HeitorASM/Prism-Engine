@@ -50,7 +50,7 @@ namespace Prism {
     // v7-v8 (formato antigo "flag + campos") ainda sao lidos. Gravacao atomica.
     // Equivalencia com o formato de cena usada pelo leitor legado: prefab v7 = cena v19, v8 = v20.
     static constexpr uint32_t kOldestReadablePrefabFormat = 7;
-    static constexpr uint32_t kPrefabFormatVersion = 10; // v10: GUID estavel por entidade (uint64 apos o indice de pai); v9: blocos de component; v8: Camera render options + Environment; v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
+    static constexpr uint32_t kPrefabFormatVersion = 11; // v11: cabecalho de variante (base + GUIDs conhecidos) antes da contagem de entidades; v10: GUID estavel por entidade (uint64 apos o indice de pai); v9: blocos de component; v8: Camera render options + Environment; v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
     static constexpr char kMagic[4] = { 'P', 'P', 'F', 'B' };
 
     // --- helpers de escrita/leitura binaria - mesmas rotinas
@@ -87,7 +87,47 @@ namespace Prism {
         }
     }
 
-    bool PrefabSerializer::Serialize(Entity root, const std::filesystem::path& filepath, const std::vector<uint64_t>* guids, std::vector<uint64_t>* outGuids) {
+    // Cabecalho v11: [u8 ehVariante][AssetID base][u32 n][n x u64][u32 m][m x (guid,nomeHash,dadoHash)]. Limita 'n' para um arquivo corrompido nao alocar sem fim.
+    static bool ReadVariantHeader(std::ifstream& in, PrefabVariantInfo& info) {
+        uint8_t isVariant = 0;
+        if (!ReadRaw(in, isVariant))
+            return false;
+        info = PrefabVariantInfo{};
+        if (!isVariant)
+            return true;
+        uint32_t count = 0;
+        if (!ReadRaw(in, info.Base) || !ReadRaw(in, count) || count > 100'000)
+            return false;
+        info.KnownBaseGuids.resize(count);
+        for (uint32_t i = 0; i < count; i++)
+            if (!ReadRaw(in, info.KnownBaseGuids[i]))
+                return false;
+        uint32_t hashCount = 0;
+        if (!ReadRaw(in, hashCount) || hashCount > 2'000'000)
+            return false;
+        info.BaseHashes.resize(hashCount);
+        for (uint32_t i = 0; i < hashCount; i++)
+            if (!ReadRaw(in, info.BaseHashes[i].Guid) || !ReadRaw(in, info.BaseHashes[i].NameHash) || !ReadRaw(in, info.BaseHashes[i].DataHash))
+                return false;
+        return true;
+    }
+
+    bool PrefabSerializer::ReadVariantInfo(const std::filesystem::path& filepath, PrefabVariantInfo& outInfo) {
+        outInfo = PrefabVariantInfo{};
+        std::ifstream in(filepath, std::ios::binary);
+        if (!in.is_open())
+            return false;
+        char magic[4];
+        in.read(magic, sizeof(magic));
+        if (!in || std::memcmp(magic, kMagic, sizeof(kMagic)) != 0)
+            return false;
+        uint32_t version = 0;
+        if (!ReadRaw(in, version) || version < kOldestReadablePrefabFormat || version > kPrefabFormatVersion)
+            return false;
+        return version < 11 ? true : ReadVariantHeader(in, outInfo);
+    }
+
+    bool PrefabSerializer::Serialize(Entity root, const std::filesystem::path& filepath, const std::vector<uint64_t>* guids, std::vector<uint64_t>* outGuids, const PrefabVariantInfo* variant) {
         if (!root) {
             PRISM_CORE_ERROR("PrefabSerializer: entidade invalida - nada para salvar.");
             return false;
@@ -133,6 +173,23 @@ namespace Prism {
 
         out.write(kMagic, sizeof(kMagic));
         WriteRaw(out, kPrefabFormatVersion);
+        // v11: cabecalho de variante
+        {
+            const bool isVariant = variant && variant->IsVariant();
+            WriteRaw(out, (uint8_t)(isVariant ? 1 : 0));
+            if (isVariant) {
+                WriteRaw(out, variant->Base);
+                WriteRaw(out, (uint32_t)variant->KnownBaseGuids.size());
+                for (uint64_t g : variant->KnownBaseGuids)
+                    WriteRaw(out, g);
+                WriteRaw(out, (uint32_t)variant->BaseHashes.size());
+                for (const auto& bh : variant->BaseHashes) {
+                    WriteRaw(out, bh.Guid);
+                    WriteRaw(out, bh.NameHash);
+                    WriteRaw(out, bh.DataHash);
+                }
+            }
+        }
         WriteRaw(out, (uint32_t)entities.size());
 
         bool writeFailed = false;
@@ -193,7 +250,7 @@ namespace Prism {
         return true;
     }
 
-    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset, std::vector<uint64_t>* outGuids) {
+    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset, std::vector<uint64_t>* outGuids, PrefabVariantInfo* outVariant) {
         ComponentRegistry::RegisterAll();
 
         std::ifstream in(filepath, std::ios::binary);
@@ -217,6 +274,14 @@ namespace Prism {
         }
         const bool legacyComponents = version < 9;
         const uint32_t legacySceneFormat = version + 12; // v7 -> 19, v8 -> 20 (ver kPrefabFormatVersion)
+
+        PrefabVariantInfo variantInfo;
+        if (version >= 11 && !ReadVariantHeader(in, variantInfo)) {
+            PRISM_CORE_ERROR("PrefabSerializer: cabecalho de variante corrompido: ", filepath.string());
+            return Entity();
+        }
+        if (outVariant)
+            *outVariant = variantInfo;
 
         uint32_t entityCount = 0;
         if (!ReadRaw(in, entityCount)) {

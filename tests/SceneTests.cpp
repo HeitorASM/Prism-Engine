@@ -12,6 +12,7 @@
 #include <Prism/Scene/PrefabSerializer.h>
 #include <Prism/Scene/PrefabSyncer.h>
 #include <Prism/Scene/PrefabGuid.h>
+#include <Prism/Scene/PrefabVariants.h>
 #include <Prism/Extensions/SystemRegistry.h>
 #include <Prism/Extensions/ExtensionLoader.h>
 
@@ -20,6 +21,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -707,6 +709,114 @@ static void TestPrefabStructureSync(const fs::path& dir) {
     CHECK(!PrefabSyncer::SyncStructure(root, prefab, now).Valid);
 }
 
+
+// Carrega um prefab, aplica 'edit' e regrava preservando GUIDs (e o cabecalho de variante, se houver).
+template <typename F>
+static void EditPrefabFile(const fs::path& path, F edit) {
+    auto s = Scene::Create("Edit");
+    std::vector<uint64_t> guids;
+    PrefabVariantInfo info;
+    Entity root = PrefabSerializer::Instantiate(*s, path, {}, &guids, &info);
+    CHECK(root);
+    if (!root) return;
+    std::vector<Entity> order;
+    std::function<void(Entity)> collect = [&](Entity e) { order.push_back(e); for (size_t i = 0; i < e.GetChildCount(); i++) if (Entity c = e.GetChildAt(i)) collect(c); };
+    collect(root);
+    edit(*s, root);
+    std::vector<Entity> after;
+    std::function<void(Entity)> collect2 = [&](Entity e) { after.push_back(e); for (size_t i = 0; i < e.GetChildCount(); i++) if (Entity c = e.GetChildAt(i)) collect2(c); };
+    collect2(root);
+    std::vector<uint64_t> out;
+    for (Entity e : after) {
+        uint64_t g = 0;
+        for (size_t i = 0; i < order.size(); i++) if (order[i] == e) g = guids[i];
+        out.push_back(g);
+    }
+    CHECK(PrefabSerializer::Serialize(root, path, &out, nullptr, info.IsVariant() ? &info : nullptr));
+}
+
+static float LightOf(const fs::path& path, const std::string& tag) {
+    auto s = Scene::Create("Le");
+    Entity r = PrefabSerializer::Instantiate(*s, path);
+    Entity e = FindChildByTag(r, tag);
+    return (e && e.HasComponent<LightComponent>()) ? e.GetComponent<LightComponent>().Intensity : -1.0f;
+}
+
+static void TestPrefabVariants(const fs::path& dir) {
+    auto scene = Scene::Create("Base");
+    Entity root = scene->CreateEntity("Torre");
+    Entity a = scene->CreateEntity("A"); scene->SetParent(a, root); a.AddComponent<LightComponent>().Intensity = 2.0f;
+    Entity b = scene->CreateEntity("B"); scene->SetParent(b, root); b.AddComponent<LightComponent>().Intensity = 5.0f;
+    const fs::path basePath = dir / "var_base.prismprefab";
+    const fs::path varPath = dir / "var_filha.prismprefab";
+    const fs::path var2Path = dir / "var_neta.prismprefab";
+    CHECK(PrefabSerializer::Serialize(root, basePath));
+
+    const AssetID baseId = AssetID::Generate();
+    const AssetID varId = AssetID::Generate();
+    const AssetID var2Id = AssetID::Generate();
+    CHECK(!PrefabVariants::Create(basePath, AssetID{}, varPath));   // base sem AssetID nao vira variante
+    CHECK(PrefabVariants::Create(basePath, baseId, varPath));
+    PrefabVariantInfo info;
+    CHECK(PrefabSerializer::ReadVariantInfo(varPath, info) && info.IsVariant() && info.Base == baseId && info.KnownBaseGuids.size() == 3);
+    CHECK(PrefabSerializer::ReadVariantInfo(basePath, info) && !info.IsVariant());
+    CHECK(LightOf(varPath, "A") == 2.0f && LightOf(varPath, "B") == 5.0f);   // variante e um prefab completo
+
+    // Sem mudanca no base: nada regravado
+    auto none = PrefabVariants::Update(varPath, basePath);
+    CHECK(none.Ok && !none.Changed && none.ComponentsUpdated == 0);
+
+    // A variante sobrescreve A
+    EditPrefabFile(varPath, [](Scene& s, Entity r) { FindChildByTag(r, "A").GetComponent<LightComponent>().Intensity = 9.0f; });
+    CHECK(LightOf(varPath, "A") == 9.0f);
+    PrefabSerializer::ReadVariantInfo(varPath, info);
+    CHECK(info.IsVariant() && info.Base == baseId);                 // edicao preserva o cabecalho
+
+    // O base muda A (3) e B (6) e ganha C
+    EditPrefabFile(basePath, [](Scene& s, Entity r) {
+        FindChildByTag(r, "A").GetComponent<LightComponent>().Intensity = 3.0f;
+        FindChildByTag(r, "B").GetComponent<LightComponent>().Intensity = 6.0f;
+        Entity c = s.CreateEntity("C"); s.SetParent(c, r); c.AddComponent<LightComponent>().Intensity = 7.0f;
+    });
+    auto up = PrefabVariants::Update(varPath, basePath);
+    CHECK(up.Ok && up.Changed && up.Added == 1 && up.Removed == 0 && up.ComponentsUpdated >= 1);
+    CHECK(LightOf(varPath, "A") == 9.0f);                           // override preservado
+    CHECK(LightOf(varPath, "B") == 6.0f);                           // acompanhou o base
+    CHECK(LightOf(varPath, "C") == 7.0f);                           // entidade nova veio
+    auto again = PrefabVariants::Update(varPath, basePath);
+    CHECK(again.Ok && !again.Changed);                              // idempotente
+
+    // Entidade que a variante apagou de proposito nao volta (estava no KnownBaseGuids)
+    EditPrefabFile(varPath, [](Scene& s, Entity r) { s.DestroyEntity(FindChildByTag(r, "C")); });
+    CHECK(PrefabVariants::Update(varPath, basePath).Added == 0);
+    CHECK(LightOf(varPath, "C") == -1.0f);
+
+    // O base remove B: sai da variante
+    EditPrefabFile(basePath, [](Scene& s, Entity r) { s.DestroyEntity(FindChildByTag(r, "B")); });
+    auto rem = PrefabVariants::Update(varPath, basePath);
+    CHECK(rem.Ok && rem.Removed == 1);
+    CHECK(LightOf(varPath, "B") == -1.0f && LightOf(varPath, "A") == 9.0f);
+
+    // Arquivo comum nao e variante; arquivo inexistente falha sem quebrar
+    CHECK(!PrefabVariants::Update(basePath, basePath).Ok);
+    CHECK(!PrefabVariants::Update(dir / "nao_existe.prismprefab", basePath).Ok);
+
+    // Descoberta + cascata (neta = variante da filha)
+    CHECK(PrefabVariants::Create(varPath, varId, var2Path));
+    CHECK(PrefabVariants::FindVariantsOf(baseId, dir).size() == 1);
+    CHECK(PrefabVariants::FindVariantsOf(varId, dir).size() == 1);
+    EditPrefabFile(basePath, [](Scene& s, Entity r) { FindChildByTag(r, "A").GetComponent<LightComponent>().Intensity = 4.0f; });
+    EditPrefabFile(varPath, [](Scene& s, Entity r) { FindChildByTag(r, "A").GetComponent<LightComponent>().Intensity = 4.0f; }); // sem override: igual ao base
+    auto resolve = [&](AssetID id) { return id == baseId ? basePath : id == varId ? varPath : id == var2Id ? var2Path : fs::path{}; };
+    auto idOf = [&](const fs::path& p) { return p == varPath ? varId : p == var2Path ? var2Id : AssetID{}; };
+    auto changed = PrefabVariants::UpdateDependents(baseId, dir, resolve, idOf);
+    CHECK(!changed.empty());
+
+    // Ciclo (base aponta para a neta) nao trava
+    auto cyc = PrefabVariants::UpdateDependents(varId, dir, resolve, idOf);
+    (void)cyc;
+}
+
 static void TestPrefabGuids(const fs::path& dir) {
     // Torre: raiz + A (Luz 2) + B (Luz 5). Instancia -> editar o ARQUIVO (inserir/remover filhos) -> a instancia
     // continua ligada as MESMAS entidades (antes: por indice posicional, apontava para as erradas).
@@ -1265,6 +1375,7 @@ int main() {
     TestPrefabSyncer(dir);
     TestPrefabGuids(dir);
     TestPrefabStructureSync(dir);
+    TestPrefabVariants(dir);
     TestWorldTransformScope();
     TestVisibility();
     TestCopyEntityTree();

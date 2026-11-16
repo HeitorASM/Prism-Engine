@@ -219,7 +219,7 @@ namespace Prism {
         // Le so os GUIDs das entidades do arquivo (ordem do arquivo). false se nao der para ler.
         static bool ReadFileGuids(const std::filesystem::path& prefabFilePath, std::vector<uint64_t>& outGuids);
 
-    private:
+    public: // (helpers abaixo tambem usados por PrefabVariants)
         // Preenche 'out' com 'entity' e toda a sua subarvore em
         // PRE-ORDEM (a propria entidade primeiro, depois cada filho e a
         // subarvore dele, na ordem de GetChildAt - ver Entity.h), que e

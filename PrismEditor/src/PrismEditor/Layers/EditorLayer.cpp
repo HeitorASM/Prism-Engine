@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include <Prism/Scene/PrefabVariants.h>
 #include "../Core/ParticleLinkHost.h"
 #include "ProjectManagerLayer.h"
 #include <PrismVersion.h>
@@ -86,6 +87,28 @@ namespace PrismEditor {
             }
             });
         m_ContentBrowser.SetOnPrefabEditRequested([this](const std::filesystem::path& path) { m_PendingPrefabOpen = path; });
+        m_ContentBrowser.SetOnCreateVariantRequested([this](const std::filesystem::path& basePath) {
+            auto project = Prism::Project::GetActive();
+            if (!project) return;
+            auto& registry = project->GetAssetRegistry();
+            const Prism::AssetID baseAsset = registry.IdForPath(registry.ToRelative(basePath));
+            if (!baseAsset.IsValid()) {
+                PRISM_ERROR("O prefab base ainda nao esta registrado como asset (atualize o Content Browser e tente de novo).");
+                return;
+            }
+            std::filesystem::path variantPath;
+            for (int n = 1; n < 1000; n++) {
+                variantPath = basePath.parent_path() / (basePath.stem().string() + "_variante" + (n > 1 ? std::to_string(n) : std::string()) + ".prismprefab");
+                if (!std::filesystem::exists(variantPath)) break;
+            }
+            if (!Prism::PrefabVariants::Create(basePath, baseAsset, variantPath)) {
+                PRISM_ERROR("Nao foi possivel criar a variante de '", basePath.filename().string(), "'.");
+                return;
+            }
+            registry.Refresh();
+            PRISM_INFO("Variante criada: ", variantPath.filename().string());
+            m_PendingPrefabOpen = variantPath;
+        });
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             // Copia do path: o Content Browser pode reaproveitar o buffer
             // dele antes do popup "Salvar alteracoes?" ser respondido (a
@@ -424,7 +447,15 @@ namespace PrismEditor {
         if (m_Document.IsEditingPrefab()) {
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.55f, 1.0f), "  Editando prefab: %s", m_Document.GetEditedPrefabPath().filename().string().c_str());
+            if (m_Document.IsEditedPrefabVariant()) {
+                std::string baseName = "?";
+                if (auto project = Prism::Project::GetActive())
+                    if (auto p = project->GetAssetRegistry().AbsolutePath(m_Document.GetEditedPrefabBase()); !p.empty())
+                        baseName = p.filename().string();
+                ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.55f, 1.0f), "  Editando variante: %s (base: %s)", m_Document.GetEditedPrefabPath().filename().string().c_str(), baseName.c_str());
+            }
+            else
+                ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.55f, 1.0f), "  Editando prefab: %s", m_Document.GetEditedPrefabPath().filename().string().c_str());
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Ctrl+S grava o prefab. Ao voltar, o mapa de origem e recarregado e as instancias deste prefab recebem as mudancas.");
             ImGui::SameLine();

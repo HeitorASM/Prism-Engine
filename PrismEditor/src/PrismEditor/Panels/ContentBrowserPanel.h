@@ -42,6 +42,7 @@ namespace PrismEditor {
         void SetOnMapDoubleClicked(MapDoubleClickedFn fn) { m_OnMapDoubleClicked = std::move(fn); }
         // "Editar prefab" (menu de contexto / duplo-clique num .prismprefab). O pedido e adiado pelo EditorLayer.
         void SetOnPrefabEditRequested(MapDoubleClickedFn fn) { m_OnPrefabEditRequested = std::move(fn); }
+        void SetOnCreateVariantRequested(MapDoubleClickedFn fn) { m_OnCreateVariantRequested = std::move(fn); }
 
         // Duplo-clique num arquivo "generico" (nao e pasta, mapa, projeto,
         // prefab, material, modelo, audio nem imagem): o EditorLayer abre no
@@ -128,6 +129,7 @@ namespace PrismEditor {
 
         MapDoubleClickedFn m_OnMapDoubleClicked;
         MapDoubleClickedFn m_OnPrefabEditRequested;
+        MapDoubleClickedFn m_OnCreateVariantRequested;
         TextFileDoubleClickedFn m_OnTextFileDoubleClicked;
 
         // Evita reconstruir a lista de entradas do diretorio a cada frame -

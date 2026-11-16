@@ -1,4 +1,5 @@
 #include "SceneDocument.h"
+#include <Prism/Scene/PrefabVariants.h>
 #include "ParticleLinkHost.h"
 #include "EntityOps.h"
 #include "../Play/PlayWindow.h"
@@ -505,7 +506,8 @@ namespace PrismEditor {
         // reaproveitar o GUID ao salvar; a raiz NAO e marcada como instancia).
         auto scene = Prism::Scene::Create("Prefab: " + prefabFile.stem().string());
         std::vector<uint64_t> guids;
-        Prism::Entity root = Prism::PrefabSerializer::Instantiate(*scene, prefabFile, Prism::AssetID::Generate(), &guids);
+        Prism::PrefabVariantInfo variantInfo;
+        Prism::Entity root = Prism::PrefabSerializer::Instantiate(*scene, prefabFile, Prism::AssetID::Generate(), &guids, &variantInfo);
         if (!root) {
             PRISM_ERROR("Nao foi possivel abrir o prefab para edicao: ", prefabFile.string());
             return false;
@@ -524,6 +526,7 @@ namespace PrismEditor {
         }
         session.Root = root;
         session.BaselineGuids = guids;
+        session.Variant = variantInfo;
 
         m_Ctx.MaterialLinks.FlushSave();
         ParticleLinkHost::FlushAndReset(m_Ctx);
@@ -542,7 +545,7 @@ namespace PrismEditor {
         if (!m_PrefabEdit.Active || !m_PrefabEdit.Root)
             return false;
         std::vector<uint64_t> written;
-        if (!Prism::PrefabSerializer::Serialize(m_PrefabEdit.Root, m_PrefabEdit.PrefabPath, nullptr, &written)) {
+        if (!Prism::PrefabSerializer::Serialize(m_PrefabEdit.Root, m_PrefabEdit.PrefabPath, nullptr, &written, &m_PrefabEdit.Variant)) {
             PRISM_ERROR("Falha ao salvar o prefab: ", m_PrefabEdit.PrefabPath.string());
             return false;
         }
@@ -583,6 +586,26 @@ namespace PrismEditor {
             if (changed > 0) {
                 PRISM_INFO(changed, " instancia(s) de '", session.PrefabPath.filename().string(), "' atualizada(s) com as mudancas do prefab (nao esqueca de salvar o mapa).");
                 m_SavedSceneFingerprint = 0; // a cena mudou em memoria: pede para salvar
+            }
+
+            // Variantes deste prefab (e as variantes delas): reaplicam o base e seus arquivos sao regravados.
+            if (session.Asset.IsValid()) {
+                if (auto project = Prism::Project::GetActive()) {
+                    auto& registry = project->GetAssetRegistry();
+                    const auto updated = Prism::PrefabVariants::UpdateDependents(session.Asset, registry.GetRoot(),
+                        [&registry](Prism::AssetID id) { return registry.AbsolutePath(id); },
+                        [&registry](const std::filesystem::path& p) { return registry.IdForPath(registry.ToRelative(p)); });
+                    int touched = 0;
+                    for (const auto& change : updated) {
+                        const Prism::AssetID variantAsset = registry.IdForPath(registry.ToRelative(change.Path));
+                        if (variantAsset.IsValid())
+                            touched += EntityOps::SyncPrefabAssetInstances(m_Ctx, variantAsset, change.Path, change.PreviousGuids);
+                    }
+                    if (!updated.empty())
+                        PRISM_INFO(updated.size(), " variante(s) de '", session.PrefabPath.filename().string(), "' atualizada(s) a partir do base.");
+                    if (touched > 0)
+                        m_SavedSceneFingerprint = 0;
+                }
             }
         }
     }
