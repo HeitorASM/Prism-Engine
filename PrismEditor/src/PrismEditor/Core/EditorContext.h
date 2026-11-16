@@ -96,6 +96,11 @@ namespace PrismEditor {
         // diretamente, para cobrir os dois modos.
         std::function<bool()> IsPlaying;
         std::function<void()> StopPlaying;
+
+        // Pede para abrir um .prismprefab no modo de edicao de prefab (ver SceneDocument::EnterPrefabEdit).
+        // E ADIADO para o inicio do proximo frame (trocar a cena no meio do desenho dos paineis corromperia a UI),
+        // entao e seguro chamar de dentro de qualquer painel.
+        std::function<void(const std::filesystem::path&)> OpenPrefabForEdit;
     };
 
 }

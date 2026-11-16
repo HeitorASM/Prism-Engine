@@ -745,6 +745,8 @@ namespace PrismEditor {
                         navigateToPath = entry.Path;
                     if (isMapFile && m_OnMapDoubleClicked && ImGui::MenuItem("Abrir mapa"))
                         openMapPath = entry.Path;
+                    if (isPrefabFile && m_OnPrefabEditRequested && ImGui::MenuItem("Editar prefab"))
+                        m_OnPrefabEditRequested(entry.Path);
                     if (!entry.IsDirectory && !isMapFile && !isTyped && !isProjectFile && m_OnTextFileDoubleClicked && ImGui::MenuItem("Abrir no editor de codigo"))
                         openTextPath = entry.Path;
                     ImGui::Separator();
@@ -802,6 +804,9 @@ namespace PrismEditor {
                     }
                     else if (isMapFile && m_OnMapDoubleClicked) {
                         openMapPath = entry.Path;
+                    }
+                    else if (isPrefabFile && m_OnPrefabEditRequested) {
+                        m_OnPrefabEditRequested(entry.Path); // adiado para o proximo frame (ver EditorContext)
                     }
                     else if (!isMapFile && !isProjectFile && !isTyped && m_OnTextFileDoubleClicked) {
                         openTextPath = entry.Path;

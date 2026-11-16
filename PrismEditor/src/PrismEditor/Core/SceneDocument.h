@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace PrismEditor {
 
@@ -83,6 +84,19 @@ namespace PrismEditor {
         // outro mapa) - NUNCA por frame.
         bool HasUnsavedChanges() const;
 
+        // ---- Modo de edicao de PREFAB ----
+        // Abre o .prismprefab ISOLADO numa cena propria (so o prefab + um "Ambiente" para iluminar), no lugar do mapa.
+        // Salvar (Ctrl+S) grava o prefab; Voltar recarrega o mapa de onde veio e leva as mudancas (components e
+        // estrutura, por GUID) para as instancias dele. O historico de Undo e limpo ao entrar e ao sair.
+        // Chame via RunAfterUnsavedCheck: o mapa de origem e recarregado do disco ao voltar.
+        bool EnterPrefabEdit(const std::filesystem::path& prefabFile);
+        bool IsEditingPrefab() const { return m_PrefabEdit.Active; }
+        const std::filesystem::path& GetEditedPrefabPath() const { return m_PrefabEdit.PrefabPath; }
+        // Grava o prefab (mantem a edicao aberta). Nao faz nada fora do modo.
+        bool SavePrefabEdit();
+        // Sai do modo. 'save' grava o prefab antes. Recarrega o mapa de origem e sincroniza as instancias.
+        void ExitPrefabEdit(bool save);
+
         // Ponto de entrada unico para QUALQUER acao que descartaria a cena
         // atual (fechar o editor, Novo Mapa, abrir outro mapa). Se nao ha
         // alteracoes nao salvas, executa 'action' na hora. Se ha, guarda
@@ -120,6 +134,17 @@ namespace PrismEditor {
         static constexpr const char* kUnsavedChangesPopupId = "Alteracoes nao salvas";
 
     private:
+        struct PrefabEditSession {
+            bool Active = false;
+            std::filesystem::path PrefabPath;
+            std::filesystem::path ParentMapPath;     // mapa de onde viemos (vazio = mapa novo nunca salvo)
+            Prism::AssetID Asset;                    // o asset do prefab (pode ser invalido se nao registrado)
+            Prism::Entity Root;                      // raiz do prefab na cena de edicao
+            std::vector<uint64_t> BaselineGuids;     // GUIDs do arquivo antes das edicoes desta sessao
+            bool ChangedFile = false;                // gravamos o arquivo pelo menos uma vez
+        };
+        PrefabEditSession m_PrefabEdit;
+
         // Igual a SaveActiveScene(), mas retorna se a cena FICOU salva
         // (true) ou se o save foi adiado/falhou (false). Cena sem arquivo
         // abre o popup Salvar Como e retorna false: o save so acontece num

@@ -19,6 +19,11 @@ namespace PrismEditor::EntityOps {
     // PrefabSyncer::UpdateAll e o comentario grande na implementacao).
     void SyncAllPrefabInstances(EditorContext& ctx);
 
+    // Depois de EDITAR um prefab (modo de edicao de prefab): leva a ESTRUTURA nova do arquivo (filhos adicionados/removidos,
+    // casados por GUID) e os components para toda instancia desse prefab na cena ativa. 'previousGuids' = GUIDs do arquivo
+    // ANTES da edicao (ver PrefabSyncer::SyncStructure). Devolve quantas instancias mudaram.
+    int SyncPrefabAssetInstances(EditorContext& ctx, Prism::AssetID asset, const std::filesystem::path& prefabPath, const std::vector<uint64_t>& previousGuids);
+
         // Instancia o prefab em 'prefabPath' dentro da Scene ativa via
     // InstantiatePrefabCommand (undo/redo - ver EditorCommands.h) e
     // seleciona a raiz recem-criada. Se 'parent' for uma Entity

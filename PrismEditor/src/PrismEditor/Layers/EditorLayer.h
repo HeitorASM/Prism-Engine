@@ -131,6 +131,8 @@ namespace PrismEditor {
         EditorContext m_Ctx;
 
         SceneDocument m_Document;
+        std::filesystem::path m_PendingPrefabOpen;   // pedido de "editar prefab", executado no inicio do proximo frame
+        int m_PendingPrefabExit = -1;                // -1 nada; 0 voltar descartando; 1 salvar e voltar
         ViewportPanel m_Viewport;
         HierarchyPanel m_Hierarchy;
         PropertiesPanel m_Properties;

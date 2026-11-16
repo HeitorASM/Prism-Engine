@@ -199,6 +199,26 @@ namespace Prism {
         // Retorna false se a escrita falhar (a instancia fica intocada).
         static bool ApplyStructureToPrefab(Entity instanceRoot, const std::filesystem::path& prefabFilePath);
 
+        // Resultado de SyncStructure.
+        struct StructureSyncResult {
+            bool Valid = false;   // false = o prefab nao pode ser lido
+            int Added = 0;        // entidades criadas na instancia (novas no arquivo)
+            int Removed = 0;      // entidades removidas da instancia (sumiram do arquivo)
+        };
+
+        // Propaga a ESTRUTURA do arquivo para a instancia, casando entidades pelo GUID (ver PrefabGuid.h):
+        //  - membro da instancia cujo GUID nao existe mais no arquivo -> removido (os filhos dele que
+        //    sobrevivem, como os adicionados a mao na instancia, sobem para o pai dele em vez de sumir);
+        //  - entidade do arquivo cujo GUID nao esta na instancia E nao estava em 'previousGuids' (a lista de
+        //    GUIDs do arquivo ANTES da edicao) -> criada na instancia, com os components do arquivo.
+        // Entidades que ja existiam no arquivo antes ('previousGuids') e nao estao na instancia foram apagadas
+        // de PROPOSITO na instancia: nunca sao recriadas. 'previousGuids' vazio = nao cria nada.
+        // Nao mexe nos components das entidades que ja existem (isso e UpdateAll).
+        static StructureSyncResult SyncStructure(Entity instanceRoot, const std::filesystem::path& prefabFilePath, const std::vector<uint64_t>& previousGuids);
+
+        // Le so os GUIDs das entidades do arquivo (ordem do arquivo). false se nao der para ler.
+        static bool ReadFileGuids(const std::filesystem::path& prefabFilePath, std::vector<uint64_t>& outGuids);
+
     private:
         // Preenche 'out' com 'entity' e toda a sua subarvore em
         // PRE-ORDEM (a propria entidade primeiro, depois cada filho e a

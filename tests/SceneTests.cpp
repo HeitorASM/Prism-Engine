@@ -639,6 +639,74 @@ static void TestSceneFileRoundTrip(const fs::path& dir) {
     }
 }
 
+static Entity FindChildByTag(Entity parent, const std::string& tag) {
+    for (size_t i = 0; i < parent.GetChildCount(); i++) {
+        Entity c = parent.GetChildAt(i);
+        if (c && c.GetComponent<TagComponent>().Tag == tag) return c;
+    }
+    return Entity();
+}
+
+static void TestPrefabStructureSync(const fs::path& dir) {
+    auto scene = Scene::Create("Estrutura");
+    Entity root = scene->CreateEntity("Torre");
+    Entity a = scene->CreateEntity("A"); scene->SetParent(a, root); a.AddComponent<LightComponent>().Intensity = 2.0f;
+    Entity b = scene->CreateEntity("B"); scene->SetParent(b, root); b.AddComponent<LightComponent>().Intensity = 5.0f;
+    const fs::path prefab = dir / "estrutura.prismprefab";
+    std::vector<uint64_t> g;
+    CHECK(PrefabSerializer::Serialize(root, prefab, nullptr, &g));
+    Entity inst = PrefabSerializer::Instantiate(*scene, prefab, AssetID::Generate());
+    CHECK(inst);
+    if (!inst) return;
+
+    // Na instancia: o usuario APAGA B de proposito e pendura um filho manual (X) em A.
+    scene->DestroyEntity(FindChildByTag(inst, "B"));
+    Entity x = scene->CreateEntity("X"); scene->SetParent(x, FindChildByTag(inst, "A"));
+
+    // O arquivo ganha "Novo" (filho da raiz) e continua com A e B.
+    {
+        auto s2 = Scene::Create("Editado");
+        Entity r = s2->CreateEntity("Torre");
+        Entity a2 = s2->CreateEntity("A"); s2->SetParent(a2, r); a2.AddComponent<LightComponent>().Intensity = 2.0f;
+        Entity n2 = s2->CreateEntity("Novo"); s2->SetParent(n2, r); n2.AddComponent<LightComponent>().Intensity = 100.0f;
+        Entity b2 = s2->CreateEntity("B"); s2->SetParent(b2, r); b2.AddComponent<LightComponent>().Intensity = 5.0f;
+        std::vector<uint64_t> edited = { g[0], g[1], 0, g[2] };
+        CHECK(PrefabSerializer::Serialize(r, prefab, &edited));
+    }
+    // 'g' = GUIDs ANTES da edicao
+    auto r1 = PrefabSyncer::SyncStructure(inst, prefab, g);
+    CHECK(r1.Valid && r1.Added == 1 && r1.Removed == 0);
+    Entity novo = FindChildByTag(inst, "Novo");
+    CHECK(novo && novo.HasComponent<LightComponent>() && novo.GetComponent<LightComponent>().Intensity == 100.0f);
+    CHECK(novo && novo.HasComponent<PrefabInstanceMemberComponent>());
+    CHECK(!FindChildByTag(inst, "B"));                       // B apagado na instancia NAO ressuscita
+    CHECK(PrefabSyncer::Diff(inst, prefab).OverrideCount() == 0);
+
+    // Idempotente: rodar de novo nao cria nada
+    std::vector<uint64_t> now;
+    CHECK(PrefabSyncer::ReadFileGuids(prefab, now) && now.size() == 4);
+    auto r2 = PrefabSyncer::SyncStructure(inst, prefab, now);
+    CHECK(r2.Valid && r2.Added == 0 && r2.Removed == 0);
+
+    // O arquivo perde o A: a instancia de A some, mas o X (manual) sobe para a raiz
+    {
+        auto s3 = Scene::Create("SemA");
+        Entity r = s3->CreateEntity("Torre");
+        Entity n3 = s3->CreateEntity("Novo"); s3->SetParent(n3, r); n3.AddComponent<LightComponent>().Intensity = 100.0f;
+        Entity b3 = s3->CreateEntity("B"); s3->SetParent(b3, r); b3.AddComponent<LightComponent>().Intensity = 5.0f;
+        std::vector<uint64_t> edited = { now[0], now[2], now[3] };
+        CHECK(PrefabSerializer::Serialize(r, prefab, &edited));
+    }
+    auto r3 = PrefabSyncer::SyncStructure(inst, prefab, now);
+    CHECK(r3.Valid && r3.Removed == 1 && r3.Added == 0);
+    CHECK(!FindChildByTag(inst, "A"));
+    CHECK(FindChildByTag(inst, "X"));                        // sobreviveu, agora filho da raiz
+    CHECK(FindChildByTag(inst, "Novo"));
+
+    // Sem lista anterior nao cria nada; instancia invalida nao quebra
+    CHECK(!PrefabSyncer::SyncStructure(root, prefab, now).Valid);
+}
+
 static void TestPrefabGuids(const fs::path& dir) {
     // Torre: raiz + A (Luz 2) + B (Luz 5). Instancia -> editar o ARQUIVO (inserir/remover filhos) -> a instancia
     // continua ligada as MESMAS entidades (antes: por indice posicional, apontava para as erradas).
@@ -1196,6 +1264,7 @@ int main() {
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
     TestPrefabGuids(dir);
+    TestPrefabStructureSync(dir);
     TestWorldTransformScope();
     TestVisibility();
     TestCopyEntityTree();

@@ -174,6 +174,12 @@ namespace PrismEditor {
                         ImGui::SetTooltip("Atualiza todos os Components NAO divergentes desta instancia (e de seus filhos) com o valor atual do prefab.\nComponents que ja divergem (overridados) nao sao tocados.");
 
                     ImGui::SameLine();
+                    if (ImGui::Button("Editar Prefab") && m_Ctx.OpenPrefabForEdit)
+                        m_Ctx.OpenPrefabForEdit(prefabPath);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Abre o prefab isolado para editar (Ctrl+S salva). Ao voltar, as instancias deste mapa recebem as mudancas, inclusive filhos novos/removidos.");
+
+                    ImGui::SameLine();
                     if (ImGui::Button("Aplicar Estrutura ao Prefab")) {
                         m_Ctx.History.Execute(Prism::CreateScope<ApplyPrefabStructureCommand>(instanceRoot, prefabPath));
                         m_PrefabDiffCachedRoot = {}; // arquivo mudou - forca recalcular o Diff no proximo frame (ver cache acima)

@@ -44,6 +44,7 @@ namespace PrismEditor {
         m_Ctx.MaterialLinks.FlushSave();
         ParticleLinkHost::FlushAndReset(m_Ctx); // antes de trocar a cena (emissores antigos somem)
 
+        m_PrefabEdit = {};   // carregar um mapa encerra qualquer edicao de prefab
         m_Ctx.ActiveScene = serializer.GetScene();
         m_Ctx.CurrentMapPath = associatedMap;
         m_Ctx.SelectedEntity = {};
@@ -70,6 +71,7 @@ namespace PrismEditor {
         m_Ctx.MaterialLinks.FlushSave();
         ParticleLinkHost::FlushAndReset(m_Ctx); // antes de trocar a cena (emissores antigos somem)
 
+        m_PrefabEdit = {};
         m_Ctx.ActiveScene = Prism::Scene::Create("Nova Cena");
         // Todo mapa novo nasce com um Ambiente (luz ambiente + skybox da cena).
         m_Ctx.ActiveScene->CreateEntity("Ambiente").AddComponent<Prism::EnvironmentComponent>();
@@ -190,6 +192,9 @@ namespace PrismEditor {
     }
 
     bool SceneDocument::TrySaveActiveScene() {
+        if (m_PrefabEdit.Active)
+            return SavePrefabEdit(); // no modo de edicao de prefab, "salvar" grava o prefab (nunca o mapa)
+
         if (m_Ctx.CurrentMapPath.empty()) {
             // Cena sem arquivo associado ainda (nova, ou criada por
             // NewMap()) - nao ha "onde" sobrescrever, entao pedimos um
@@ -482,4 +487,103 @@ namespace PrismEditor {
         m_AllowWindowClose = allow;
     }
 
+
+    bool SceneDocument::EnterPrefabEdit(const std::filesystem::path& prefabFile) {
+        auto project = Prism::Project::GetActive();
+        if (!project || !std::filesystem::exists(prefabFile)) {
+            PRISM_ERROR("Prefab nao encontrado: ", prefabFile.string());
+            return false;
+        }
+        if (m_PrefabEdit.Active) {
+            PRISM_WARN("Ja existe um prefab em edicao; volte antes de abrir outro.");
+            return false;
+        }
+        if (m_Ctx.IsPlaying())
+            m_Ctx.StopPlaying();
+
+        // Cena de edicao: o prefab com os GUIDs preservados (cada entidade vira "membro" so para o Serialize
+        // reaproveitar o GUID ao salvar; a raiz NAO e marcada como instancia).
+        auto scene = Prism::Scene::Create("Prefab: " + prefabFile.stem().string());
+        std::vector<uint64_t> guids;
+        Prism::Entity root = Prism::PrefabSerializer::Instantiate(*scene, prefabFile, Prism::AssetID::Generate(), &guids);
+        if (!root) {
+            PRISM_ERROR("Nao foi possivel abrir o prefab para edicao: ", prefabFile.string());
+            return false;
+        }
+        root.RemoveComponent<Prism::PrefabInstanceRootComponent>();
+        scene->CreateEntity("Ambiente").AddComponent<Prism::EnvironmentComponent>(); // so para a vista nao ficar escura; nunca vai para o prefab
+
+        PrefabEditSession session;
+        session.Active = true;
+        session.PrefabPath = prefabFile;
+        session.ParentMapPath = m_Ctx.CurrentMapPath;
+        {
+            const std::string relative = project->GetAssetRegistry().ToRelative(prefabFile);
+            if (!relative.empty())
+                session.Asset = project->GetAssetRegistry().IdForPath(relative);
+        }
+        session.Root = root;
+        session.BaselineGuids = guids;
+
+        m_Ctx.MaterialLinks.FlushSave();
+        ParticleLinkHost::FlushAndReset(m_Ctx);
+        m_Ctx.ActiveScene = scene;
+        m_Ctx.CurrentMapPath.clear(); // nunca grava o prefab como se fosse mapa
+        m_Ctx.SelectedEntity = root;
+        m_Ctx.MaterialLinks.ForgetPending();
+        m_Ctx.History.Clear();
+        m_PrefabEdit = std::move(session);
+        MarkSceneClean();
+        PRISM_INFO("Editando o prefab '", prefabFile.filename().string(), "' (Ctrl+S salva, \"Voltar\" retorna ao mapa).");
+        return true;
+    }
+
+    bool SceneDocument::SavePrefabEdit() {
+        if (!m_PrefabEdit.Active || !m_PrefabEdit.Root)
+            return false;
+        std::vector<uint64_t> written;
+        if (!Prism::PrefabSerializer::Serialize(m_PrefabEdit.Root, m_PrefabEdit.PrefabPath, nullptr, &written)) {
+            PRISM_ERROR("Falha ao salvar o prefab: ", m_PrefabEdit.PrefabPath.string());
+            return false;
+        }
+        // Entidades novas receberam GUID agora: grava-o nelas (senao o proximo salvar geraria outro e a identidade mudaria).
+        std::vector<Prism::Entity> subtree;
+        std::function<void(Prism::Entity)> collect = [&](Prism::Entity e) {
+            subtree.push_back(e);
+            for (size_t i = 0; i < e.GetChildCount(); i++)
+                if (Prism::Entity c = e.GetChildAt(i)) collect(c);
+        };
+        collect(m_PrefabEdit.Root);
+        for (size_t i = 0; i < subtree.size() && i < written.size(); i++) {
+            if (!subtree[i].HasComponent<Prism::PrefabInstanceMemberComponent>())
+                subtree[i].AddComponent<Prism::PrefabInstanceMemberComponent>();
+            auto& member = subtree[i].GetComponent<Prism::PrefabInstanceMemberComponent>();
+            member.IndexInPrefab = (uint32_t)i;
+            member.Guid = written[i];
+        }
+        m_PrefabEdit.ChangedFile = true;
+        MarkSceneClean();
+        return true;
+    }
+
+    void SceneDocument::ExitPrefabEdit(bool save) {
+        if (!m_PrefabEdit.Active)
+            return;
+        if (save && !SavePrefabEdit())
+            return; // nao perde o trabalho: continua editando
+
+        const PrefabEditSession session = m_PrefabEdit; // LoadScene/NewMap encerram a sessao
+        if (!session.ParentMapPath.empty() && std::filesystem::exists(session.ParentMapPath))
+            LoadScene(session.ParentMapPath);
+        else
+            NewMap();
+
+        if (session.ChangedFile) {
+            const int changed = EntityOps::SyncPrefabAssetInstances(m_Ctx, session.Asset, session.PrefabPath, session.BaselineGuids);
+            if (changed > 0) {
+                PRISM_INFO(changed, " instancia(s) de '", session.PrefabPath.filename().string(), "' atualizada(s) com as mudancas do prefab (nao esqueca de salvar o mapa).");
+                m_SavedSceneFingerprint = 0; // a cena mudou em memoria: pede para salvar
+            }
+        }
+    }
 }

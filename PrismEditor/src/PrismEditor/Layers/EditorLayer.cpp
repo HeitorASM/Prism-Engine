@@ -53,6 +53,7 @@ namespace PrismEditor {
         m_Ctx.Play = &m_PlayWindow;
         m_Ctx.IsPlaying = [this]() { return IsPlaying(); };
         m_Ctx.StopPlaying = [this]() { StopPlaying(); };
+        m_Ctx.OpenPrefabForEdit = [this](const std::filesystem::path& path) { m_PendingPrefabOpen = path; };
         m_Ctx.ContentBrowser = &m_ContentBrowser;
         m_Ctx.ScriptEditor = &m_ScriptEditor;
 
@@ -84,6 +85,7 @@ namespace PrismEditor {
                     current.clear(); // o mapa aberto foi excluido: "Salvar" passa a pedir um novo arquivo
             }
             });
+        m_ContentBrowser.SetOnPrefabEditRequested([this](const std::filesystem::path& path) { m_PendingPrefabOpen = path; });
         m_ContentBrowser.SetOnMapDoubleClicked([this](const std::filesystem::path& mapPath) {
             // Copia do path: o Content Browser pode reaproveitar o buffer
             // dele antes do popup "Salvar alteracoes?" ser respondido (a
@@ -180,10 +182,23 @@ namespace PrismEditor {
     }
 
     void EditorLayer::OnUpdate(float deltaTime) {
+        // Troca de cena pedida por botoes (modo de edicao de prefab): feita aqui, ANTES de desenhar os paineis do frame.
+        if (m_PendingPrefabExit >= 0) {
+            const bool save = m_PendingPrefabExit == 1;
+            m_PendingPrefabExit = -1;
+            m_Document.ExitPrefabEdit(save);
+        }
+        if (!m_PendingPrefabOpen.empty()) {
+            const std::filesystem::path path = std::move(m_PendingPrefabOpen);
+            m_PendingPrefabOpen.clear();
+            if (!m_Document.IsEditingPrefab())
+                m_Document.RunAfterUnsavedCheck([this, path]() { m_Document.EnterPrefabEdit(path); });
+        }
         m_Viewport.ResizeIfNeeded();
         PollNativeBuild();
         PollGameExport();
-        Autosave::Tick(m_Ctx, m_Document, deltaTime);
+        if (!m_Document.IsEditingPrefab())
+            Autosave::Tick(m_Ctx, m_Document, deltaTime); // o autosave guarda MAPAS: a cena de edicao de prefab nao entra
 
         // EditorContext::ActiveScene->OnUpdate() aqui NAO roda scripts/fisica na pratica
         // (Scene::OnUpdate so simula quando IsRunning() e true - ver
@@ -405,6 +420,20 @@ namespace PrismEditor {
         if (IconButton("##redo", ToolIcon::Redo, "Refazer (Ctrl+Y)"))
             m_Ctx.History.Redo();
         ImGui::EndDisabled();
+
+        if (m_Document.IsEditingPrefab()) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.35f, 0.80f, 0.55f, 1.0f), "  Editando prefab: %s", m_Document.GetEditedPrefabPath().filename().string().c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Ctrl+S grava o prefab. Ao voltar, o mapa de origem e recarregado e as instancias deste prefab recebem as mudancas.");
+            ImGui::SameLine();
+            if (ImGui::Button("Salvar e voltar"))
+                m_PendingPrefabExit = 1;
+            ImGui::SameLine();
+            if (ImGui::Button("Descartar e voltar"))
+                m_PendingPrefabExit = 0;
+        }
 
         ImGui::SameLine();
         RenderBuildToolbarGroup();

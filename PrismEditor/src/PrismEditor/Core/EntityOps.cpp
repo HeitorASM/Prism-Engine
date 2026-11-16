@@ -45,6 +45,26 @@ namespace PrismEditor::EntityOps {
             PRISM_INFO(updatedInstances, " instancia(s) de prefab atualizada(s) ao carregar o mapa (mudancas nao-overridadas do(s) prefab(s) de origem).");
     }
 
+    int SyncPrefabAssetInstances(EditorContext& ctx, Prism::AssetID asset, const std::filesystem::path& prefabPath, const std::vector<uint64_t>& previousGuids) {
+        if (!ctx.ActiveScene)
+            return 0;
+        int changed = 0;
+        auto view = ctx.ActiveScene->GetRegistry().view<Prism::PrefabInstanceRootComponent>();
+        std::vector<entt::entity> roots(view.begin(), view.end()); // a sincronizacao cria/destroi entidades: nao itera a view enquanto muda
+        for (entt::entity handle : roots) {
+            if (!ctx.ActiveScene->GetRegistry().valid(handle))
+                continue;
+            Prism::Entity instanceRoot(handle, ctx.ActiveScene.get());
+            if (instanceRoot.GetComponent<Prism::PrefabInstanceRootComponent>().SourceAsset != asset)
+                continue;
+            const auto structure = Prism::PrefabSyncer::SyncStructure(instanceRoot, prefabPath, previousGuids);
+            const int components = Prism::PrefabSyncer::UpdateAll(instanceRoot, prefabPath);
+            if (structure.Added > 0 || structure.Removed > 0 || components > 0)
+                changed++;
+        }
+        return changed;
+    }
+
     void InstantiatePrefab(EditorContext& ctx, const std::filesystem::path& prefabPath, Prism::Entity parent) {
         auto command = Prism::CreateScope<InstantiatePrefabCommand>(ctx.ActiveScene, prefabPath);
         InstantiatePrefabCommand* raw = command.get();

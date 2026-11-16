@@ -6,6 +6,7 @@
 #include "../Core/Log.h"
 
 #include <fstream>
+#include <unordered_set>
 #include <cstring>
 
 namespace Prism {
@@ -453,6 +454,100 @@ namespace Prism {
         }
 
         return true;
+    }
+
+
+    bool PrefabSyncer::ReadFileGuids(const std::filesystem::path& prefabFilePath, std::vector<uint64_t>& outGuids) {
+        Ref<Scene> scene;
+        std::vector<Entity> entities;
+        return LoadPrefabForComparison(prefabFilePath, scene, entities, outGuids);
+    }
+
+    PrefabSyncer::StructureSyncResult PrefabSyncer::SyncStructure(Entity instanceRoot, const std::filesystem::path& prefabFilePath, const std::vector<uint64_t>& previousGuids) {
+        StructureSyncResult result;
+        if (!instanceRoot || !instanceRoot.HasComponent<PrefabInstanceRootComponent>())
+            return result;
+
+        Ref<Scene> comparisonScene;
+        std::vector<Entity> prefabEntities;
+        std::vector<uint64_t> fileGuids;
+        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities, fileGuids))
+            return result;
+        result.Valid = true;
+
+        Scene* scene = instanceRoot.GetScene();
+        const std::unordered_set<uint64_t> fileSet(fileGuids.begin(), fileGuids.end());
+
+        std::vector<Entity> subtree;
+        CollectSubtreePreOrder(instanceRoot, subtree);
+        std::unordered_map<uint64_t, Entity> byGuid;
+        for (Entity e : subtree)
+            if (e.HasComponent<PrefabInstanceMemberComponent>()) {
+                const auto& m = e.GetComponent<PrefabInstanceMemberComponent>();
+                byGuid[PrefabGuid::Effective(m.Guid, m.IndexInPrefab)] = e;
+            }
+
+        // --- 1) Remocoes: membros (menos a raiz) que o arquivo nao tem mais ---
+        std::vector<Entity> removed;
+        std::unordered_set<entt::entity> removedSet;
+        for (Entity e : subtree) {
+            if (e == instanceRoot || !e.HasComponent<PrefabInstanceMemberComponent>())
+                continue;
+            const auto& m = e.GetComponent<PrefabInstanceMemberComponent>();
+            const uint64_t guid = PrefabGuid::Effective(m.Guid, m.IndexInPrefab);
+            if (!fileSet.count(guid)) {
+                removed.push_back(e);
+                removedSet.insert(e.GetHandle());
+                byGuid.erase(guid);
+            }
+        }
+        // Do mais fundo para o mais raso: um filho que sobrevive sobe para o pai ANTES de o pai ser destruido.
+        for (size_t k = removed.size(); k-- > 0;) {
+            Entity e = removed[k];
+            Entity parent = e.GetParent();
+            const size_t childCount = e.GetChildCount();
+            std::vector<Entity> children;
+            for (size_t i = 0; i < childCount; i++)
+                if (Entity c = e.GetChildAt(i))
+                    children.push_back(c);
+            for (Entity c : children)
+                if (!removedSet.count(c.GetHandle()) && parent)
+                    scene->SetParent(c, parent);
+            scene->DestroyEntity(e);
+            result.Removed++;
+        }
+
+        // --- 2) Adicoes: entidades novas no arquivo (nao estavam la antes da edicao) ---
+        const std::unordered_set<uint64_t> previous(previousGuids.begin(), previousGuids.end());
+        for (size_t i = 1; i < prefabEntities.size() && !previous.empty(); i++) {
+            const uint64_t guid = fileGuids[i];
+            if (byGuid.count(guid) || previous.count(guid))
+                continue;
+
+            Entity source = prefabEntities[i];
+            Entity parentInstance = instanceRoot;
+            if (Entity filePar = source.GetParent()) {
+                for (size_t j = 0; j < prefabEntities.size(); j++)
+                    if (prefabEntities[j] == filePar) {
+                        auto it = byGuid.find(fileGuids[j]);
+                        if (it != byGuid.end()) parentInstance = it->second;
+                        break;
+                    }
+            }
+
+            Entity created = scene->CreateEntity(source.GetComponent<TagComponent>().Tag);
+            created.GetComponent<TransformComponent>() = source.GetComponent<TransformComponent>();
+            for (auto& info : ComponentRegistry::GetAll())
+                if (info.Has(source) && !info.Has(created))
+                    info.Copy(source, created);
+            auto& member = created.AddComponent<PrefabInstanceMemberComponent>();
+            member.IndexInPrefab = (uint32_t)i;
+            member.Guid = guid;
+            scene->SetParent(created, parentInstance);
+            byGuid[guid] = created;
+            result.Added++;
+        }
+        return result;
     }
 
 }
