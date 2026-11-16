@@ -96,6 +96,17 @@ if(MSVC)
 endif()
 add_test(NAME CullingTests COMMAND PrismCullingTests)
 
+# PrismInstanceRingTests: alocador de faixas do buffer de instancias (Renderer/InstanceRing.h, so std).
+add_executable(PrismInstanceRingTests
+    InstanceRingTests.cpp
+)
+target_include_directories(PrismInstanceRingTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismInstanceRingTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismInstanceRingTests PRIVATE /utf-8)
+endif()
+add_test(NAME InstanceRingTests COMMAND PrismInstanceRingTests)
+
 # PrismLightSelectionTests: escolha das luzes por relevancia (Renderer/LightSelection.h, so std + Culling.h).
 add_executable(PrismLightSelectionTests
     LightSelectionTests.cpp

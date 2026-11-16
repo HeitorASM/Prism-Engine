@@ -1,6 +1,8 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h> 
 #include "Renderer.h"
+#include "InstanceRing.h"
+#include <unordered_map>
 #include "PrimitiveMeshFactory.h"
 #include "RendererInternal.h"
 #include "../Core/Log.h"
@@ -88,6 +90,8 @@ namespace Prism {
     Scope<SSAO> Renderer::s_SSAO = nullptr;
     std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_FullscreenQuadVAOsByContext;
     std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_InstanceBuffersByContext;
+    // Alocador de faixas de cada buffer de instancias (ver InstanceRing.h); chave = id do buffer GL.
+    static std::unordered_map<uint32_t, InstanceRing> s_InstanceRings;
     Scope<Mesh> Renderer::s_Meshes[5] = {};
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
@@ -303,6 +307,7 @@ namespace Prism {
         for (auto& [window, buffer] : s_InstanceBuffersByContext)
             glDeleteBuffers(1, &buffer);
         s_InstanceBuffersByContext.clear();
+        s_InstanceRings.clear(); // os ids de buffer podem ser reaproveitados numa proxima inicializacao
     }
 
     // Ver comentario grande em Renderer.h (s_FullscreenQuadVAOsByContext)
@@ -894,6 +899,20 @@ namespace Prism {
         return buffer;
     }
 
+    // Grava 'floatCount' floats numa faixa NOVA do buffer persistente (ver InstanceRing.h) e devolve o
+    // buffer e o byte inicial. Lotes do mesmo quadro nunca se sobrescrevem; so orfana quando o buffer enche/cresce.
+    static bool UploadInstanceData(uint32_t buffer, const float* data, size_t floatCount, size_t& outOffset) {
+        const size_t bytes = floatCount * sizeof(float);
+        const InstanceRing::Allocation a = s_InstanceRings[buffer].Allocate(bytes);
+        if (a.Capacity == 0)
+            return false;
+        if (a.Orphan)
+            glNamedBufferData(buffer, (GLsizeiptr)a.Capacity, nullptr, GL_STREAM_DRAW);
+        glNamedBufferSubData(buffer, (GLintptr)a.Offset, (GLsizeiptr)bytes, data);
+        outOffset = a.Offset;
+        return true;
+    }
+
     void Renderer::SetCameraPosition(const float* worldPos) {
         s_CameraWorldPos[0] = worldPos[0];
         s_CameraWorldPos[1] = worldPos[1];
@@ -1183,7 +1202,9 @@ namespace Prism {
                 out[25] = out[26] = out[27] = 0.0f;
             }
             const uint32_t instanceBuffer = GetInstanceBufferForCurrentContext();
-            glNamedBufferData(instanceBuffer, (GLsizeiptr)(s_PrePassInstanceData.size() * sizeof(float)), s_PrePassInstanceData.data(), GL_STREAM_DRAW);
+            size_t instanceOffset = 0;
+            if (!UploadInstanceData(instanceBuffer, s_PrePassInstanceData.data(), s_PrePassInstanceData.size(), instanceOffset))
+                continue;
 
             s_GeometryPrePassShader->SetInt("u_Instanced", 1);
             s_GeometryPrePassShader->SetInt("u_Skinned", 0); // malha animada nunca entra num lote instanciado
@@ -1191,12 +1212,12 @@ namespace Prism {
             glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
             for (int column = 0; column < 4; column++) { // mat4 = 4 atributos vec4 (locais 8-11)
                 glEnableVertexAttribArray(8 + column);
-                glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(column * 4 * sizeof(float)));
+                glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(instanceOffset + column * 4 * sizeof(float)));
                 glVertexAttribDivisor(8 + column, 1);
             }
             for (int column = 0; column < 3; column++) { // mat3 = 3 atributos vec3 (locais 12-14)
                 glEnableVertexAttribArray(12 + column);
-                glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)((16 + column * 3) * sizeof(float)));
+                glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(instanceOffset + (16 + column * 3) * sizeof(float)));
                 glVertexAttribDivisor(12 + column, 1);
             }
             glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)first.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr, (GLsizei)batch.Count);
@@ -1623,7 +1644,9 @@ namespace Prism {
                     out[25] = draw.Color.x; out[26] = draw.Color.y; out[27] = draw.Color.z;
                 }
                 const uint32_t instanceBuffer = GetInstanceBufferForCurrentContext();
-                glNamedBufferData(instanceBuffer, (GLsizeiptr)(instanceData.size() * sizeof(float)), instanceData.data(), GL_STREAM_DRAW);
+                size_t instanceOffset = 0;
+                if (!UploadInstanceData(instanceBuffer, instanceData.data(), instanceData.size(), instanceOffset))
+                    continue;
 
                 s_ActiveShader->SetInt("u_Instanced", 1);
                 s_ActiveShader->SetInt("u_Skinned", 0);
@@ -1631,16 +1654,16 @@ namespace Prism {
                 glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
                 for (int column = 0; column < 4; column++) { // mat4 = 4 atributos vec4
                     glEnableVertexAttribArray(8 + column);
-                    glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(column * 4 * sizeof(float)));
+                    glVertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(instanceOffset + column * 4 * sizeof(float)));
                     glVertexAttribDivisor(8 + column, 1);
                 }
                 for (int column = 0; column < 3; column++) { // mat3 = 3 atributos vec3
                     glEnableVertexAttribArray(12 + column);
-                    glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)((16 + column * 3) * sizeof(float)));
+                    glVertexAttribPointer(12 + column, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(instanceOffset + (16 + column * 3) * sizeof(float)));
                     glVertexAttribDivisor(12 + column, 1);
                 }
                 glEnableVertexAttribArray(15);
-                glVertexAttribPointer(15, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(25 * sizeof(float)));
+                glVertexAttribPointer(15, 3, GL_FLOAT, GL_FALSE, kInstanceStride, (const void*)(uintptr_t)(instanceOffset + 25 * sizeof(float)));
                 glVertexAttribDivisor(15, 1);
 
                 glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)firstDraw.MeshPtr->GetIndexCount(), GL_UNSIGNED_INT, nullptr, (GLsizei)batch.Count);
