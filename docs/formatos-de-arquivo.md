@@ -36,7 +36,7 @@ EngineVersion=0.1.0
 ## `.prismmap`
 
 - Magic: `PRSM`
-- Versão atual: **21** (`kSceneFormatVersion` em `SceneSerializer.cpp`). Mapas **v19 e v20** ainda são lidos (e regravados no formato atual ao salvar); formatos anteriores são recusados.
+- Versão atual: **22** (`kSceneFormatVersion` em `SceneSerializer.cpp`). Mapas **v19, v20 e v21** ainda são lidos (e regravados no formato atual ao salvar); formatos anteriores são recusados.
 
 Contém o nome da cena e, para cada entidade: tag, transform, os components como **blocos** e o índice do pai (`-1` = sem pai). `RelationshipComponent::Children` não é gravado; é reconstruído a partir dos índices de pai depois que todas as entidades são criadas.
 
@@ -72,6 +72,7 @@ O layout exato campo a campo é definido pelos blocos `Serialize`/`Deserialize` 
 | (bloco Camera v4) | `Camera` ganha `CullMask` (camadas que enxerga) no fim do bloco; **sem** subir a versão do mapa |
 | (bloco MeshRenderer v2) | `MeshRenderer` ganha `Layers` (camadas em que está) no fim do bloco; **sem** subir a versão do mapa |
 | v21 | components em **blocos** com nome, versão e tamanho (antes: flag + campos na ordem do registro) |
+| v22 | membro de instância de prefab guarda o **GUID** estável da entidade no prefab (além do índice) |
 
 > O número da versão **vive no código**. Ao subir `kSceneFormatVersion` (só quando a estrutura **fora** dos blocos muda), atualize "Versão atual" acima e esta tabela.
 
@@ -92,7 +93,7 @@ Importados via Assimp (`Assets/ModelLoader`). Os triângulos são agrupados **po
 ## `.prismprefab`
 
 - Magic: `PPFB`
-- Versão atual: **9** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`). Prefabs v7–v8 ainda são lidos.
+- Versão atual: **10** (`kPrefabFormatVersion` em `PrefabSerializer.cpp`). Prefabs v7–v9 ainda são lidos. A v10 grava, no fim de cada entidade, um **GUID** de 64 bits que identifica a entidade para sempre: a instância guarda esse GUID (cena v22) e o `PrefabSyncer` procura por ele, então inserir, remover ou reordenar filhos no prefab não faz mais a instância apontar para a entidade errada. Prefabs v7–v9 e cenas v21 migram sozinhos (GUID derivado do índice, ver `Scene/PrefabGuid.h`), sem reescrever nenhum arquivo.
 
 Mesma estrutura por entidade do `.prismmap`, usando o mesmo `ComponentRegistry` (a v2 acompanha a v14 do mapa — `MeshRenderer::SubmeshIndex` — a v3 a v15 — `AudioSource`/`AudioListener` — a v4 a v16 — `Script::Properties` — a v5 a v17 — `NativeScript` — a v6 a v18 — `ParticleEmitter` — a v7 a v19 — `UIElement` — a v8 a v20 — `Environment`/opções de câmera — e a v9 a v21 — blocos de component), mas sem nome de cena. Gravação atômica, como no mapa. `PrefabSerializer::Instantiate` adiciona as entidades a uma cena existente, sem substituí-la.
 

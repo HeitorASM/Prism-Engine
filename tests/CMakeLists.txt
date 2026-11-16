@@ -290,6 +290,14 @@ target_compile_features(PrismParticleForcesTests PRIVATE cxx_std_20)
 target_link_libraries(PrismParticleForcesTests PRIVATE glm)
 add_test(NAME ParticleForcesTests COMMAND PrismParticleForcesTests)
 
+# PrismPrefabGuidTests: GUIDs estaveis de prefab (Scene/PrefabGuid.h, so std).
+add_executable(PrismPrefabGuidTests
+    PrefabGuidTests.cpp
+)
+target_include_directories(PrismPrefabGuidTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismPrefabGuidTests PRIVATE cxx_std_20)
+add_test(NAME PrefabGuidTests COMMAND PrismPrefabGuidTests)
+
 # PrismBuildAnalysisTests: classificacao da saida de compilacao dos scripts C++ (Core/BuildOutputAnalysis.h, so std).
 add_executable(PrismBuildAnalysisTests
     BuildOutputAnalysisTests.cpp

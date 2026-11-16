@@ -39,7 +39,9 @@
 #include "../Core/Base.h"
 #include "Entity.h"
 #include "../Assets/AssetID.h"
+#include <cstdint>
 #include <filesystem>
+#include <vector>
 
 namespace Prism {
 
@@ -52,7 +54,13 @@ namespace Prism {
         // zerada) - ao instanciar de volta (ver Instantiate), quem chama
         // decide se reposiciona a raiz ou mantem o transform salvo (ver
         // comentario em Instantiate).
-        static bool Serialize(Entity root, const std::filesystem::path& filepath);
+        //
+        // GUIDs (ver PrefabGuid.h): cada entidade do arquivo grava um GUID estavel. Se 'guids' for dado, e
+        // alinhado a ordem da subarvore (pre-ordem) e vale como esta; senao usa o PrefabInstanceMemberComponent::Guid
+        // da propria entidade quando ele existe, e gera um novo caso contrario. Zeros e repeticoes sempre viram
+        // GUIDs novos. 'outGuids' (opcional) recebe os GUIDs realmente gravados, na mesma ordem.
+        static bool Serialize(Entity root, const std::filesystem::path& filepath,
+                              const std::vector<uint64_t>* guids = nullptr, std::vector<uint64_t>* outGuids = nullptr);
 
         // Le 'filepath' e cria a subarvore inteira dentro de 'targetScene'
         // (SEM reparentar a raiz para nada por padrao - a raiz nasce
@@ -75,7 +83,10 @@ namespace Prism {
         // instancia SEM vinculo, exatamente o comportamento de antes do
         // vinculo vivo existir (uma subarvore de entidades comuns, sem
         // nenhum link de volta ao arquivo).
-        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset = {});
+        //
+        // 'outGuids' (opcional): recebe o GUID de cada entidade do arquivo, na ordem do arquivo (indice 0 = raiz).
+        // Arquivos antigos (< v10) nao tem GUIDs: recebem PrefabGuid::Migration(indice).
+        static Entity Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset = {}, std::vector<uint64_t>* outGuids = nullptr);
     };
 
 }

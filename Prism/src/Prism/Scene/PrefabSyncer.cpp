@@ -2,6 +2,7 @@
 #include "Scene.h"
 #include "PrefabSerializer.h"
 #include "ComponentRegistry.h"
+#include "PrefabGuid.h"
 #include "../Core/Log.h"
 
 #include <fstream>
@@ -32,7 +33,7 @@ namespace Prism {
 
     // --- helpers privados ---------------------------------------------
 
-    bool PrefabSyncer::LoadPrefabForComparison(const std::filesystem::path& prefabFilePath, Ref<Scene>& outScene, std::vector<Entity>& outEntities) {
+    bool PrefabSyncer::LoadPrefabForComparison(const std::filesystem::path& prefabFilePath, Ref<Scene>& outScene, std::vector<Entity>& outEntities, std::vector<uint64_t>& outGuids) {
         outScene = Scene::Create("__prefab_comparison_temp__");
         outEntities.clear();
 
@@ -41,7 +42,8 @@ namespace Prism {
         // PrefabInstanceRootComponent/PrefabInstanceMemberComponent (ver
         // Components.h - Instantiate so marca esses components quando
         // 'sourceAsset' e valido).
-        Entity root = PrefabSerializer::Instantiate(*outScene, prefabFilePath);
+        outGuids.clear();
+        Entity root = PrefabSerializer::Instantiate(*outScene, prefabFilePath, {}, &outGuids);
         if (!root)
             return false; // erro especifico ja logado dentro de Instantiate
 
@@ -56,6 +58,13 @@ namespace Prism {
         // Entity.h) - garantindo os MESMOS indices que o arquivo usa.
         CollectSubtreePreOrder(root, outEntities);
         return true;
+    }
+
+    uint32_t PrefabSyncer::ResolveIndexInPrefab(Entity instanceEntity, const std::vector<uint64_t>& fileGuids, uint32_t fallbackIndex) {
+        if (!instanceEntity || !instanceEntity.HasComponent<PrefabInstanceMemberComponent>())
+            return fallbackIndex;
+        const auto& member = instanceEntity.GetComponent<PrefabInstanceMemberComponent>();
+        return PrefabGuid::IndexOf(fileGuids, PrefabGuid::Effective(member.Guid, member.IndexInPrefab));
     }
 
     void PrefabSyncer::CollectSubtreePreOrder(Entity entity, std::vector<Entity>& out) {
@@ -137,7 +146,8 @@ namespace Prism {
 
         Ref<Scene> comparisonScene;
         std::vector<Entity> prefabEntities;
-        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities)) {
+        std::vector<uint64_t> prefabGuids;
+        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities, prefabGuids)) {
             result.ErrorMessage = "Nao foi possivel ler o prefab de origem: " + prefabFilePath.string();
             return result;
         }
@@ -166,7 +176,7 @@ namespace Prism {
             if (!instanceEntity.HasComponent<PrefabInstanceMemberComponent>())
                 continue; // adicionada a mao depois da instanciacao - nunca comparada (ver comentario no .h)
 
-            uint32_t index = instanceEntity.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab;
+            uint32_t index = ResolveIndexInPrefab(instanceEntity, prefabGuids, 0);
             if (index >= prefabEntities.size()) {
                 result.StructureMatches = false;
                 continue; // indice que nao existe mais no prefab atual (entidades removidas no arquivo) - nada para comparar
@@ -221,10 +231,13 @@ namespace Prism {
 
         Ref<Scene> comparisonScene;
         std::vector<Entity> prefabEntities;
-        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities)) {
+        std::vector<uint64_t> prefabGuids;
+        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities, prefabGuids)) {
             PRISM_CORE_ERROR("PrefabSyncer: nao foi possivel ler o prefab para reverter: ", prefabFilePath.string());
             return false;
         }
+        // A identidade vem do GUID da entidade; 'indexInPrefab' so vale como reserva (entidade sem membro).
+        indexInPrefab = ResolveIndexInPrefab(instanceEntity, prefabGuids, indexInPrefab);
         if (indexInPrefab >= prefabEntities.size()) {
             PRISM_CORE_ERROR("PrefabSyncer: indice de prefab (", indexInPrefab, ") fora do range - o prefab foi editado e esta entidade nao existe mais nele.");
             return false;
@@ -324,7 +337,8 @@ namespace Prism {
 
         Ref<Scene> comparisonScene;
         std::vector<Entity> prefabEntities;
-        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities)) {
+        std::vector<uint64_t> prefabGuids;
+        if (!LoadPrefabForComparison(prefabFilePath, comparisonScene, prefabEntities, prefabGuids)) {
             PRISM_CORE_ERROR("PrefabSyncer: nao foi possivel ler o prefab para aplicar a mudanca: ", prefabFilePath.string());
             return false;
         }
@@ -333,7 +347,7 @@ namespace Prism {
             PRISM_CORE_ERROR("PrefabSyncer: a entidade nao pertence a uma instancia de prefab (sem PrefabInstanceMemberComponent).");
             return false;
         }
-        uint32_t index = instanceEntity.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab;
+        uint32_t index = ResolveIndexInPrefab(instanceEntity, prefabGuids, 0);
         if (index >= prefabEntities.size()) {
             PRISM_CORE_ERROR("PrefabSyncer: indice de prefab (", index, ") fora do range - o prefab foi editado e esta entidade nao existe mais nele.");
             return false;
@@ -345,7 +359,7 @@ namespace Prism {
             if (index == 0)
                 return true; // raiz: nada a aplicar (transform da raiz nunca e comparado)
             prefabEntity.GetComponent<TransformComponent>() = instanceEntity.GetComponent<TransformComponent>();
-            if (!PrefabSerializer::Serialize(prefabRoot, prefabFilePath)) {
+            if (!PrefabSerializer::Serialize(prefabRoot, prefabFilePath, &prefabGuids)) {
                 PRISM_CORE_ERROR("PrefabSyncer: falha ao gravar o prefab atualizado em: ", prefabFilePath.string());
                 return false;
             }
@@ -378,7 +392,7 @@ namespace Prism {
             // regravamos o arquivo inteiro a partir da raiz (que ja tem
             // exatamente o mesmo conteudo de antes, exceto o Component
             // que acabamos de mudar em 'prefabEntity').
-            if (!PrefabSerializer::Serialize(prefabRoot, prefabFilePath)) {
+            if (!PrefabSerializer::Serialize(prefabRoot, prefabFilePath, &prefabGuids)) {
                 PRISM_CORE_ERROR("PrefabSyncer: falha ao gravar o prefab atualizado em: ", prefabFilePath.string());
                 return false;
             }
@@ -407,13 +421,15 @@ namespace Prism {
         {
             Ref<Scene> tempScene;
             std::vector<Entity> tempEntities;
-            if (LoadPrefabForComparison(prefabFilePath, tempScene, tempEntities) && !tempEntities.empty())
+            std::vector<uint64_t> tempGuids;
+            if (LoadPrefabForComparison(prefabFilePath, tempScene, tempEntities, tempGuids) && !tempEntities.empty())
                 prefabRootTransform = tempEntities[0].GetComponent<TransformComponent>();
         }
 
         // Grava com o Transform do PREFAB na raiz, depois devolve o da instancia.
         rootTransform = prefabRootTransform;
-        const bool saved = PrefabSerializer::Serialize(instanceRoot, prefabFilePath);
+        std::vector<uint64_t> writtenGuids; // GUIDs gravados: os dos membros (identidade preservada) e novos para entidades adicionadas
+        const bool saved = PrefabSerializer::Serialize(instanceRoot, prefabFilePath, nullptr, &writtenGuids);
         instanceRoot.GetComponent<TransformComponent>() = instanceTransform;
 
         if (!saved) {
@@ -430,7 +446,10 @@ namespace Prism {
             Entity e = subtree[i];
             if (!e.HasComponent<PrefabInstanceMemberComponent>())
                 e.AddComponent<PrefabInstanceMemberComponent>();
-            e.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab = (uint32_t)i;
+            auto& member = e.GetComponent<PrefabInstanceMemberComponent>();
+            member.IndexInPrefab = (uint32_t)i;
+            if (i < writtenGuids.size())
+                member.Guid = writtenGuids[i];
         }
 
         return true;

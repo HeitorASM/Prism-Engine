@@ -11,6 +11,7 @@
 #include <Prism/Scene/MaterialSerializer.h>
 #include <Prism/Scene/PrefabSerializer.h>
 #include <Prism/Scene/PrefabSyncer.h>
+#include <Prism/Scene/PrefabGuid.h>
 #include <Prism/Extensions/SystemRegistry.h>
 #include <Prism/Extensions/ExtensionLoader.h>
 
@@ -638,6 +639,109 @@ static void TestSceneFileRoundTrip(const fs::path& dir) {
     }
 }
 
+static void TestPrefabGuids(const fs::path& dir) {
+    // Torre: raiz + A (Luz 2) + B (Luz 5). Instancia -> editar o ARQUIVO (inserir/remover filhos) -> a instancia
+    // continua ligada as MESMAS entidades (antes: por indice posicional, apontava para as erradas).
+    auto scene = Scene::Create("Guids");
+    Entity root = scene->CreateEntity("Torre");
+    Entity a = scene->CreateEntity("A"); scene->SetParent(a, root); a.AddComponent<LightComponent>().Intensity = 2.0f;
+    Entity b = scene->CreateEntity("B"); scene->SetParent(b, root); b.AddComponent<LightComponent>().Intensity = 5.0f;
+    const fs::path prefab = dir / "guids.prismprefab";
+    std::vector<uint64_t> written;
+    CHECK(PrefabSerializer::Serialize(root, prefab, nullptr, &written));
+    CHECK(written.size() == 3);
+
+    std::vector<uint64_t> fileGuids;
+    Entity inst = PrefabSerializer::Instantiate(*scene, prefab, AssetID::Generate(), &fileGuids);
+    CHECK(inst && fileGuids == written);
+    if (!inst) return;
+    Entity iA = inst.GetChildAt(0), iB = inst.GetChildAt(1);
+    CHECK(iA.GetComponent<PrefabInstanceMemberComponent>().Guid == written[1]);
+    CHECK(iB.GetComponent<PrefabInstanceMemberComponent>().Guid == written[2]);
+    CHECK(written[0] != 0 && written[1] != written[2] && written[0] != written[1]);
+
+    // Salvar de novo (sem lista) a partir de entidades SEM membro gera GUIDs novos; a partir da instancia preserva.
+    std::vector<uint64_t> resaved;
+    CHECK(PrefabSerializer::Serialize(inst, dir / "guids_copia.prismprefab", nullptr, &resaved) && resaved == written);
+
+    // O arquivo ganha um filho NOVO no meio: [raiz, Novo, A, B]
+    {
+        auto scene2 = Scene::Create("Editado");
+        Entity r2 = scene2->CreateEntity("Torre");
+        Entity n2 = scene2->CreateEntity("Novo"); scene2->SetParent(n2, r2); n2.AddComponent<LightComponent>().Intensity = 100.0f;
+        Entity a2 = scene2->CreateEntity("A"); scene2->SetParent(a2, r2); a2.AddComponent<LightComponent>().Intensity = 2.0f;
+        Entity b2 = scene2->CreateEntity("B"); scene2->SetParent(b2, r2); b2.AddComponent<LightComponent>().Intensity = 5.0f;
+        std::vector<uint64_t> edited = { written[0], 0 /*novo: gerado*/, written[1], written[2] };
+        CHECK(PrefabSerializer::Serialize(r2, prefab, &edited));
+    }
+    PrefabDiffResult d = PrefabSyncer::Diff(inst, prefab);
+    CHECK(d.Valid && !d.StructureMatches);   // entidade nova no arquivo
+    CHECK(d.OverrideCount() == 0);           // A e B casam com A e B (por indice, A seria comparada com 'Novo' = 100)
+
+    // Reverter B (passando de proposito um indice ERRADO) usa o GUID: volta para 5, nao para 100 nem 2
+    iB.GetComponent<LightComponent>().Intensity = 9.0f;
+    CHECK(PrefabSyncer::Diff(inst, prefab).OverrideCount() == 1);
+    CHECK(PrefabSyncer::RevertComponent(iB, prefab, 1, "Light"));
+    CHECK(iB.GetComponent<LightComponent>().Intensity == 5.0f);
+
+    // Aplicar A ao arquivo grava na entidade A do arquivo (e preserva todos os GUIDs)
+    iA.GetComponent<LightComponent>().Intensity = 3.0f;
+    CHECK(PrefabSyncer::ApplyComponentToPrefab(iA, prefab, "Light"));
+    CHECK(PrefabSyncer::Diff(inst, prefab).OverrideCount() == 0);
+    std::vector<uint64_t> afterApply;
+    auto probe = Scene::Create("probe");
+    Entity pr = PrefabSerializer::Instantiate(*probe, prefab, {}, &afterApply);
+    CHECK(pr && afterApply.size() == 4 && afterApply[0] == written[0] && afterApply[2] == written[1] && afterApply[3] == written[2] && afterApply[1] != 0);
+    CHECK(pr.GetChildAt(0).GetComponent<LightComponent>().Intensity == 100.0f); // o 'Novo' nao foi tocado
+
+    // O filho A e REMOVIDO do arquivo: a instancia dele nao tem mais par (sem crash, sem aplicar em outra entidade)
+    {
+        auto scene3 = Scene::Create("SemA");
+        Entity r3 = scene3->CreateEntity("Torre");
+        Entity b3 = scene3->CreateEntity("B"); scene3->SetParent(b3, r3); b3.AddComponent<LightComponent>().Intensity = 5.0f;
+        std::vector<uint64_t> g = { written[0], written[2] };
+        CHECK(PrefabSerializer::Serialize(r3, prefab, &g));
+    }
+    CHECK(!PrefabSyncer::Diff(inst, prefab).StructureMatches);
+    CHECK(!PrefabSyncer::ApplyComponentToPrefab(iA, prefab, "Light"));
+    CHECK(PrefabSyncer::Diff(inst, prefab).OverrideCount() == 0);   // B segue casando
+
+    // MIGRACAO: instancia antiga (Guid 0) + arquivo com GUIDs de migracao
+    {
+        auto old = Scene::Create("Antiga");
+        Entity r = old->CreateEntity("Torre");
+        Entity c0 = old->CreateEntity("A"); old->SetParent(c0, r); c0.AddComponent<LightComponent>().Intensity = 1.0f;
+        std::vector<uint64_t> mig = { PrefabGuid::Migration(0), PrefabGuid::Migration(1) };
+        const fs::path legacyFile = dir / "antigo.prismprefab";
+        CHECK(PrefabSerializer::Serialize(r, legacyFile, &mig));
+        Entity oi = PrefabSerializer::Instantiate(*old, legacyFile, AssetID::Generate());
+        for (size_t i = 0; i < 2; i++) {
+            Entity e = i == 0 ? oi : oi.GetChildAt(0);
+            e.GetComponent<PrefabInstanceMemberComponent>().Guid = 0; // como numa cena v21
+            e.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab = (uint32_t)i;
+        }
+        PrefabDiffResult dm = PrefabSyncer::Diff(oi, legacyFile);
+        CHECK(dm.Valid && dm.StructureMatches && dm.OverrideCount() == 0);
+    }
+
+    // A cena guarda o GUID (v22)
+    const fs::path mapFile = dir / "guids.prismmap";
+    CHECK(SceneSerializer(scene).Serialize(mapFile, false));
+    auto reloaded = Scene::Create("vazia");
+    SceneSerializer loader(reloaded);
+    CHECK(loader.Deserialize(mapFile));
+    if (loader.GetScene()) {
+        int checked = 0;
+        auto view = loader.GetScene()->GetRegistry().view<PrefabInstanceMemberComponent>();
+        for (auto h : view) {
+            const auto& m = view.get<PrefabInstanceMemberComponent>(h);
+            CHECK(m.Guid == written[m.IndexInPrefab]);
+            checked++;
+        }
+        CHECK(checked == 3);
+    }
+}
+
 static void TestPrefabSyncer(const fs::path& dir) {
     auto scene = Scene::Create("Prefabs");
     Entity root = scene->CreateEntity("Torre");
@@ -1091,6 +1195,7 @@ int main() {
     TestMaterialSurface(dir);
     TestSceneFileRoundTrip(dir);
     TestPrefabSyncer(dir);
+    TestPrefabGuids(dir);
     TestWorldTransformScope();
     TestVisibility();
     TestCopyEntityTree();

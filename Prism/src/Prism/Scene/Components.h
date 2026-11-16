@@ -711,7 +711,8 @@ namespace Prism {
     };
 
     struct PrefabInstanceMemberComponent {
-        uint32_t IndexInPrefab = 0; // indice posicional dentro do .prismprefab (0 = a propria raiz, por construcao de PrefabSerializer::CollectSubtree)
+        uint32_t IndexInPrefab = 0; // indice posicional dentro do .prismprefab (0 = a propria raiz, por construcao de PrefabSerializer::CollectSubtree). So um CACHE: quem manda e o Guid.
+        uint64_t Guid = 0;          // identidade ESTAVEL da entidade dentro do .prismprefab (ver PrefabGuid.h). 0 = instancia antiga: vale Migration(IndexInPrefab).
 
         PrefabInstanceMemberComponent() = default;
         PrefabInstanceMemberComponent(const PrefabInstanceMemberComponent&) = default;

@@ -223,7 +223,13 @@ namespace Prism {
         // Ref<Scene> sai de escopo no chamador); 'outEntities' e a lista
         // de entidades na MESMA ordem posicional do arquivo (indice i =
         // PrefabInstanceMemberComponent::IndexInPrefab == i).
-        static bool LoadPrefabForComparison(const std::filesystem::path& prefabFilePath, Ref<Scene>& outScene, std::vector<Entity>& outEntities);
+        // 'outGuids': GUID de cada entidade do arquivo, na mesma ordem de 'outEntities' (ver PrefabGuid.h).
+        static bool LoadPrefabForComparison(const std::filesystem::path& prefabFilePath, Ref<Scene>& outScene, std::vector<Entity>& outEntities, std::vector<uint64_t>& outGuids);
+
+        // Indice, em 'outEntities' do arquivo, da entidade que 'instanceEntity' representa: procura pelo GUID
+        // (estavel mesmo se o prefab ganhou/perdeu/reordenou entidades). UINT32_MAX = essa entidade nao existe mais
+        // no prefab. Sem PrefabInstanceMemberComponent, devolve 'fallbackIndex'.
+        static uint32_t ResolveIndexInPrefab(Entity instanceEntity, const std::vector<uint64_t>& fileGuids, uint32_t fallbackIndex);
 
         // Serializa TODOS os Components presentes em 'entity' que passam
         // por ComponentRegistry (ver ComponentRegistry.h) para um buffer

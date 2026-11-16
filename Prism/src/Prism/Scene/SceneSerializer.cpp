@@ -72,6 +72,9 @@ namespace Prism {
     //   v21 components em BLOCOS [nome][versao][tamanho][bytes] por entidade
     //       (antes: uma flag + campos por component, na ordem do registro).
     //       Gravacao atomica (arquivo temporario + rename).
+    //   v22 PrefabInstanceMemberComponent::Guid (uint64, logo apos IndexInPrefab): identidade
+    //       ESTAVEL da entidade dentro do .prismprefab (ver PrefabGuid.h). Cenas v21 sao lidas
+    //       com Guid = 0 (= "usar o GUID de migracao do indice").
     //
     // Nota sobre o pai (v4): o RelationshipComponent NAO usa flag de
     // presenca; grava so um int32_t por entidade com o indice do pai na
@@ -84,7 +87,7 @@ namespace Prism {
     // cada entidade com pai valido, depois que TODAS as entidades ja
     // foram criadas (os handles novos de ambos os lados precisam existir
     // antes de ligar o parentesco).
-    static constexpr uint32_t kSceneFormatVersion = 21;
+    static constexpr uint32_t kSceneFormatVersion = 22;
     static constexpr uint32_t kOldestReadableSceneFormat = 19; // v19-v20: formato antigo, so leitura
     static constexpr char kMagic[4] = { 'P', 'R', 'S', 'M' };
 
@@ -212,8 +215,11 @@ namespace Prism {
 
             bool hasPrefabMember = m_Scene->GetRegistry().all_of<PrefabInstanceMemberComponent>(handle);
             WriteRaw(out, hasPrefabMember);
-            if (hasPrefabMember)
-                WriteRaw(out, m_Scene->GetRegistry().get<PrefabInstanceMemberComponent>(handle).IndexInPrefab);
+            if (hasPrefabMember) {
+                const auto& member = m_Scene->GetRegistry().get<PrefabInstanceMemberComponent>(handle);
+                WriteRaw(out, member.IndexInPrefab);
+                WriteRaw(out, member.Guid); // v22
+            }
 
             if (!out) writeFailed = true;
         });
@@ -332,8 +338,11 @@ namespace Prism {
                     WriteRaw(out, entity.GetComponent<PrefabInstanceRootComponent>().SourceAsset);
                 bool hasPrefabMember = entity.HasComponent<PrefabInstanceMemberComponent>();
                 WriteRaw(out, hasPrefabMember);
-                if (hasPrefabMember)
-                    WriteRaw(out, entity.GetComponent<PrefabInstanceMemberComponent>().IndexInPrefab);
+                if (hasPrefabMember) {
+                    const auto& member = entity.GetComponent<PrefabInstanceMemberComponent>();
+                    WriteRaw(out, member.IndexInPrefab);
+                    WriteRaw(out, member.Guid); // v22
+                }
 
                 if (!out)
                     return false;
@@ -555,7 +564,14 @@ namespace Prism {
                     PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (indice de prefab da entidade ", i, "): ", filepath.string());
                     return false;
                 }
-                entity.AddComponent<PrefabInstanceMemberComponent>().IndexInPrefab = indexInPrefab;
+                uint64_t guid = 0; // cenas < v22 nao tem GUID: 0 = usar o GUID de migracao do indice
+                if (version >= 22 && !ReadRaw(in, guid)) {
+                    PRISM_CORE_ERROR("SceneSerializer: arquivo de cena corrompido (GUID de prefab da entidade ", i, "): ", filepath.string());
+                    return false;
+                }
+                auto& member = entity.AddComponent<PrefabInstanceMemberComponent>();
+                member.IndexInPrefab = indexInPrefab;
+                member.Guid = guid;
             }
         }
 

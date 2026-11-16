@@ -4,6 +4,7 @@
 #include "ComponentRegistry.h"
 #include "../Core/Log.h"
 #include "../Core/AtomicFile.h"
+#include "PrefabGuid.h"
 
 #include <fstream>
 #include <cstdint>
@@ -49,7 +50,7 @@ namespace Prism {
     // v7-v8 (formato antigo "flag + campos") ainda sao lidos. Gravacao atomica.
     // Equivalencia com o formato de cena usada pelo leitor legado: prefab v7 = cena v19, v8 = v20.
     static constexpr uint32_t kOldestReadablePrefabFormat = 7;
-    static constexpr uint32_t kPrefabFormatVersion = 9; // v9: blocos de component; v8: Camera render options + Environment; v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
+    static constexpr uint32_t kPrefabFormatVersion = 10; // v10: GUID estavel por entidade (uint64 apos o indice de pai); v9: blocos de component; v8: Camera render options + Environment; v7: UIElement; v6: ParticleEmitter; v5: NativeScript; v2: MeshRenderer::SubmeshIndex; v3: Audio Source/Listener; v4: Script::Properties (acompanham .prismmap v14/v15/v16)
     static constexpr char kMagic[4] = { 'P', 'P', 'F', 'B' };
 
     // --- helpers de escrita/leitura binaria - mesmas rotinas
@@ -86,7 +87,7 @@ namespace Prism {
         }
     }
 
-    bool PrefabSerializer::Serialize(Entity root, const std::filesystem::path& filepath) {
+    bool PrefabSerializer::Serialize(Entity root, const std::filesystem::path& filepath, const std::vector<uint64_t>* guids, std::vector<uint64_t>* outGuids) {
         if (!root) {
             PRISM_CORE_ERROR("PrefabSerializer: entidade invalida - nada para salvar.");
             return false;
@@ -102,6 +103,16 @@ namespace Prism {
         // Mapa handle -> indice posicional dentro de 'entities' (0 = raiz,
         // por construcao de CollectSubtree) - usado para gravar o indice
         // do pai de cada entidade abaixo.
+        // GUID de cada entidade (ver comentario em PrefabSerializer.h): dado pelo chamador, o do membro, ou novo.
+        std::vector<uint64_t> entityGuids(entities.size(), PrefabGuid::kNone);
+        for (size_t i = 0; i < entities.size(); i++) {
+            if (guids && i < guids->size())
+                entityGuids[i] = (*guids)[i];
+            else if (auto* member = scene->GetRegistry().try_get<PrefabInstanceMemberComponent>(entities[i].GetHandle()))
+                entityGuids[i] = PrefabGuid::Effective(member->Guid, member->IndexInPrefab); // instancia antiga (Guid 0): preserva a identidade de migracao
+        }
+        PrefabGuid::MakeUnique(entityGuids);
+
         std::unordered_map<entt::entity, int32_t> handleToIndex;
         for (size_t i = 0; i < entities.size(); i++)
             handleToIndex[entities[i].GetHandle()] = (int32_t)i;
@@ -155,6 +166,7 @@ namespace Prism {
                 }
             }
             WriteRaw(out, parentIndex);
+            WriteRaw(out, entityGuids[i]); // v10
 
             if (!out) writeFailed = true;
         }
@@ -174,12 +186,14 @@ namespace Prism {
             return false;
         }
 
+        if (outGuids)
+            *outGuids = entityGuids;
         PRISM_CORE_INFO("Prefab '", root.GetComponent<TagComponent>().Tag, "' salvo em: ", filepath.string(),
             " (", entities.size(), " entidade(s)).");
         return true;
     }
 
-    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset) {
+    Entity PrefabSerializer::Instantiate(Scene& targetScene, const std::filesystem::path& filepath, AssetID sourceAsset, std::vector<uint64_t>* outGuids) {
         ComponentRegistry::RegisterAll();
 
         std::ifstream in(filepath, std::ios::binary);
@@ -221,6 +235,8 @@ namespace Prism {
 
         std::vector<int32_t> parentIndices;
         parentIndices.reserve(entityCount);
+        std::vector<uint64_t> fileGuids;
+        fileGuids.reserve(entityCount);
         std::vector<Entity> createdEntities;
         createdEntities.reserve(entityCount);
 
@@ -260,18 +276,31 @@ namespace Prism {
                 PRISM_CORE_ERROR("PrefabSerializer: arquivo de prefab corrompido (indice de pai da entidade ", i, "): ", filepath.string());
                 return Entity();
             }
+            // v10: GUID estavel; arquivos antigos usam o GUID de migracao do indice (ver PrefabGuid.h).
+            uint64_t guid = PrefabGuid::Migration(i);
+            if (version >= 10 && !ReadRaw(in, guid)) {
+                PRISM_CORE_ERROR("PrefabSerializer: arquivo de prefab corrompido (GUID da entidade ", i, "): ", filepath.string());
+                return Entity();
+            }
+            fileGuids.push_back(guid);
             parentIndices.push_back(parentIndex);
             createdEntities.push_back(entity);
-
-            // Marca esta entidade como membro da instancia (indice 'i'
-            // dentro DESTE arquivo) se um AssetID foi passado - ver
-            // comentario grande no .h sobre 'sourceAsset'. Feito aqui, ja
-            // dentro do loop de criacao, para toda entidade da subarvore
-            // (nao so a raiz) ganhar o indice de uma vez, sem precisar de
-            // outro loop separado so para isto.
-            if (sourceAsset.IsValid())
-                entity.AddComponent<PrefabInstanceMemberComponent>().IndexInPrefab = i;
         }
+
+        // Arquivo editado a mao com GUID repetido/zero: corrige (a identidade precisa ser unica no arquivo).
+        PrefabGuid::MakeUnique(fileGuids);
+
+        // Marca cada entidade como membro da instancia (indice + GUID DESTE arquivo) se um AssetID foi
+        // passado - ver comentario grande no .h sobre 'sourceAsset'.
+        if (sourceAsset.IsValid()) {
+            for (uint32_t i = 0; i < entityCount; i++) {
+                auto& member = createdEntities[i].AddComponent<PrefabInstanceMemberComponent>();
+                member.IndexInPrefab = i;
+                member.Guid = fileGuids[i];
+            }
+        }
+        if (outGuids)
+            *outGuids = fileGuids;
 
         // Segunda passada: resolve os indices de pai em chamadas reais de
         // SetParent - mesmo motivo/mesma protecao de indice fora do range

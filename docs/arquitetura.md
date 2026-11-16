@@ -74,7 +74,7 @@ O módulo não depende de OpenGL, GLFW nem EnTT, de propósito: compila e é tes
 
 Igual em espírito ao de Material, mas para uma **subárvore** de entidades em vez de um struct único — por isso usa dois components (`PrefabInstanceRootComponent` na raiz, `PrefabInstanceMemberComponent` em toda a subárvore) e uma classe dedicada, `Scene/PrefabSyncer.h`.
 
-**Override por component inteiro** (não por campo, como Godot/Unity): `PrefabSyncer::Diff` relê o `.prismprefab` numa `Scene` temporária e compara, por entidade da instância, os bytes serializados de cada `Component` contra o correspondente no arquivo (casados por `PrefabInstanceMemberComponent::IndexInPrefab`). Divergem → *overridado* (nunca sobrescrito por um sync). Idênticos → pode ser atualizado.
+**Override por component inteiro** (não por campo, como Godot/Unity): `PrefabSyncer::Diff` relê o `.prismprefab` numa `Scene` temporária e compara, por entidade da instância, os bytes serializados de cada `Component` contra o correspondente no arquivo (casados pelo **GUID** estável `PrefabInstanceMemberComponent::Guid`, não pela posição: ver `Scene/PrefabGuid.h`; `IndexInPrefab` é só cache e reserva para instâncias antigas). Divergem → *overridado* (nunca sobrescrito por um sync). Idênticos → pode ser atualizado.
 
 - `PrefabSyncer::UpdateAll`: aplica o prefab atual em todo Component não overridado da instância.
 - `PrefabSyncer::RevertComponent`: descarta o override de **um** Component específico.

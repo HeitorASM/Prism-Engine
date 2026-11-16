@@ -809,10 +809,12 @@ namespace PrismEditor {
             while (!stack.empty()) {
                 Prism::Entity e = stack.back();
                 stack.pop_back();
-                if (e.HasComponent<Prism::PrefabInstanceMemberComponent>())
-                    m_MemberBackup.push_back({ e, e.GetComponent<Prism::PrefabInstanceMemberComponent>().IndexInPrefab, true });
+                if (e.HasComponent<Prism::PrefabInstanceMemberComponent>()) {
+                    const auto& member = e.GetComponent<Prism::PrefabInstanceMemberComponent>();
+                    m_MemberBackup.push_back({ e, member.IndexInPrefab, member.Guid, true });
+                }
                 else
-                    m_MemberBackup.push_back({ e, 0, false });
+                    m_MemberBackup.push_back({ e, 0, 0, false });
                 for (size_t i = 0; i < e.GetChildCount(); i++) {
                     Prism::Entity child = e.GetChildAt(i);
                     if (child)
@@ -848,7 +850,9 @@ namespace PrismEditor {
                 if (entry.HadMember) {
                     if (!entry.InstanceEntity.HasComponent<Prism::PrefabInstanceMemberComponent>())
                         entry.InstanceEntity.AddComponent<Prism::PrefabInstanceMemberComponent>();
-                    entry.InstanceEntity.GetComponent<Prism::PrefabInstanceMemberComponent>().IndexInPrefab = entry.IndexInPrefab;
+                    auto& member = entry.InstanceEntity.GetComponent<Prism::PrefabInstanceMemberComponent>();
+                    member.IndexInPrefab = entry.IndexInPrefab;
+                    member.Guid = entry.Guid; // a identidade (GUID) tambem volta ao que era antes da operacao
                 }
                 else if (entry.InstanceEntity.HasComponent<Prism::PrefabInstanceMemberComponent>()) {
                     entry.InstanceEntity.RemoveComponent<Prism::PrefabInstanceMemberComponent>();
@@ -864,6 +868,7 @@ namespace PrismEditor {
         struct MemberBackup {
             Prism::Entity InstanceEntity;
             uint32_t IndexInPrefab = 0;
+            uint64_t Guid = 0;
             bool HadMember = false;
         };
 
