@@ -118,6 +118,17 @@ if(MSVC)
 endif()
 add_test(NAME ClusteredLightsTests COMMAND PrismClusteredLightsTests)
 
+# PrismOcclusionBufferTests: oclusao por software (Renderer/OcclusionBuffer.h, so std).
+add_executable(PrismOcclusionBufferTests
+    OcclusionBufferTests.cpp
+)
+target_include_directories(PrismOcclusionBufferTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismOcclusionBufferTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismOcclusionBufferTests PRIVATE /utf-8)
+endif()
+add_test(NAME OcclusionBufferTests COMMAND PrismOcclusionBufferTests)
+
 # PrismLightSelectionTests: escolha das luzes por relevancia (Renderer/LightSelection.h, so std + Culling.h).
 add_executable(PrismLightSelectionTests
     LightSelectionTests.cpp

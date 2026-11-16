@@ -97,6 +97,11 @@ namespace PrismEditor {
             Prism::Renderer::SetInstancingEnabled(instancing);
         ImGui::SameLine();
         ImGui::TextDisabled("(desligue para comparar o numero de desenhos e o tempo)");
+        bool occlusion = Prism::Renderer::IsOcclusionCullingEnabled();
+        if (ImGui::Checkbox("Oclusao (nivel)", &occlusion))
+            Prism::Renderer::SetOcclusionCullingEnabled(occlusion);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(geometria de nivel opaca esconde objetos atras dela; ocultos no ultimo quadro: %u)", Prism::Renderer::GetCullStats().Occluded);
         bool clustered = Prism::Renderer::IsClusteredLightsEnabled();
         if (ImGui::Checkbox("Luzes em clusters", &clustered))
             Prism::Renderer::SetClusteredLightsEnabled(clustered);

@@ -3,6 +3,7 @@
 #include "Renderer.h"
 #include "InstanceRing.h"
 #include "ClusteredLights.h"
+#include "OcclusionBuffer.h"
 #include <unordered_map>
 #include "PrimitiveMeshFactory.h"
 #include "RendererInternal.h"
@@ -97,6 +98,8 @@ namespace Prism {
     namespace {
         // Estado das luzes em clusters (ver ClusteredLights.h / basic.frag).
         bool s_ClusteredLightsEnabled = true;
+        bool s_OcclusionCullingEnabled = false;
+        constexpr uint32_t kMaxOccluderTriangles = 60000; // orcamento por quadro: passou disso, o resto nao vira oclusor
         bool s_ClusterActive = false;       // so vale durante um DrawScene
         uint32_t s_ClusterLightSSBO = 0, s_ClusterInfoSSBO = 0, s_ClusterIndexSSBO = 0;
         uint32_t s_ClusterExtraCount = 0;
@@ -1155,8 +1158,45 @@ namespace Prism {
 
     const Renderer::CullStats& Renderer::GetCullStats() { return s_CullStats; }
 
-    void Renderer::CollectVisibleMeshes(Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out) {
+    void Renderer::SetOcclusionCullingEnabled(bool enabled) { s_OcclusionCullingEnabled = enabled; }
+    bool Renderer::IsOcclusionCullingEnabled() { return s_OcclusionCullingEnabled; }
+
+    void Renderer::CollectVisibleMeshes(Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out, const float* occlusionViewProjection) {
         out.clear();
+
+        // Oclusores: triangulos de geometria de nivel OPACA (vidro/recorte/translucido nao oclui).
+        static OcclusionBuffer s_Occlusion;
+        bool occlusionActive = false;
+        if (occlusionViewProjection && s_OcclusionCullingEnabled) {
+            auto occluderView = scene.GetRegistry().view<TransformComponent, LevelMeshComponent>();
+            if (occluderView.begin() != occluderView.end()) {
+                s_Occlusion.Begin(occlusionViewProjection);
+                uint32_t budget = kMaxOccluderTriangles;
+                for (auto handle : occluderView) {
+                    if (budget == 0) break;
+                    const LevelMeshComponent& level = occluderView.get<LevelMeshComponent>(handle);
+                    if (!scene.IsEntityVisible(handle) || !Culling::LayerVisible(level.Layers, cullMask))
+                        continue;
+                    const LevelMeshGpu& gpu = ResolveLevelMesh(level);
+                    const glm::mat4 model = scene.GetWorldTransform(Entity(handle, &scene));
+                    for (const LevelMeshPart& part : gpu.Parts) {
+                        if (!part.MeshPtr || level.MaterialForSlot(part.MaterialSlot).BlendMode != MaterialBlendMode::Opaque)
+                            continue;
+                        const auto& positions = part.MeshPtr->GetCpuPositions();
+                        const auto& indices = part.MeshPtr->GetCpuIndices();
+                        for (size_t i = 0; i + 2 < indices.size() && budget > 0; i += 3, --budget) {
+                            if (indices[i] >= positions.size() || indices[i + 1] >= positions.size() || indices[i + 2] >= positions.size())
+                                continue;
+                            const glm::vec3 a = glm::vec3(model * glm::vec4(positions[indices[i]], 1.0f));
+                            const glm::vec3 b = glm::vec3(model * glm::vec4(positions[indices[i + 1]], 1.0f));
+                            const glm::vec3 c = glm::vec3(model * glm::vec4(positions[indices[i + 2]], 1.0f));
+                            s_Occlusion.AddTriangle(glm::value_ptr(a), glm::value_ptr(b), glm::value_ptr(c));
+                        }
+                    }
+                }
+                occlusionActive = s_Occlusion.Valid() && s_Occlusion.TrianglesRasterized() > 0;
+            }
+        }
         auto meshRendererView = scene.GetRegistry().view<TransformComponent, MeshRendererComponent>();
         for (auto entityHandle : meshRendererView) {
             const MeshRendererComponent& meshRenderer = meshRendererView.get<MeshRendererComponent>(entityHandle);
@@ -1168,6 +1208,19 @@ namespace Prism {
                 case Visibility::LayerHidden:     s_CullStats.LayerHidden++;     continue;
                 case Visibility::OutsideFrustum:  s_CullStats.FrustumCulled++;   continue;
                 case Visibility::Visible:         break;
+            }
+            if (occlusionActive && mesh && !mesh->IsSkinned()) {
+                // Caixa de mundo que contem a caixa local transformada (mesma conta de Frustum::IntersectsLocalBox).
+                const glm::vec3 lo = mesh->GetLocalBoundsMin(), hi = mesh->GetLocalBoundsMax();
+                glm::vec3 wmin(std::numeric_limits<float>::max()), wmax(std::numeric_limits<float>::lowest());
+                for (int corner = 0; corner < 8; corner++) {
+                    const glm::vec3 p = glm::vec3(model * glm::vec4((corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y, (corner & 4) ? hi.z : lo.z, 1.0f));
+                    wmin = glm::min(wmin, p); wmax = glm::max(wmax, p);
+                }
+                if (s_Occlusion.IsBoxOccluded(glm::value_ptr(wmin), glm::value_ptr(wmax))) {
+                    s_CullStats.Occluded++;
+                    continue;
+                }
             }
             s_CullStats.Drawn++;
             if (!mesh)
@@ -1559,7 +1612,9 @@ namespace Prism {
         CollectLevelMeshGarbage();
 
         // Objetos visiveis desta camera, coletados UMA vez (pre-passe do SSAO e passe principal usam a mesma lista).
-        CollectVisibleMeshes(scene, cameraFrustum, cullMask, scratch.Visible);
+        // Oclusao so com camera em perspectiva (ver OcclusionBuffer.h).
+        const bool occlusionPerspective = ClusteredLights::MakeGrid(view, projection).Valid;
+        CollectVisibleMeshes(scene, cameraFrustum, cullMask, scratch.Visible, occlusionPerspective ? glm::value_ptr(viewProjection) : nullptr);
 
         // Coleta todas as luzes da cena UMA VEZ por frame (nao por
         // entidade desenhada) - reusada em todo DrawMesh abaixo, ja que a

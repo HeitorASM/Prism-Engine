@@ -340,7 +340,7 @@ namespace Prism {
         // limpa cor e profundidade do destino e o fundo cobre a tela inteira.
         // Estatistica do ULTIMO DrawScene (passe principal): quantas malhas foram desenhadas,
         // descartadas pelo frustum e escondidas pela camada da camera.
-        struct CullStats { uint32_t Drawn = 0, FrustumCulled = 0, LayerHidden = 0; };
+        struct CullStats { uint32_t Drawn = 0, FrustumCulled = 0, LayerHidden = 0, Occluded = 0; };
         static const CullStats& GetCullStats();
 
         static void DrawScene(class Scene& scene, const float* view, const float* projection, const float* cameraWorldPos, const CameraRenderSettings& camera = CameraRenderSettings{});
@@ -439,7 +439,14 @@ namespace Prism {
         };
         // Preenche 'out' (limpa antes) e atualiza GetCullStats(). Entidades cujo modelo falhou ao carregar
         // contam como desenhadas (como antes) mas nao entram na lista.
-        static void CollectVisibleMeshes(class Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out);
+        // 'occlusionViewProjection' (projecao * view, coluna-major, perspectiva) liga a oclusao por software
+        // (OcclusionBuffer.h): geometria de nivel OPACA vira oclusora e malhas totalmente atras dela nao entram na lista
+        // (continuam projetando sombra). nullptr = sem oclusao.
+        static void CollectVisibleMeshes(class Scene& scene, const Culling::Frustum& frustum, uint32_t cullMask, std::vector<VisibleMesh>& out,
+                                         const float* occlusionViewProjection = nullptr);
+        // Desligada por padrao: ligue depois de conferir a cena (o teste visual precisa da GPU).
+        static void SetOcclusionCullingEnabled(bool enabled);
+        static bool IsOcclusionCullingEnabled();
         // Mesmo pre-passe, a partir de uma lista ja coletada. Objetos transluscidos/recortados ficam de fora do
         // SSAO; copias iguais da mesma malha sao desenhadas por instancing.
         static GeometryBuffer* RenderGeometryPrePass(class Scene& scene, const float* view, const float* projection, uint32_t width, uint32_t height, const std::vector<VisibleMesh>& visible);
