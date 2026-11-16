@@ -3,6 +3,8 @@
 #include "../Core/EntityOps.h"
 #include "../Commands/EditorCommands.h"
 #include <imgui.h>
+#include <Prism/Scene/PrefabSyncer.h>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,6 +16,28 @@ namespace PrismEditor {
         // as funcoes deste EditorLayer que de fato tem acesso a
         // CommandHistory/Scene/popups - o painel em si nao conhece nada
         // disso, so avisa QUAL acao foi escolhida e sobre QUAL entidade.
+        m_EntityContextMenu.SetOnEditPrefab([this](Prism::Entity entity) {
+            auto project = Prism::Project::GetActive();
+            if (!project || !entity.HasComponent<Prism::PrefabInstanceRootComponent>() || !m_Ctx.OpenPrefabForEdit)
+                return;
+            const auto path = project->GetAssetRegistry().AbsolutePath(entity.GetComponent<Prism::PrefabInstanceRootComponent>().SourceAsset);
+            if (!path.empty())
+                m_Ctx.OpenPrefabForEdit(path);
+            else
+                PRISM_ERROR("O arquivo do prefab desta instancia nao foi encontrado (vinculo quebrado).");
+            });
+        m_EntityContextMenu.SetOnShowPrefab([this](Prism::Entity entity) {
+            auto project = Prism::Project::GetActive();
+            if (!project || !m_Ctx.ContentBrowser || !entity.HasComponent<Prism::PrefabInstanceRootComponent>())
+                return;
+            const auto path = project->GetAssetRegistry().AbsolutePath(entity.GetComponent<Prism::PrefabInstanceRootComponent>().SourceAsset);
+            if (!path.empty())
+                m_Ctx.ContentBrowser->RevealPath(path);
+            });
+        m_EntityContextMenu.SetOnSelectPrefabRoot([this](Prism::Entity entity) {
+            if (Prism::Entity root = FindInstanceRoot(entity))
+                m_Ctx.SelectedEntity = root;
+            });
         m_EntityContextMenu.SetOnDuplicate([this](Prism::Entity entity) {
             EntityOps::DuplicateEntity(m_Ctx, entity);
             });
@@ -44,8 +68,74 @@ namespace PrismEditor {
             });
     }
 
+    Prism::Entity HierarchyPanel::FindInstanceRoot(Prism::Entity entity) const {
+        for (int guard = 0; entity && guard < 4096; guard++) {
+            if (entity.HasComponent<Prism::PrefabInstanceRootComponent>())
+                return entity;
+            entity = entity.GetParent();
+        }
+        return Prism::Entity();
+    }
+
+    const HierarchyPanel::PrefabStatus* HierarchyPanel::StatusOfRoot(entt::entity root) const {
+        auto it = m_PrefabStatus.find(root);
+        return it != m_PrefabStatus.end() && it->second.Known ? &it->second : nullptr;
+    }
+
+    // Reavalia a instancia com a avaliacao mais antiga (no maximo uma por chamada).
+    void HierarchyPanel::RefreshOnePrefabStatus() {
+        auto project = Prism::Project::GetActive();
+        Prism::Scene* scene = m_Ctx.ActiveScene.get();
+        if (!project || !scene)
+            return;
+        if (m_PrefabStatusScene != scene) {   // cena trocada: tudo antigo vale nada
+            m_PrefabStatus.clear();
+            m_PrefabStatusScene = scene;
+        }
+        auto view = scene->GetRegistry().view<Prism::PrefabInstanceRootComponent>();
+        entt::entity stalest = entt::null;
+        double oldest = 1.0e30;
+        std::unordered_set<entt::entity> alive;
+        for (auto handle : view) {
+            alive.insert(handle);
+            const double at = m_PrefabStatus[handle].At;
+            if (at < oldest) { oldest = at; stalest = handle; }
+        }
+        for (auto it = m_PrefabStatus.begin(); it != m_PrefabStatus.end();)
+            it = alive.count(it->first) ? std::next(it) : m_PrefabStatus.erase(it);
+        if (stalest == entt::null)
+            return;
+
+        PrefabStatus& status = m_PrefabStatus[stalest];
+        status.At = ImGui::GetTime();
+        status.Known = true;
+        status.Overrides = 0;
+        status.OverriddenEntities.clear();
+        const std::filesystem::path path = project->GetAssetRegistry().AbsolutePath(view.get<Prism::PrefabInstanceRootComponent>(stalest).SourceAsset);
+        status.Broken = path.empty();
+        status.FileName = path.empty() ? std::string() : path.filename().string();
+        if (status.Broken)
+            return;
+        Prism::PrefabDiffResult diff = Prism::PrefabSyncer::Diff(Prism::Entity(stalest, scene), path);
+        if (!diff.Valid) {
+            status.Broken = true;
+            return;
+        }
+        status.StructureMatches = diff.StructureMatches;
+        status.Overrides = diff.OverrideCount();
+        for (Prism::PrefabComponentDiff& d : diff.Components)
+            if (d.Overridden)
+                status.OverriddenEntities.insert(d.InstanceEntity.GetHandle());
+    }
+
     void HierarchyPanel::OnImGuiRender() {
         ImGui::Begin("Hierarquia");
+
+        // Uma avaliacao de prefab por 0.25 s (ver RefreshOnePrefabStatus) - nunca com o mouse arrastando algo.
+        if (ImGui::GetTime() - m_LastPrefabStatusRefresh > 0.25 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            m_LastPrefabStatusRefresh = ImGui::GetTime();
+            RefreshOnePrefabStatus();
+        }
 
         // So desenha as RAIZES (entidades sem pai) - cada uma desenha seus
         // proprios filhos recursivamente por dentro de RenderHierarchyNode.
@@ -126,8 +216,34 @@ namespace PrismEditor {
         // filosofia do selo "[Vinculado]" do painel Material (ver
         // RenderPropertiesPanel, secao Material).
         bool isPrefabInstance = entity.HasComponent<Prism::PrefabInstanceRootComponent>();
+        // Membro (filho) de uma instancia: azul mais suave que a raiz, para ver de relance o que PERTENCE ao prefab
+        // (um filho adicionado a mao na instancia nao e membro e fica na cor normal). '*' = algum component divergiu do prefab.
+        const bool isPrefabMember = !isPrefabInstance && entity.HasComponent<Prism::PrefabInstanceMemberComponent>();
+        const PrefabStatus* prefabStatus = nullptr;
+        bool memberOverridden = false;
         if (isPrefabInstance)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 0.95f, 1.0f)); // azul claro - vinculo vivo de PREFAB (distinto do dourado usado para material, ver RenderPropertiesPanel)
+            prefabStatus = StatusOfRoot(handle);
+        else if (isPrefabMember) {
+            if (Prism::Entity instanceRoot = FindInstanceRoot(entity)) {
+                prefabStatus = StatusOfRoot(instanceRoot.GetHandle());
+                memberOverridden = prefabStatus && prefabStatus->OverriddenEntities.count(handle) > 0;
+            }
+        }
+        std::string rowLabel = tag.Tag;
+        if (isPrefabInstance) {
+            rowLabel = "[P] " + tag.Tag;
+            if (prefabStatus && prefabStatus->Broken)
+                rowLabel += "  [vinculo quebrado]";
+            else if (prefabStatus && prefabStatus->Overrides > 0)
+                rowLabel += "  * " + std::to_string(prefabStatus->Overrides);
+        }
+        else if (memberOverridden)
+            rowLabel += "  *";
+        const bool prefabTinted = isPrefabInstance || isPrefabMember;
+        if (isPrefabInstance)
+            ImGui::PushStyleColor(ImGuiCol_Text, (prefabStatus && prefabStatus->Broken) ? ImVec4(0.90f, 0.40f, 0.35f, 1.0f) : ImVec4(0.55f, 0.75f, 0.95f, 1.0f)); // azul claro - vinculo vivo de PREFAB (vermelho se o arquivo sumiu)
+        else if (isPrefabMember)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.78f, 0.90f, 1.0f));
 
 
         const bool selfHidden = m_Ctx.ActiveScene->IsEntityHiddenSelf(handle);
@@ -148,9 +264,7 @@ namespace PrismEditor {
 
         if (!effectiveVisible)
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        bool open = isPrefabInstance
-            ? ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "[P] %s", tag.Tag.c_str())
-            : ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", tag.Tag.c_str());
+        bool open = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)handle, flags, "%s", rowLabel.c_str());
         if (!effectiveVisible)
             ImGui::PopStyleColor();
 
@@ -173,10 +287,28 @@ namespace PrismEditor {
                 ImGui::SetTooltip(selfHidden ? "Mostrar" : (effectiveVisible ? "Esconder (filhos tambem)" : "Escondido por um ancestral"));
         }
 
-        if (isPrefabInstance) {
+        if (prefabTinted) {
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Instancia de prefab - ver o painel Prefab nas Propriedades para sincronizar, aplicar ou reverter mudancas.");
+            if (ImGui::IsItemHovered()) {
+                if (isPrefabInstance) {
+                    std::string tip = "Instancia de prefab";
+                    if (prefabStatus && !prefabStatus->FileName.empty())
+                        tip += " de '" + prefabStatus->FileName + "'";
+                    if (prefabStatus && prefabStatus->Broken)
+                        tip += "\n\nO arquivo do prefab nao foi encontrado (vinculo quebrado).";
+                    else if (prefabStatus) {
+                        tip += "\n\n" + std::to_string(prefabStatus->Overrides) + " component(s) divergem do prefab (overrides, marcados com *).";
+                        if (!prefabStatus->StructureMatches)
+                            tip += "\nA estrutura difere do arquivo (filhos adicionados/removidos).";
+                    }
+                    tip += "\n\nBotao direito: Editar prefab. Painel Prefab (Propriedades): sincronizar, aplicar ou reverter.";
+                    ImGui::SetTooltip("%s", tip.c_str());
+                }
+                else {
+                    ImGui::SetTooltip(memberOverridden ? "Parte de uma instancia de prefab. '*': tem component divergente do prefab."
+                                                       : "Parte de uma instancia de prefab (igual ao arquivo).");
+                }
+            }
         }
 
         if (nodeClicked)

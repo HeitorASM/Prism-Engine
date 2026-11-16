@@ -76,6 +76,12 @@ namespace PrismEditor {
         // mesmo metodo.
         void RefreshEntries();
 
+        // Navega ate a pasta do arquivo e o seleciona (ex.: "Mostrar prefab" na Hierarquia).
+        void RevealPath(const std::filesystem::path& file) {
+            NavigateTo(file.parent_path());
+            m_SelectedPath = file;
+        }
+
     private:
         void RenderToolbar();
         void RenderGrid();

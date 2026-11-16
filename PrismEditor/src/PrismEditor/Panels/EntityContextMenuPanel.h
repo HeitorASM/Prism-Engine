@@ -73,7 +73,16 @@ namespace PrismEditor {
         ClipboardFn m_OnCut;
         ClipboardFn m_OnPaste;
 
+        // Acoes de prefab (so aparecem para entidades de uma instancia de prefab).
+        using PrefabActionFn = std::function<void(Prism::Entity)>;
+        PrefabActionFn m_OnEditPrefab;        // raiz da instancia: abrir o prefab no modo de edicao
+        PrefabActionFn m_OnShowPrefab;        // raiz da instancia: mostrar o arquivo no Content Browser
+        PrefabActionFn m_OnSelectPrefabRoot;  // membro: selecionar a raiz da instancia
+
     public:
+        void SetOnEditPrefab(PrefabActionFn fn) { m_OnEditPrefab = std::move(fn); }
+        void SetOnShowPrefab(PrefabActionFn fn) { m_OnShowPrefab = std::move(fn); }
+        void SetOnSelectPrefabRoot(PrefabActionFn fn) { m_OnSelectPrefabRoot = std::move(fn); }
         void SetOnCopy(ClipboardFn fn) { m_OnCopy = std::move(fn); }
         void SetOnCut(ClipboardFn fn) { m_OnCut = std::move(fn); }
         // Colar recebe a entidade clicada (o editor cola como irma da selecionada).

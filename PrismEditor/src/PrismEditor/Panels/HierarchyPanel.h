@@ -1,4 +1,7 @@
 #pragma once
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 // ============================================================================
 // HierarchyPanel.h
@@ -42,6 +45,25 @@ namespace PrismEditor {
         void RenderHierarchyNode(Prism::Entity entity);
 
         EditorContext& m_Ctx;
+
+        // Situacao de cada instancia de prefab da cena (overrides, estrutura, vinculo quebrado), calculada
+        // POR FATIAS: PrefabSyncer::Diff le o arquivo e serializa tudo, entao so UMA instancia e reavaliada por
+        // intervalo (a mais antiga) em vez de todas a cada frame.
+        struct PrefabStatus {
+            int Overrides = 0;
+            bool StructureMatches = true;
+            bool Broken = false;           // arquivo de origem sumiu
+            bool Known = false;            // ja foi avaliada pelo menos uma vez
+            double At = -1.0e30;           // quando foi avaliada
+            std::string FileName;          // nome do arquivo do prefab (para tooltips)
+            std::unordered_set<entt::entity> OverriddenEntities; // entidades da instancia com algum component divergente
+        };
+        std::unordered_map<entt::entity, PrefabStatus> m_PrefabStatus;
+        const void* m_PrefabStatusScene = nullptr;
+        double m_LastPrefabStatusRefresh = -1.0e30;
+        void RefreshOnePrefabStatus();
+        const PrefabStatus* StatusOfRoot(entt::entity root) const;
+        Prism::Entity FindInstanceRoot(Prism::Entity entity) const;
 
         // Menu de contexto (botao direito) de uma entidade - Duplicar/
         // Criar Prefab.../Excluir (ver Panels/EntityContextMenuPanel.h).

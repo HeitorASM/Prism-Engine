@@ -45,6 +45,25 @@ namespace PrismEditor {
 
             ImGui::Separator();
 
+            if (entity.HasComponent<Prism::PrefabInstanceRootComponent>()) {
+                if (m_OnEditPrefab && ImGui::MenuItem("Editar prefab")) {
+                    m_OnEditPrefab(entity);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (m_OnShowPrefab && ImGui::MenuItem("Mostrar prefab no Content Browser")) {
+                    m_OnShowPrefab(entity);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::Separator();
+            }
+            else if (entity.HasComponent<Prism::PrefabInstanceMemberComponent>() && m_OnSelectPrefabRoot) {
+                if (ImGui::MenuItem("Selecionar raiz da instancia de prefab")) {
+                    m_OnSelectPrefabRoot(entity);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::Separator();
+            }
+
             if (ImGui::MenuItem("Criar Prefab...")) {
                 if (m_OnCreatePrefabRequested)
                     m_OnCreatePrefabRequested(entity);
