@@ -182,3 +182,7 @@ Build = ""
 ## Variantes de prefab (`Scene/PrefabVariants.*`)
 
 Uma variante é um `.prismprefab` completo com cabeçalho v11 (base + GUIDs e hashes de component do base). Criada pelo Content Browser (“Criar variante”). Ao sair do modo de edição de um prefab, o editor chama `PrefabVariants::UpdateDependents`: cada variante (e variante de variante, com proteção contra ciclo) reaplica o base — entidade nova entra, removida sai, component não sobrescrito acompanha o base, component sobrescrito fica — e as instâncias dessas variantes no mapa aberto são sincronizadas. Prefab aninhado (prefab contendo instância de outro) continua fora do escopo.
+
+## Luzes em clusters (`Renderer/ClusteredLights.h`)
+
+O shader principal continua com `MAX_LIGHTS` (16) luzes em uniforms: as mais relevantes, com sombra. As que sobram (pontuais e spots com alcance finito, sem sombra, até 1024) são repartidas na CPU por uma grade 16×9×24 (fatias de profundidade logarítmicas) e vão para três SSBOs (bindings 5, 6 e 7 de `basic.frag`: luzes, faixa por cluster, lista de índices). O fragmento calcula o próprio cluster e soma só as luzes dele, com o mesmo `CalculateLight`. Cena com ≤16 luzes ou câmera ortográfica não usa nada disso (`u_ExtraLightCount = 0`). A esfera de cada luz é engordada ~1% para absorver diferenças de float entre CPU e GPU; um cluster guarda no máximo 64 luzes (as menos relevantes caem). Uma luz que passa do caminho completo para a grade perde a sombra. Liga/desliga em Profiler → “Luzes em clusters”.

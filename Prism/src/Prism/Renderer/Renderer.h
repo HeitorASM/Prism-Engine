@@ -453,6 +453,14 @@ namespace Prism {
         // desenhar com s_BasicShader fora do fluxo normal de DrawMesh.
         static void UploadLights(const std::vector<GPULight>& lights);
 
+        // Luzes em clusters: alem das MAX_LIGHTS luzes do shader (as mais relevantes, com sombra), ate
+        // ClusteredLights::kMaxExtraLights luzes pontuais/spots sem sombra, repartidas por uma grade de clusters
+        // (ver ClusteredLights.h). So age em cena com mais de MAX_LIGHTS luzes e camera em perspectiva. Ligado por
+        // padrao; desligar volta ao comportamento antigo (so as MAX_LIGHTS mais relevantes).
+        static void SetClusteredLightsEnabled(bool enabled);
+        static bool IsClusteredLightsEnabled();
+        static uint32_t GetExtraLightCount();   // luzes extras ativas no ultimo DrawScene (0 se inativo)
+
         // Desenho instanciado (varios objetos com a mesma malha e material numa chamada so) no
         // passe principal. Ligado por padrao; desligar serve para comparar no profiler.
         static void SetInstancingEnabled(bool enabled);
@@ -474,6 +482,11 @@ namespace Prism {
         static void BindObjectState(const float* model, const glm::mat4* bones, uint32_t boneCount);
         static uint32_t GetInstanceBufferForCurrentContext();
         static std::vector<std::pair<::GLFWwindow*, uint32_t>> s_InstanceBuffersByContext;
+        // Luzes extras do quadro (mais relevantes primeiro), preenchidas por CollectGPULights e repartidas em clusters
+        // por UpdateClusterLights.
+        static std::vector<GPULight> s_ExtraLights;
+        static void UpdateClusterLights(const float* view, const float* projection, const int* viewport);
+        static void BindClusterState();
         static Ref<Shader> s_BasicShader;
         static Ref<Shader> s_LineShader;
 

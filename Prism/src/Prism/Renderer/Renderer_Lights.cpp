@@ -7,6 +7,7 @@
 #include "GpuTimer.h"
 #include "DrawBatching.h"
 #include "LightSelection.h"
+#include "ClusteredLights.h"
 #include "MaterialState.h"
 #include "../Core/Paths.h"
 #include "../Scene/Scene.h"
@@ -134,6 +135,7 @@ namespace Prism {
     } // namespace
 
     std::vector<GPULight> Renderer::CollectGPULights(Scene& scene) {
+        s_ExtraLights.clear();
         std::vector<GPULight> result = TranslateAllLights(scene);
         if (result.size() > MAX_LIGHTS)
             result.resize(MAX_LIGHTS);
@@ -161,6 +163,17 @@ namespace Prism {
 
         const std::vector<uint32_t> chosen = LightSelection::Select(candidates, frustum, cameraWorldPos, MAX_LIGHTS, history.SelectedIds);
 
+        // Luzes que sobraram vao para os clusters (sem sombra), ja ordenadas por relevancia.
+        s_ExtraLights.clear();
+        if (IsClusteredLightsEnabled()) {
+            for (uint32_t index : LightSelection::SelectExtras(candidates, frustum, cameraWorldPos, chosen, ClusteredLights::kMaxExtraLights)) {
+                GPULight extra = all[index];
+                extra.CastShadows = false;
+                extra.ShadowSlot = -1;
+                s_ExtraLights.push_back(extra);
+            }
+        }
+
         std::vector<GPULight> result;
         result.reserve(chosen.size());
         history.SelectedIds.clear();
@@ -171,8 +184,9 @@ namespace Prism {
         std::sort(history.SelectedIds.begin(), history.SelectedIds.end());
 
         if (all.size() > MAX_LIGHTS && all.size() != history.LastTotal)
-            PRISM_CORE_INFO("Iluminacao: a cena tem ", all.size(), " luzes; a cada quadro as ", (size_t)MAX_LIGHTS,
-                            " mais relevantes para a camera sao usadas (limite do shader).");
+            PRISM_CORE_INFO("Iluminacao: a cena tem ", all.size(), " luzes; as ", (size_t)MAX_LIGHTS,
+                            " mais relevantes para a camera usam o caminho completo (com sombras) e ate ",
+                            (size_t)ClusteredLights::kMaxExtraLights, " outras entram na grade de clusters (sem sombra).");
         history.LastTotal = all.size();
 
         return result;

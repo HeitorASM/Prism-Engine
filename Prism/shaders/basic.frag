@@ -108,6 +108,49 @@ struct GPULight {
 uniform int u_LightCount;
 uniform GPULight u_Lights[MAX_LIGHTS];
 
+// --- Luzes extras em clusters (ver Renderer/ClusteredLights.h) ---------------
+// As MAX_LIGHTS luzes mais relevantes ficam em u_Lights (com sombra). As que sobram
+// (pontuais/spots, sem sombra) vem de buffers: a CPU reparte cada uma pelos clusters que o
+// alcance toca, e o fragmento soma so as luzes do seu cluster. u_ExtraLightCount == 0
+// (cena pequena) pula tudo. A conta do cluster TEM que bater com ClusteredLights.h.
+#ifndef CLUSTER_TILES_X
+#error "CLUSTER_TILES_X/Y/SLICES devem ser injetados pelo Renderer (ver Renderer::Init)."
+#endif
+uniform int   u_ExtraLightCount;
+uniform vec4  u_ClusterViewRow;     // linha z da view: profundidade = -dot(row, vec4(worldPos, 1))
+uniform float u_ClusterNear;
+uniform float u_ClusterInvLogRatio; // 1 / ln(far / near)
+uniform vec4  u_ClusterViewport;    // x, y, largura, altura em pixels
+layout(std430, binding = 5) readonly buffer ExtraLightBuffer   { vec4  b_ExtraLights[]; };  // 4 vec4 por luz
+layout(std430, binding = 6) readonly buffer ClusterInfoBuffer  { uvec2 b_ClusterInfo[]; };  // (deslocamento, quantidade)
+layout(std430, binding = 7) readonly buffer ClusterIndexBuffer { uint  b_ClusterIndices[]; };
+
+GPULight LoadExtraLight(uint index) {
+    vec4 a = b_ExtraLights[index * 4u];       // posicao.xyz, alcance
+    vec4 b = b_ExtraLights[index * 4u + 1u];  // cor.xyz, intensidade
+    vec4 c = b_ExtraLights[index * 4u + 2u];  // direcao.xyz, tipo
+    vec4 d = b_ExtraLights[index * 4u + 3u];  // cos externo, cos interno
+    GPULight light;
+    light.Type = int(c.w + 0.5);
+    light.Position = a.xyz;
+    light.Direction = c.xyz;
+    light.Color = b.xyz;
+    light.Intensity = b.w;
+    light.Range = a.w;
+    light.CosOuterAngle = d.x;
+    light.CosInnerAngle = d.y;
+    light.ShadowSlot = -1;
+    return light;
+}
+
+uint ExtraClusterIndex(vec3 worldPos) {
+    float depth = -dot(u_ClusterViewRow, vec4(worldPos, 1.0));
+    int slice = clamp(int(floor(log(max(depth, u_ClusterNear) / u_ClusterNear) * u_ClusterInvLogRatio * float(CLUSTER_SLICES))), 0, CLUSTER_SLICES - 1);
+    int tileX = clamp(int(floor((gl_FragCoord.x - u_ClusterViewport.x) / u_ClusterViewport.z * float(CLUSTER_TILES_X))), 0, CLUSTER_TILES_X - 1);
+    int tileY = clamp(int(floor((gl_FragCoord.y - u_ClusterViewport.y) / u_ClusterViewport.w * float(CLUSTER_TILES_Y))), 0, CLUSTER_TILES_Y - 1);
+    return uint((slice * CLUSTER_TILES_Y + tileY) * CLUSTER_TILES_X + tileX);
+}
+
 // --- Sombras (ver Renderer/ShadowSystem.h) -----------------------
 //   Directional: cascatas (CASCADE_COUNT camadas de um array 2D)
 //   Spot:        perspectiva (um array 2D, uma camada por luz)
@@ -744,6 +787,11 @@ void main() {
 
     for (int i = 0; i < u_LightCount; i++) {
         lightAccum += CalculateLight(u_Lights[i], normal, viewDir, albedo, roughness, metallic, v_WorldPos);
+    }
+    if (u_ExtraLightCount > 0) {
+        uvec2 cluster = b_ClusterInfo[ExtraClusterIndex(v_WorldPos)];
+        for (uint k = 0u; k < cluster.y; k++)
+            lightAccum += CalculateLight(LoadExtraLight(b_ClusterIndices[cluster.x + k]), normal, viewDir, albedo, roughness, metallic, v_WorldPos);
     }
 
     // u_BaseColor ja chega pronto do lado C++ como AlbedoTint

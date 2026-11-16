@@ -107,6 +107,17 @@ if(MSVC)
 endif()
 add_test(NAME InstanceRingTests COMMAND PrismInstanceRingTests)
 
+# PrismClusteredLightsTests: grade de clusters para muitas luzes (Renderer/ClusteredLights.h, so std).
+add_executable(PrismClusteredLightsTests
+    ClusteredLightsTests.cpp
+)
+target_include_directories(PrismClusteredLightsTests PRIVATE ${PRISM_SRC})
+target_compile_features(PrismClusteredLightsTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(PrismClusteredLightsTests PRIVATE /utf-8)
+endif()
+add_test(NAME ClusteredLightsTests COMMAND PrismClusteredLightsTests)
+
 # PrismLightSelectionTests: escolha das luzes por relevancia (Renderer/LightSelection.h, so std + Culling.h).
 add_executable(PrismLightSelectionTests
     LightSelectionTests.cpp

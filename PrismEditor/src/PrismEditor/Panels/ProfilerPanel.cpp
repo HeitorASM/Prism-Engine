@@ -97,6 +97,11 @@ namespace PrismEditor {
             Prism::Renderer::SetInstancingEnabled(instancing);
         ImGui::SameLine();
         ImGui::TextDisabled("(desligue para comparar o numero de desenhos e o tempo)");
+        bool clustered = Prism::Renderer::IsClusteredLightsEnabled();
+        if (ImGui::Checkbox("Luzes em clusters", &clustered))
+            Prism::Renderer::SetClusteredLightsEnabled(clustered);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(alem das 16 principais, ate 1024 luzes sem sombra; luzes extras ativas: %u)", Prism::Renderer::GetExtraLightCount());
         ImGui::Text("Sombras: %u desenhos, %u triangulos", Profiler::CounterValue(C::ShadowDrawCalls), Profiler::CounterValue(C::ShadowTriangles));
         {
             const Prism::ShadowCacheStats cache = Prism::ShadowSystem::GetCacheStats();

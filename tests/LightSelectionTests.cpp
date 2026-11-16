@@ -105,6 +105,26 @@ int main() {
         CHECK(lights_id(distant, LightSelection::Select(distant, frustum, camera, 1, previousA)) == 3);     // C e muito melhor: troca
     }
 
+    // --- luzes extras (clusters): as que sobraram, por relevancia; sem diretas, sem alcance infinito, so as visiveis ---
+    {
+        std::vector<Candidate> lights;
+        for (uint32_t i = 0; i < 20; i++)
+            lights.push_back(Point(i, 0, 0, -(2.0f + (19 - i) * 3.0f)));
+        Candidate sun; sun.Id = 500; sun.Type = 2; lights.push_back(sun);
+        lights.push_back(Point(600, 0, 0, -5, 0.0f));          // sem alcance: nao entra
+        lights.push_back(Point(601, 0, 0, +50, 5.0f));         // atras da camera: fora do frustum
+        auto chosen = LightSelection::Select(lights, frustum, camera, 16, none);
+        auto extras = LightSelection::SelectExtras(lights, frustum, camera, chosen, 1024);
+        CHECK(extras.size() == 6);                              // a direcional e a luz sem alcance (sempre escolhidas) ocupam 2 das 16 vagas
+        bool disjoint = true, ordered = true;
+        for (uint32_t e : extras) for (uint32_t c : chosen) if (e == c) disjoint = false;
+        for (size_t k = 0; k < extras.size(); k++) ordered = ordered && lights[extras[k]].Id == (uint32_t)(5 - k);
+        CHECK(disjoint && ordered);
+        CHECK(LightSelection::SelectExtras(lights, frustum, camera, chosen, 2).size() == 2);
+        CHECK(LightSelection::SelectExtras(lights, frustum, camera, chosen, 0).empty());
+        CHECK(LightSelection::SelectExtras({}, frustum, camera, {}, 10).empty());
+    }
+
     std::printf("%d verificacoes, %d falha(s).\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

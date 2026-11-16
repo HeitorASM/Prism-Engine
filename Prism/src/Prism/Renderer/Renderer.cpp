@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h> 
 #include "Renderer.h"
 #include "InstanceRing.h"
+#include "ClusteredLights.h"
 #include <unordered_map>
 #include "PrimitiveMeshFactory.h"
 #include "RendererInternal.h"
@@ -92,6 +93,17 @@ namespace Prism {
     std::vector<std::pair<::GLFWwindow*, uint32_t>> Renderer::s_InstanceBuffersByContext;
     // Alocador de faixas de cada buffer de instancias (ver InstanceRing.h); chave = id do buffer GL.
     static std::unordered_map<uint32_t, InstanceRing> s_InstanceRings;
+    std::vector<GPULight> Renderer::s_ExtraLights;
+    namespace {
+        // Estado das luzes em clusters (ver ClusteredLights.h / basic.frag).
+        bool s_ClusteredLightsEnabled = true;
+        bool s_ClusterActive = false;       // so vale durante um DrawScene
+        uint32_t s_ClusterLightSSBO = 0, s_ClusterInfoSSBO = 0, s_ClusterIndexSSBO = 0;
+        uint32_t s_ClusterExtraCount = 0;
+        float s_ClusterViewRow[4] = {};
+        float s_ClusterNear = 0.1f, s_ClusterInvLogRatio = 1.0f;
+        float s_ClusterViewport[4] = {};
+    }
     Scope<Mesh> Renderer::s_Meshes[5] = {};
     uint32_t Renderer::s_LineVAO = 0;
     uint32_t Renderer::s_LineVBO = 0;
@@ -177,7 +189,10 @@ namespace Prism {
             { "MAX_LIGHTS", std::to_string(MAX_LIGHTS) },
             { "CASCADE_COUNT", std::to_string(kShadowCascades) },
             { "MAX_SPOT_SHADOWS", std::to_string(kMaxSpotShadows) },
-            { "MAX_POINT_SHADOWS", std::to_string(kMaxPointShadows) } };
+            { "MAX_POINT_SHADOWS", std::to_string(kMaxPointShadows) },
+            { "CLUSTER_TILES_X", std::to_string(ClusteredLights::kTilesX) },
+            { "CLUSTER_TILES_Y", std::to_string(ClusteredLights::kTilesY) },
+            { "CLUSTER_SLICES", std::to_string(ClusteredLights::kSlices) } };
         s_BasicShader = loadShader("BasicLit", "basic.vert", "basic.frag", s_BasicShaderDefines);
         s_ActiveShader = s_BasicShader.get();
 
@@ -308,6 +323,10 @@ namespace Prism {
             glDeleteBuffers(1, &buffer);
         s_InstanceBuffersByContext.clear();
         s_InstanceRings.clear(); // os ids de buffer podem ser reaproveitados numa proxima inicializacao
+        for (uint32_t* ssbo : { &s_ClusterLightSSBO, &s_ClusterInfoSSBO, &s_ClusterIndexSSBO })
+            if (*ssbo) { glDeleteBuffers(1, ssbo); *ssbo = 0; }
+        s_ClusterActive = false;
+        s_ExtraLights.clear();
     }
 
     // Ver comentario grande em Renderer.h (s_FullscreenQuadVAOsByContext)
@@ -702,6 +721,74 @@ namespace Prism {
         }
     }
 
+    void Renderer::SetClusteredLightsEnabled(bool enabled) { s_ClusteredLightsEnabled = enabled; }
+    bool Renderer::IsClusteredLightsEnabled() { return s_ClusteredLightsEnabled; }
+    uint32_t Renderer::GetExtraLightCount() { return s_ClusterActive ? s_ClusterExtraCount : 0u; }
+
+    // Reparte as luzes extras do quadro pelos clusters da camera e sobe os tres buffers (luzes, cluster -> faixa, lista).
+    void Renderer::UpdateClusterLights(const float* view, const float* projection, const int* viewport) {
+        s_ClusterActive = false;
+        s_ClusterExtraCount = 0;
+        if (!s_ClusteredLightsEnabled || s_ExtraLights.empty() || viewport[2] <= 0 || viewport[3] <= 0)
+            return;
+        const ClusteredLights::Grid grid = ClusteredLights::MakeGrid(view, projection);
+        if (!grid.Valid)
+            return; // camera ortografica: sem clusters (so as MAX_LIGHTS luzes do caminho normal)
+
+        static std::vector<ClusteredLights::Light> s_ClusterInput;
+        static std::vector<float> s_ClusterPacked;
+        s_ClusterInput.resize(s_ExtraLights.size());
+        s_ClusterPacked.resize(s_ExtraLights.size() * 16);
+        for (size_t i = 0; i < s_ExtraLights.size(); i++) {
+            const GPULight& l = s_ExtraLights[i];
+            ClusteredLights::Light& in = s_ClusterInput[i];
+            in.Position[0] = l.Position.x; in.Position[1] = l.Position.y; in.Position[2] = l.Position.z;
+            in.Range = l.Range;
+            float* o = &s_ClusterPacked[i * 16];
+            o[0] = l.Position.x; o[1] = l.Position.y; o[2] = l.Position.z; o[3] = l.Range;
+            o[4] = l.Color.x; o[5] = l.Color.y; o[6] = l.Color.z; o[7] = l.Intensity;
+            o[8] = l.Direction.x; o[9] = l.Direction.y; o[10] = l.Direction.z; o[11] = (float)l.Type;
+            o[12] = l.CosOuterAngle; o[13] = l.CosInnerAngle; o[14] = 0.0f; o[15] = 0.0f;
+        }
+        const ClusteredLights::Result built = ClusteredLights::Build(grid, s_ClusterInput);
+        if (built.Clusters.empty())
+            return;
+
+        for (uint32_t* ssbo : { &s_ClusterLightSSBO, &s_ClusterInfoSSBO, &s_ClusterIndexSSBO })
+            if (!*ssbo) glCreateBuffers(1, ssbo);
+        glNamedBufferData(s_ClusterLightSSBO, (GLsizeiptr)(s_ClusterPacked.size() * sizeof(float)), s_ClusterPacked.data(), GL_STREAM_DRAW);
+        glNamedBufferData(s_ClusterInfoSSBO, (GLsizeiptr)(built.Clusters.size() * sizeof(uint32_t)), built.Clusters.data(), GL_STREAM_DRAW);
+        const uint32_t dummy = 0;
+        glNamedBufferData(s_ClusterIndexSSBO, (GLsizeiptr)std::max<size_t>(built.Indices.size() * sizeof(uint32_t), sizeof(uint32_t)),
+                          built.Indices.empty() ? &dummy : built.Indices.data(), GL_STREAM_DRAW);
+
+        // Profundidade = -dot(linha z da view, posicao): ver DepthOf em ClusteredLights.h.
+        s_ClusterViewRow[0] = view[2]; s_ClusterViewRow[1] = view[6]; s_ClusterViewRow[2] = view[10]; s_ClusterViewRow[3] = view[14];
+        s_ClusterNear = grid.Near;
+        s_ClusterInvLogRatio = grid.InvLogRatio;
+        for (int i = 0; i < 4; i++) s_ClusterViewport[i] = (float)viewport[i];
+        s_ClusterExtraCount = (uint32_t)s_ExtraLights.size();
+        s_ClusterActive = true;
+        if (built.Overflowed > 0)
+            PRISM_CORE_WARN("Iluminacao: ", built.Overflowed, " luz(es) descartada(s) por cluster cheio (limite de ", ClusteredLights::kMaxPerCluster, " luzes por cluster).");
+    }
+
+    // Estado das luzes extras para o shader ativo (u_ExtraLightCount = 0 = nada a fazer).
+    void Renderer::BindClusterState() {
+        if (!s_ClusterActive) {
+            s_ActiveShader->SetInt("u_ExtraLightCount", 0);
+            return;
+        }
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_ClusterLightSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, s_ClusterInfoSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, s_ClusterIndexSSBO);
+        s_ActiveShader->SetInt("u_ExtraLightCount", (int)s_ClusterExtraCount);
+        s_ActiveShader->SetFloat4("u_ClusterViewRow", s_ClusterViewRow[0], s_ClusterViewRow[1], s_ClusterViewRow[2], s_ClusterViewRow[3]);
+        s_ActiveShader->SetFloat("u_ClusterNear", s_ClusterNear);
+        s_ActiveShader->SetFloat("u_ClusterInvLogRatio", s_ClusterInvLogRatio);
+        s_ActiveShader->SetFloat4("u_ClusterViewport", s_ClusterViewport[0], s_ClusterViewport[1], s_ClusterViewport[2], s_ClusterViewport[3]);
+    }
+
     void Renderer::BindFrameState(const float* viewProjection, const std::vector<GPULight>* lights, const ShadowFrame* shadows, const SSAO* ssao) {
         s_ActiveShader->SetMat4("u_ViewProjection", viewProjection);
         s_ActiveShader->SetFloat3("u_CameraWorldPos", s_CameraWorldPos[0], s_CameraWorldPos[1], s_CameraWorldPos[2]);
@@ -724,10 +811,14 @@ namespace Prism {
 
         // 'lights' e opcional (ver comentario em Renderer.h) - sem lista,
         // desenha so com o ambiente fixo do shader (u_LightCount = 0).
-        if (lights)
+        if (lights) {
             UploadLights(*lights);
-        else
+            BindClusterState();
+        }
+        else {
             s_ActiveShader->SetInt("u_LightCount", 0);
+            s_ActiveShader->SetInt("u_ExtraLightCount", 0);
+        }
 
         // 'shadows' e opcional (nullptr = sem sombra). Texture units 5-7 (ver
         // ShadowSystem.h); 0-1 sao AO e 2-4 o Material.
@@ -1488,6 +1579,10 @@ namespace Prism {
         glGetIntegerv(GL_VIEWPORT, previousViewport);
         uint32_t viewportWidth = (uint32_t)previousViewport[2];
         uint32_t viewportHeight = (uint32_t)previousViewport[3];
+        // Luzes extras (alem das MAX_LIGHTS): reparte pelos clusters desta camera. Desliga ao sair do DrawScene,
+        // para o DrawMesh avulso nunca reaproveitar clusters de outra camera.
+        UpdateClusterLights(view, projection, previousViewport);
+        struct ClusterScope { ~ClusterScope() { s_ClusterActive = false; } } clusterScope;
 
         // Sombras: casters = toda entidade com mesh; ShadowSystem desenha os mapas
         // (cascatas / spot / cubo) e preenche lights[i].ShadowSlot.

@@ -115,4 +115,38 @@ namespace Prism::LightSelection {
         return result;
     }
 
+
+    // Luzes que NAO couberam em 'chosen' mas ainda iluminam algo visivel: pontuais/spots com alcance finito, intensidade
+    // positiva e esfera de alcance dentro do frustum, da mais relevante para a menos (empate: menor Id). Vao para os clusters.
+    inline std::vector<uint32_t> SelectExtras(const std::vector<Candidate>& lights,
+                                              const Culling::Frustum& frustum,
+                                              const float cameraPosition[3],
+                                              const std::vector<uint32_t>& chosen,
+                                              size_t maxExtra) {
+        std::vector<char> taken(lights.size(), 0);
+        for (uint32_t c : chosen)
+            if (c < taken.size()) taken[c] = 1;
+        struct Ranked { uint32_t Index; uint32_t Id; float Score; };
+        std::vector<Ranked> ranked;
+        for (uint32_t i = 0; i < (uint32_t)lights.size(); ++i) {
+            const Candidate& light = lights[i];
+            if (taken[i] || light.Type == 2 || !(light.Intensity > 0.0f) || !(light.Range > 0.0f) || !std::isfinite(light.Range))
+                continue;
+            if (!frustum.IntersectsSphere(light.Position, light.Range))
+                continue;
+            ranked.push_back({ i, light.Id, Score(light, cameraPosition) });
+        }
+        std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+            if (a.Score != b.Score) return a.Score > b.Score;
+            return a.Id < b.Id;
+        });
+        if (ranked.size() > maxExtra)
+            ranked.resize(maxExtra);
+        std::vector<uint32_t> result;
+        result.reserve(ranked.size());
+        for (const Ranked& r : ranked)
+            result.push_back(r.Index);
+        return result;
+    }
+
 }
