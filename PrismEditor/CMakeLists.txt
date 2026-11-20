@@ -26,11 +26,7 @@ target_link_libraries(PrismEditor PRIVATE
 
 target_compile_features(PrismEditor PUBLIC cxx_std_20)
 
-# /utf-8 aplicada diretamente a este alvo - mesmo motivo e mesmo padrao de
-# Prism/CMakeLists.txt (ver comentario grande la e no CMakeLists.txt da
-# RAIZ): nao pode voltar a ser um add_compile_options() global, senao
-# alcanca vendor/ de novo e recria a colisao com o /source-charset:utf-8
-# que o Assimp adiciona internamente para si mesmo (erro D8016).
+# /utf-8 por alvo: ver CMakeLists.txt da raiz.
 if(MSVC)
     target_compile_options(PrismEditor PRIVATE /utf-8)
 endif()

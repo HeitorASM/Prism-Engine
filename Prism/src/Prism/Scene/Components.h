@@ -72,10 +72,8 @@ namespace Prism {
         }
     };
 
-    // Primitivas de mesh embutidas na engine (nao ha importacao de modelos
-    // FBX/OBJ/glTF ainda). A geometria de cada uma e gerada
-    // proceduralmente (ver PrimitiveMeshFactory) e enviada a GPU em
-    // Renderer::Init().
+    // Primitivas embutidas (geometria procedural em PrimitiveMeshFactory,
+    // enviada a GPU em Renderer::Init()). Modelos importados usam ModelAsset.
     enum class PrimitiveMesh {
         Cube,
         Sphere,

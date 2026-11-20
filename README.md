@@ -18,8 +18,8 @@ Engine 3D em C++20 com editor integrado. OpenGL 4.5, GLFW, Dear ImGui (docking),
 - Modo Play na aba Game (ou em janela separada), rodando uma cópia da cena, e o executável PrismRuntime para rodar um projeto sem o editor
 - Mapas (`.prismmap`), prefabs (`.prismprefab`) e materiais (`.prismmat`)
 
-> Muitos recursos ainda estão em fase incial de desenvolvimento e são sucetiveis a erros/poblemas
-> E ainda estão sendo ativamente melhorados/corigidos
+> Muitos recursos ainda estão em fase inicial de desenvolvimento e são suscetíveis a erros/problemas
+> E ainda estão sendo ativamente melhorados/corrigidos
 
 ## Compilando
 
@@ -61,7 +61,7 @@ docs/             documentação técnica (GitHub)
   inengine/       guias para quem usa a engine (abrem no editor com F1)
 ```
 
-## Documentação De desenvolvimento de desiçoes
+## Documentação de desenvolvimento e decisões
 
 - [Arquitetura](docs/arquitetura.md)
 - [Editor](docs/editor.md)

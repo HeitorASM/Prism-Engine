@@ -169,11 +169,12 @@ namespace Prism {
 
         // Sem isto o PRIMEIRO quadro veria deltaTime = tempo desde o inicio do
         // processo (segundos de carregamento), nao o de um quadro.
-        m_LastFrameTime = (float)glfwGetTime();
+        m_LastFrameTime = glfwGetTime();
 
         while (m_Running) {
-            float time = (float)glfwGetTime();
-            float deltaTime = time - m_LastFrameTime;
+            // double: em float o relogio perde precisao em sessoes longas.
+            const double time = glfwGetTime();
+            float deltaTime = (float)(time - m_LastFrameTime);
             m_LastFrameTime = time;
 
             // Limita o passo de tempo: uma pausa longa (arrastar a janela no

@@ -94,7 +94,7 @@ namespace Prism {
         bool m_Running = true;
         bool m_Minimized = false;
         LayerStack m_LayerStack;
-        float m_LastFrameTime = 0.0f;
+        double m_LastFrameTime = 0.0;
 
         std::vector<std::function<void()>> m_PendingLayerOps;
 
